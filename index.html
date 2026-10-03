@@ -39,10 +39,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .row::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
   pointer-events: none;
   background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
-    transparent 48%); }
+    var(--sheen2, rgba(255,255,255,0.03)) 30%, transparent 58%); }
 .row.head::before { display: none; }
-.row.k-stock { --sheen: rgba(125,211,252,0.13); }
-.row.k-etf { --sheen: rgba(196,181,253,0.13); }
+.row.k-stock { --sheen: rgba(125,211,252,0.22); --sheen2: rgba(125,211,252,0.07); }
+.row.k-etf { --sheen: rgba(196,181,253,0.22); --sheen2: rgba(196,181,253,0.07); }
 .row.head { background: none; border: none; box-shadow: none;
   -webkit-backdrop-filter: none; backdrop-filter: none;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
@@ -88,11 +88,18 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   background: rgba(255,255,255,0.025);
   -webkit-backdrop-filter: blur(8px) saturate(1.5);
   backdrop-filter: blur(8px) saturate(1.5);
-  border: 1px solid rgba(255,213,79,0.18); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 8px 28px rgba(0,0,0,0.38); }
+  border: 1px solid rgba(255,213,79,0.24); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 28px rgba(0,0,0,0.38),
+    0 0 34px rgba(255,213,79,0.10); }
 .note::before { content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(115deg, rgba(255,213,79,0.12) 0%,
-    rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 50%); }
+  background:
+    linear-gradient(115deg, rgba(255,213,79,0.24) 0%, rgba(255,213,79,0.08) 38%,
+      transparent 62%),
+    linear-gradient(295deg, rgba(255,213,79,0.12) 0%, transparent 46%); }
+.note::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.22) 0%,
+    rgba(255,255,255,0.05) 16%, transparent 34%); }
 .note b { color: var(--gold); }
 .note p { margin: 0 0 13px; }
 .note p:last-child { margin-bottom: 0; }
@@ -259,15 +266,15 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row k-stock" data-ev="0.032666346675201" data-r1y="0.8231718979167286">
+<div class="row k-stock" data-ev="0.06519881853458567" data-r1y="0.9538015944442737">
   <div class="id"><span class="rank">10</span>
-    <span class="tick">TGT</span>
-    <span class="nm">Target Corporation</span></div>
-  <div class="sec">Consumer Defensive</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+82.3%</div><div class="track"><div class="bar pos" style="width:54.9%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+3.3%</div><div class="track"><div class="bar est" style="width:16.3%"></div></div></div>
+    <span class="tick">AMRX</span>
+    <span class="nm">Amneal Pharmaceuticals, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+95.4%</div><div class="track"><div class="bar pos" style="width:63.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.5%</div><div class="track"><div class="bar est" style="width:32.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
-  <div class="stab" data-cap="Stability">A</div>
+  <div class="stab" data-cap="Stability">B</div>
 </div>
 </div>
 <h2>Top 10 ETFs — most confident</h2>
@@ -302,13 +309,13 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row k-etf" data-ev="0.0461239070964403" data-r1y="0.8788231575831043">
+<div class="row k-etf" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
   <div class="id"><span class="rank">3</span>
-    <span class="tick">SMH</span>
-    <span class="nm">VanEck Semiconductor ETF</span></div>
+    <span class="tick">SKYY</span>
+    <span class="nm">First Trust Cloud Computing ETF</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+87.9%</div><div class="track"><div class="bar pos" style="width:58.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.6%</div><div class="track"><div class="bar est" style="width:23.1%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.5%</div><div class="track"><div class="bar pos" style="width:16.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:26.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">B</div>
 </div>
@@ -450,20 +457,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Industrials cap full</div>
 </div>
 
-<div class="row hm k-stock hm-extra" data-ev="0.06519881853458567" data-r1y="0.9538015944442737">
-  <div class="id"><span class="rank">11</span>
-    <span class="tick">AMRX</span>
-    <span class="kchip stock">STOCK</span>
-    <span class="nm">Amneal Pharmaceuticals, Inc.</span></div>
-  <div class="sec">Healthcare</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+95.4%</div><div class="track"><div class="bar pos" style="width:63.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.5%</div><div class="track"><div class="bar est" style="width:32.6%"></div></div></div>
-  <div class="cf" data-cap="Confidence">70%</div>
-  <div class="why" data-cap="Why not picked">edged out on final-score order</div>
-</div>
-
 <div class="row hm k-stock hm-extra" data-ev="0.061841985414537864" data-r1y="0.37943375528342727">
-  <div class="id"><span class="rank">12</span>
+  <div class="id"><span class="rank">11</span>
     <span class="tick">AME</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">AMETEK, Inc.</span></div>
@@ -475,7 +470,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.06158671069523388" data-r1y="0.5281749756119756">
-  <div class="id"><span class="rank">13</span>
+  <div class="id"><span class="rank">12</span>
     <span class="tick">CNXN</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">PC Connection, Inc.</span></div>
@@ -487,7 +482,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.061571281217131686" data-r1y="1.861666792168005">
-  <div class="id"><span class="rank">14</span>
+  <div class="id"><span class="rank">13</span>
     <span class="tick">TWLO</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Twilio Inc.</span></div>
@@ -499,7 +494,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.06135564693228148" data-r1y="0.745391446603552">
-  <div class="id"><span class="rank">15</span>
+  <div class="id"><span class="rank">14</span>
     <span class="tick">ADI</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Analog Devices, Inc.</span></div>
@@ -511,7 +506,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.05360252082026574" data-r1y="1.889077031270069">
-  <div class="id"><span class="rank">16</span>
+  <div class="id"><span class="rank">15</span>
     <span class="tick">HPE</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Hewlett Packard Enterprise Company</span></div>
@@ -522,20 +517,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm k-etf hm-extra" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
-  <div class="id"><span class="rank">17</span>
-    <span class="tick">SKYY</span>
-    <span class="kchip etf">ETF</span>
-    <span class="nm">First Trust Cloud Computing ETF</span></div>
-  <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.5%</div><div class="track"><div class="bar pos" style="width:16.3%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:26.8%"></div></div></div>
-  <div class="cf" data-cap="Confidence">65%</div>
-  <div class="why" data-cap="Why not picked">Technology cap full</div>
-</div>
-
 <div class="row hm k-stock hm-extra" data-ev="0.04848773486181395" data-r1y="0.4301633353067458">
-  <div class="id"><span class="rank">18</span>
+  <div class="id"><span class="rank">16</span>
     <span class="tick">RS</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Reliance, Inc.</span></div>
@@ -543,11 +526,11 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.0%</div><div class="track"><div class="bar pos" style="width:28.7%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.8%</div><div class="track"><div class="bar est" style="width:24.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
-  <div class="why" data-cap="Why not picked">edged out on final-score order</div>
+  <div class="why" data-cap="Why not picked">lower expected value than picks</div>
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.04805768884961707" data-r1y="0.5744920512811231">
-  <div class="id"><span class="rank">19</span>
+  <div class="id"><span class="rank">17</span>
     <span class="tick">EXPD</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Expeditors International of Washington</span></div>
@@ -558,8 +541,20 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Industrials cap full</div>
 </div>
 
+<div class="row hm k-etf hm-extra" data-ev="0.0461239070964403" data-r1y="0.8788231575831043">
+  <div class="id"><span class="rank">18</span>
+    <span class="tick">SMH</span>
+    <span class="kchip etf">ETF</span>
+    <span class="nm">VanEck Semiconductor ETF</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+87.9%</div><div class="track"><div class="bar pos" style="width:58.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.6%</div><div class="track"><div class="bar est" style="width:23.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="why" data-cap="Why not picked">Technology cap full</div>
+</div>
+
 <div class="row hm k-etf hm-extra" data-ev="0.043562045990643866" data-r1y="0.39064162498078403">
-  <div class="id"><span class="rank">20</span>
+  <div class="id"><span class="rank">19</span>
     <span class="tick">TTEQ</span>
     <span class="kchip etf">ETF</span>
     <span class="nm">T. Rowe Price Technology ETF</span></div>
@@ -571,7 +566,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.04301879329663398" data-r1y="0.7289350406806332">
-  <div class="id"><span class="rank">21</span>
+  <div class="id"><span class="rank">20</span>
     <span class="tick">PEB</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Pebblebrook Hotel Trust</span></div>
@@ -583,7 +578,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-etf hm-extra" data-ev="0.042018509819666316" data-r1y="1.0029104966138287">
-  <div class="id"><span class="rank">22</span>
+  <div class="id"><span class="rank">21</span>
     <span class="tick">SOXQ</span>
     <span class="kchip etf">ETF</span>
     <span class="nm">Invesco PHLX Semiconductor ETF</span></div>
@@ -595,7 +590,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.0413344990570229" data-r1y="0.5048792559075475">
-  <div class="id"><span class="rank">23</span>
+  <div class="id"><span class="rank">22</span>
     <span class="tick">SLDE</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Slide Insurance Holdings, Inc.</span></div>
@@ -607,7 +602,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-etf hm-extra" data-ev="0.04102843833419947" data-r1y="0.24855257853956036">
-  <div class="id"><span class="rank">24</span>
+  <div class="id"><span class="rank">23</span>
     <span class="tick">QQQ</span>
     <span class="kchip etf">ETF</span>
     <span class="nm">Invesco QQQ Trust</span></div>
@@ -615,11 +610,11 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.9%</div><div class="track"><div class="bar pos" style="width:16.6%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.1%</div><div class="track"><div class="bar est" style="width:20.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
-  <div class="why" data-cap="Why not picked">edged out on final-score order</div>
+  <div class="why" data-cap="Why not picked">lower expected value than picks</div>
 </div>
 
 <div class="row hm k-etf hm-extra" data-ev="0.03885511844754819" data-r1y="0.24916104336640754">
-  <div class="id"><span class="rank">25</span>
+  <div class="id"><span class="rank">24</span>
     <span class="tick">QQQM</span>
     <span class="kchip etf">ETF</span>
     <span class="nm">Invesco NASDAQ 100 ETF</span></div>
@@ -631,7 +626,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.036106082380393936" data-r1y="0.7523036318125988">
-  <div class="id"><span class="rank">26</span>
+  <div class="id"><span class="rank">25</span>
     <span class="tick">MSGE</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Madison Square Garden Entertainment Co</span></div>
@@ -639,7 +634,19 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+75.2%</div><div class="track"><div class="bar pos" style="width:50.2%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.6%</div><div class="track"><div class="bar est" style="width:18.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">55%</div>
-  <div class="why" data-cap="Why not picked">edged out on final-score order</div>
+  <div class="why" data-cap="Why not picked">lower expected value than picks</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.032666346675201" data-r1y="0.8231718979167286">
+  <div class="id"><span class="rank">26</span>
+    <span class="tick">TGT</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Target Corporation</span></div>
+  <div class="sec">Consumer Defensive</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+82.3%</div><div class="track"><div class="bar pos" style="width:54.9%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+3.3%</div><div class="track"><div class="bar est" style="width:16.3%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">lower expected value than picks</div>
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.031249301821644225" data-r1y="1.9736416528001706">
@@ -651,7 +658,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+197.4%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.1%</div><div class="track"><div class="bar est" style="width:15.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
-  <div class="why" data-cap="Why not picked">edged out on final-score order</div>
+  <div class="why" data-cap="Why not picked">lower expected value than picks</div>
 </div>
 </div>
 <div class="hm-more"><button class="sbtn" id="hm-toggle" data-n="27">Show all 27 ↓</button></div>

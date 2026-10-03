@@ -1400,10 +1400,10 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .row::before {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
   pointer-events: none;
   background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
-    transparent 48%); }}
+    var(--sheen2, rgba(255,255,255,0.03)) 30%, transparent 58%); }}
 .row.head::before {{ display: none; }}
-.row.k-stock {{ --sheen: rgba(125,211,252,0.13); }}
-.row.k-etf {{ --sheen: rgba(196,181,253,0.13); }}
+.row.k-stock {{ --sheen: rgba(125,211,252,0.22); --sheen2: rgba(125,211,252,0.07); }}
+.row.k-etf {{ --sheen: rgba(196,181,253,0.22); --sheen2: rgba(196,181,253,0.07); }}
 .row.head {{ background: none; border: none; box-shadow: none;
   -webkit-backdrop-filter: none; backdrop-filter: none;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
@@ -1449,11 +1449,18 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   background: rgba(255,255,255,0.025);
   -webkit-backdrop-filter: blur(8px) saturate(1.5);
   backdrop-filter: blur(8px) saturate(1.5);
-  border: 1px solid rgba(255,213,79,0.18); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 8px 28px rgba(0,0,0,0.38); }}
+  border: 1px solid rgba(255,213,79,0.24); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 28px rgba(0,0,0,0.38),
+    0 0 34px rgba(255,213,79,0.10); }}
 .note::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(115deg, rgba(255,213,79,0.12) 0%,
-    rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 50%); }}
+  background:
+    linear-gradient(115deg, rgba(255,213,79,0.24) 0%, rgba(255,213,79,0.08) 38%,
+      transparent 62%),
+    linear-gradient(295deg, rgba(255,213,79,0.12) 0%, transparent 46%); }}
+.note::after {{ content: ""; position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.22) 0%,
+    rgba(255,255,255,0.05) 16%, transparent 34%); }}
 .note b {{ color: var(--gold); }}
 .note p {{ margin: 0 0 13px; }}
 .note p:last-child {{ margin-bottom: 0; }}
@@ -1917,7 +1924,7 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
             continue
         cands = cands.copy()
         cands["_newcat"] = (~cands["sector"].isin(set(counts))).astype(int)
-        cands = cands.sort_values(["_newcat", "final_score"],
+        cands = cands.sort_values(["_newcat", "est_next_1y"],
                                   ascending=[False, False])
         add = cands.iloc[0:1].copy()
         add["pick_pass"] = 3
@@ -1976,7 +1983,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
         elif sec_counts.get((kind, sec), 0) >= caps.get(kind, 2):
             reason = f"{sec} cap full"
         else:
-            reason = "edged out on final-score order"
+            reason = "lower expected value than picks"
         try:
             conf = float(r.get("llm_confidence"))
         except Exception:
@@ -2354,6 +2361,10 @@ def pick_final(adj, args, llm_path):
             log(f"est floor ({args.min_est:+.1%}): {len(cut)} {label} excluded: "
                 f"{cut['ticker'].tolist()}")
         est_ok = ranked[ranked["est_next_1y"] >= args.min_est]
+        # EV shortlist: final_score's job is the quality floor (min_score);
+        # among floor-passers, expected value ranks and selects. The number
+        # the chart shows is the number that awards places.
+        est_ok = est_ok.sort_values("est_next_1y", ascending=False)
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
                                          min_score=args.min_score, veto_dep=veto)
         first = first.copy()
@@ -2370,7 +2381,7 @@ def pick_final(adj, args, llm_path):
             rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap)]
             if not rest.empty:
                 rest["_newcat"] = (~rest["sector"].isin(set(taken_counts))).astype(int)
-                rest = rest.sort_values(["_newcat", "final_score"],
+                rest = rest.sort_values(["_newcat", "est_next_1y"],
                                         ascending=[False, False])
                 rest = rest.drop(columns=["_newcat"])
             fill = pick_top_with_sector_cap(rest, n=n - len(first),
