@@ -1521,13 +1521,13 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }}
 .why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
 .row.hm {{ opacity: 0.88; }}
-.row.k-stock .tick {{ color: #e53232; }}
+.row.k-stock .tick {{ color: #ef4b4b; }}
 .row.k-etf .tick {{ color: #7dd3fc; }}
 .kchip {{ display: inline-block; font-size: 10px; font-weight: 700;
   letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
   margin-left: 6px; vertical-align: 1px; white-space: nowrap; }}
-.kchip.stock {{ color: #e53232; background: rgba(229,50,50,0.12);
-  border: 1px solid rgba(229,50,50,0.35); }}
+.kchip.stock {{ color: #ef4b4b; background: rgba(239,75,75,0.12);
+  border: 1px solid rgba(239,75,75,0.35); }}
 .kchip.etf {{ color: #7dd3fc; background: rgba(125,211,252,0.12);
   border: 1px solid rgba(125,211,252,0.35); }}
 @media (max-width: 700px) {{
@@ -1550,23 +1550,30 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 {thesis_html}
 {hm_html}
 <div class="note">
-<b>How to read this.</b> The goal is simple: the strongest names of the past
-year most likely to <i>keep</i> doing well &mdash; downside protection first.
-Every name here earned its place; we would rather show empty slots than
-filler.
+<b>How to read this.</b> We look at the strongest American stocks and ETFs of
+the past year &mdash; the ones that beat the market &mdash; and ask which are most
+likely to <i>keep</i> doing well without dropping right after you buy.
+Avoiding losses comes first. Every name here earned its place; we would rather
+leave a slot empty than fill it with something we don&apos;t believe in.
 
-"1y" is the trailing one-year return
+"1y" is how much it gained over the past year
 (stocks vs { _html.escape(bench) }, ETFs vs { _html.escape(etf_bench) }).
-"Expected value" is our honest estimate of the next year&apos;s worth &mdash; not a
-prediction. It balances the recent run (humbled, because hot streaks fade)
-against the historical pain (how deep <i>and</i> how often it dips), haircuts
-event-driven hype, rewards steady compounders over fragile spikes, and
-shrinks toward zero when the evidence is thin.
+"Expected value" is our honest estimate of what could come next &mdash; think of
+it as a weather forecast, not a promise. It starts with the recent run, then
+asks the hard questions: how often does this name stumble, and how bad are the
+stumbles? Is the story built on real business strength, or on hype, headlines,
+and one-time events? The shakier the answers, the more we shrink the estimate
+toward zero.
 
-Confidence is how much we trust the research; Stability (A = calmest) blends
-volatility, drawdown, and event risk. { "All tickers you supplied are shown, sorted by expected value &mdash; red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Anything below +3% expected value does not make the list." } Bars use fixed
-scales &mdash; a full bar is +150% or +20% EV &mdash; so they stay comparable day to
-day. Thesis watch tracks every published pick; expand it for the list.
+Confidence is how much we trust our research on the name. Stability
+(A is the calmest) is about how bumpy the ride has been. { "All tickers you supplied are shown, sorted by expected value &mdash; red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Anything below +3% expected value does not make the list." }
+
+The bars use fixed scales &mdash; a full bar always means +150% past-year gain or
++20% expected value &mdash; so you can compare one day against the next, honestly.
+Thesis watch keeps score on every pick we have published; expand it to see how
+they are doing. Honorable mentions are strong names that just missed the cut,
+with the reason why. You can re-sort any table by past-year gain or expected
+value.
 
 Not financial advice. Past performance doesn&apos;t
 predict future returns.
