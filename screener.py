@@ -619,6 +619,17 @@ def log_levers(args):
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
+    log("base_score(stocks) = 0.08*z_6m + 0.06*z_3m + 0.04*z_ext + 0.04*z_trend "
+        "+ 0.08*z_blowoff + 0.10*z_roe + 0.08*z_margin + 0.07*z_earn + 0.05*z_fcf "
+        "+ 0.12*z_vol + 0.12*z_dd + 0.06*z_beta + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
+    log("base_score(ETFs)   = 0.12*z_6m + 0.08*z_3m + 0.10*z_1m + 0.05*z_trend "
+        "+ 0.05*z_blowoff + 0.15*z_vol + 0.15*z_dd + 0.10*z_dvol + 0.10*z_expense + 0.10*z_aum")
+    log("  z glossary: z_6m/3m/1m = trailing returns; z_ext = not extended far below high; "
+        "z_trend = above 50/200DMA; z_blowoff = penalizes 2-week vertical spikes (don't buy the top); "
+        "z_roe/margin = profitability; z_earn = earnings growth; z_fcf = positive FCF; "
+        "z_vol = low 60d vol; z_dd = shallow maxDD; z_beta = beta near 1.0; z_dte = low debt/equity; "
+        "z_fpe/ptb = cheapness; z_expense = low fees; z_aum = large AUM (closure safety); "
+        "z_dvol = liquidity. Higher z = better; bad metrics inverted.")
     log("expected value = conf * (1+0.25*character) * "
         "(cont*upside - (1-cont)*downside - dep*20%)")
     log("  upside = 6m run: first 25% at full weight, excess at half, input capped at 50%")
