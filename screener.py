@@ -1312,6 +1312,25 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   .nonus {{ color: #92400e; background: rgba(245,158,11,0.18);
     border-color: rgba(180,83,9,0.4); }}
   .cell::before, .cf::before, .stab::before {{ color: #6b756b; }}
+  .tagline {{ color: #b45309; text-shadow: none; }}
+  .subhead {{ color: #6b756b; }}
+  .twatch-det {{ background: rgba(255,255,255,0.55);
+    border-color: rgba(20,40,20,0.10); }}
+  .twatch-det > summary {{ color: #5a665a; }}
+  .twatch-det > summary::before {{ color: #b45309; }}
+  .twatch-det > summary b {{ color: #b45309; }}
+  .tlist {{ color: #5a665a; }}
+  .titem {{ color: #5a665a; border-top-color: rgba(20,40,20,0.08); }}
+  .titem b {{ color: #101510; }}
+  .tnote {{ color: #6b756b; }}
+  .tstat.intact {{ color: #15803d; }}
+  .tstat.watch {{ color: #b45309; }}
+  .tstat.broken {{ color: #b91c1c; }}
+  .tbadge.watch {{ color: #92400e; background: rgba(245,158,11,0.18);
+    border-color: rgba(180,83,9,0.4); }}
+  .tbadge.broken {{ color: #b91c1c; background: rgba(248,113,113,0.14);
+    border-color: rgba(185,28,28,0.4); }}
+  .tledger a {{ color: #5a665a; }}
 }}
 </style></head>
 <body>
