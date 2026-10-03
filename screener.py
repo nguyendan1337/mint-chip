@@ -2065,14 +2065,23 @@ def record_picks_ledger(final, ranked, args):
     import json as _json  # noqa: F401 (kept local like the rest of this file)
     tickers = list(final["ticker"])
     prices = {}
-    try:
-        px = download_prices(tickers, period="5d")
-        for t in tickers:
-            s = px[t].dropna() if t in px else None
-            if s is not None and len(s):
-                prices[t] = float(s.iloc[-1])
-    except Exception as e:
-        log(f"ledger: pick-price fetch failed ({e}); recording without prices")
+    for attempt in (1, 2):
+        try:
+            px = download_prices(tickers, period="5d")
+            for t in tickers:
+                s = px[t].dropna() if t in px else None
+                if s is not None and len(s):
+                    prices[t] = float(s.iloc[-1])
+            missing = [t for t in tickers if t not in prices]
+            if not missing:
+                break
+            log(f"ledger: price fetch attempt {attempt} missed {missing}")
+        except Exception as e:
+            log(f"ledger: pick-price fetch failed (attempt {attempt}): {e}")
+        time.sleep(10)
+    if len(prices) < len(tickers):
+        log(f"ledger: recording {len(tickers) - len(prices)} picks without prices; "
+            f"backfill before thesis_check")
     for _, r in final.iterrows():
         ledger_append(THESIS_LEDGER, {
             "event": "picked",
