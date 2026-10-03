@@ -1302,8 +1302,11 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
                 _r1yf = float(r.get("ret_1y"))
             except Exception:
                 _r1yf = float("nan")
+            _kk = str(r.get("kind", "")).strip().lower()
+            if _kk not in ("stock", "etf"):
+                _kk = "stock" if si == 0 else "etf"
             rows_html += f"""
-<div class="row" data-ev="{_evf}" data-r1y="{_r1yf}">
+<div class="row k-{_kk}" data-ev="{_evf}" data-r1y="{_r1yf}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(r['ticker']))}</span>{tbadge}
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
@@ -1379,10 +1382,22 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
+            _hk = str(h.get("kind", "")).strip().lower()
+            if _hk not in ("stock", "etf"):
+                _hk = "stock"
+            try:
+                _hev = float(h.get("est_next_1y"))
+            except Exception:
+                _hev = float("nan")
+            try:
+                _hr1y = float(h.get("ret_1y"))
+            except Exception:
+                _hr1y = float("nan")
             hm_rows.append(f"""
-<div class="row hm">
+<div class="row hm k-{_hk}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
+    <span class="kchip {_hk}">{_hk.upper()}</span>
     <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span></div>
   <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
@@ -1392,10 +1407,14 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
 </div>""")
         hm_html = (
             '<h2>Honorable mentions — cleared the bar, didn\u2019t make the cut</h2>\n'
+            '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
+            '<button class="sbtn on" data-k="ev">Expected value</button>'
+            '<button class="sbtn" data-k="r1y">1-year return</button></div>\n'
             '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
             '<div>1-year return</div><div>Expected value</div>'
             '<div>Confidence</div><div>Why not picked</div></div>\n'
-            + "\n".join(hm_rows) + "\n")
+            '<div class="picklist" id="pl2">\n'
+            + "\n".join(hm_rows) + "\n</div>\n")
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -1502,6 +1521,15 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }}
 .why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
 .row.hm {{ opacity: 0.88; }}
+.row.k-stock .tick {{ color: #ffffff; }}
+.row.k-etf .tick {{ color: #7dd3fc; }}
+.kchip {{ display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }}
+.kchip.stock {{ color: #4ade80; background: rgba(74,222,128,0.12);
+  border: 1px solid rgba(74,222,128,0.35); }}
+.kchip.etf {{ color: #7dd3fc; background: rgba(125,211,252,0.12);
+  border: 1px solid rgba(125,211,252,0.35); }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}

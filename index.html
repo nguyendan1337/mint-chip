@@ -104,6 +104,15 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }
 .why { font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }
 .row.hm { opacity: 0.88; }
+.row.k-stock .tick { color: #ffffff; }
+.row.k-etf .tick { color: #7dd3fc; }
+.kchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.kchip.stock { color: #4ade80; background: rgba(74,222,128,0.12);
+  border: 1px solid rgba(74,222,128,0.35); }
+.kchip.etf { color: #7dd3fc; background: rgba(125,211,252,0.12);
+  border: 1px solid rgba(125,211,252,0.35); }
 @media (max-width: 700px) {
   h1 { font-size: 20px; }
   .row { grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }
@@ -130,7 +139,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 <div class="picklist" id="pl0">
 
-<div class="row" data-ev="0.15889726270052343" data-r1y="1.0458732551596226">
+<div class="row k-stock" data-ev="0.15889726270052343" data-r1y="1.0458732551596226">
   <div class="id"><span class="rank">1</span>
     <span class="tick">AAMI</span>
     <span class="nm">Acadian Asset Management Inc.</span></div>
@@ -141,7 +150,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.13239283591489343" data-r1y="1.1092201307517597">
+<div class="row k-stock" data-ev="0.13239283591489343" data-r1y="1.1092201307517597">
   <div class="id"><span class="rank">2</span>
     <span class="tick">FTNT</span>
     <span class="nm">Fortinet, Inc.</span></div>
@@ -152,7 +161,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">B</div>
 </div>
 
-<div class="row" data-ev="0.12936160815023126" data-r1y="0.7758507686800749">
+<div class="row k-stock" data-ev="0.12936160815023126" data-r1y="0.7758507686800749">
   <div class="id"><span class="rank">3</span>
     <span class="tick">VCTR</span>
     <span class="nm">Victory Capital Holdings, Inc.</span></div>
@@ -163,7 +172,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.11226949438723648" data-r1y="0.42039997756269254">
+<div class="row k-stock" data-ev="0.11226949438723648" data-r1y="0.42039997756269254">
   <div class="id"><span class="rank">4</span>
     <span class="tick">IEX</span>
     <span class="nm">IDEX Corporation</span></div>
@@ -174,7 +183,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.11175998515485444" data-r1y="0.4849676106692651">
+<div class="row k-stock" data-ev="0.11175998515485444" data-r1y="0.4849676106692651">
   <div class="id"><span class="rank">5</span>
     <span class="tick">APLE</span>
     <span class="nm">Apple Hospitality REIT, Inc.</span></div>
@@ -185,7 +194,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.11131694089618116" data-r1y="0.9903775129189578">
+<div class="row k-stock" data-ev="0.11131694089618116" data-r1y="0.9903775129189578">
   <div class="id"><span class="rank">6</span>
     <span class="tick">ARW</span>
     <span class="nm">Arrow Electronics, Inc.</span></div>
@@ -196,7 +205,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">B</div>
 </div>
 
-<div class="row" data-ev="0.10887515602208843" data-r1y="0.7355397900215088">
+<div class="row k-stock" data-ev="0.10887515602208843" data-r1y="0.7355397900215088">
   <div class="id"><span class="rank">7</span>
     <span class="tick">CON</span>
     <span class="nm">Concentra Group Holdings Parent, Inc.</span></div>
@@ -207,7 +216,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.10163077148324806" data-r1y="0.5183233161545446">
+<div class="row k-stock" data-ev="0.10163077148324806" data-r1y="0.5183233161545446">
   <div class="id"><span class="rank">8</span>
     <span class="tick">PK</span>
     <span class="nm">Park Hotels &amp; Resorts Inc.</span></div>
@@ -218,7 +227,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.09479781094723334" data-r1y="0.4465301974707716">
+<div class="row k-stock" data-ev="0.09479781094723334" data-r1y="0.4465301974707716">
   <div class="id"><span class="rank">9</span>
     <span class="tick">NDSN</span>
     <span class="nm">Nordson Corporation</span></div>
@@ -229,7 +238,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.032666346675201" data-r1y="0.8231718979167286">
+<div class="row k-stock" data-ev="0.032666346675201" data-r1y="0.8231718979167286">
   <div class="id"><span class="rank">10</span>
     <span class="tick">TGT</span>
     <span class="nm">Target Corporation</span></div>
@@ -250,7 +259,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 <div class="picklist" id="pl1">
 
-<div class="row" data-ev="0.09705794894317962" data-r1y="0.37241575185537434">
+<div class="row k-etf" data-ev="0.09705794894317962" data-r1y="0.37241575185537434">
   <div class="id"><span class="rank">1</span>
     <span class="tick">CIBR</span>
     <span class="nm">First Trust NASDAQ Cybersecurity ETF</span></div>
@@ -261,7 +270,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">B</div>
 </div>
 
-<div class="row" data-ev="0.06854841860476235" data-r1y="0.3849154617826782">
+<div class="row k-etf" data-ev="0.06854841860476235" data-r1y="0.3849154617826782">
   <div class="id"><span class="rank">2</span>
     <span class="tick">VFLO</span>
     <span class="nm">Victoryshares Free Cash Flow ETF</span></div>
@@ -272,7 +281,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
+<div class="row k-etf" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
   <div class="id"><span class="rank">3</span>
     <span class="tick">SKYY</span>
     <span class="nm">First Trust Cloud Computing ETF</span></div>
@@ -283,7 +292,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">B</div>
 </div>
 
-<div class="row" data-ev="0.043751344654313934" data-r1y="0.28342631560390985">
+<div class="row k-etf" data-ev="0.043751344654313934" data-r1y="0.28342631560390985">
   <div class="id"><span class="rank">4</span>
     <span class="tick">QTOP</span>
     <span class="nm">iShares Nasdaq Top 30 Stocks ETF</span></div>
@@ -322,11 +331,14 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="titem"><b>VFLO</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">news+price re-verified 2026-10-03: intact: no post-pick trading yet; FCF factor, calmest risk profile in pool</span></div></div><div class="tledger"><a href="thesis_ledger.jsonl">full ledger (JSONL)</a></div></details>
 
 <h2>Honorable mentions — cleared the bar, didn’t make the cut</h2>
+<div class="sortctl" data-pl="pl2"><span>Sort by:</span> <button class="sbtn on" data-k="ev">Expected value</button><button class="sbtn" data-k="r1y">1-year return</button></div>
 <div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div><div>1-year return</div><div>Expected value</div><div>Confidence</div><div>Why not picked</div></div>
+<div class="picklist" id="pl2">
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.09934734710692851" data-r1y="0.9308695509508491">
   <div class="id"><span class="rank">1</span>
     <span class="tick">NTAP</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">NetApp, Inc.</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+93.1%</div><div class="track"><div class="bar pos" style="width:62.1%"></div></div></div>
@@ -335,9 +347,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.09679160962615975" data-r1y="1.1049601232625377">
   <div class="id"><span class="rank">2</span>
     <span class="tick">AVT</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">Avnet, Inc.</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+110.5%</div><div class="track"><div class="bar pos" style="width:73.7%"></div></div></div>
@@ -346,9 +359,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.09634196351302729" data-r1y="1.3164286932726208">
   <div class="id"><span class="rank">3</span>
     <span class="tick">BHE</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">Benchmark Electronics, Inc.</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+131.6%</div><div class="track"><div class="bar pos" style="width:87.8%"></div></div></div>
@@ -357,9 +371,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-etf" data-ev="0.0957536217218114" data-r1y="0.3293175030247879">
   <div class="id"><span class="rank">4</span>
     <span class="tick">BUG</span>
+    <span class="kchip etf">ETF</span>
     <span class="nm">Global X Cybersecurity ETF</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+32.9%</div><div class="track"><div class="bar pos" style="width:22.0%"></div></div></div>
@@ -368,9 +383,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">overlaps CIBR (33%) — kept the higher-EV fund</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.08329291295510274" data-r1y="0.6825263457525137">
   <div class="id"><span class="rank">5</span>
     <span class="tick">CSCO</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">Cisco Systems, Inc.</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+68.3%</div><div class="track"><div class="bar pos" style="width:45.5%"></div></div></div>
@@ -379,9 +395,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.08056429524650541" data-r1y="0.3818881527145064">
   <div class="id"><span class="rank">6</span>
     <span class="tick">CNO</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">CNO Financial Group, Inc.</span></div>
   <div class="sec">Financial Services</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.2%</div><div class="track"><div class="bar pos" style="width:25.5%"></div></div></div>
@@ -390,9 +407,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.07576666790874774" data-r1y="0.5284696356976939">
   <div class="id"><span class="rank">7</span>
     <span class="tick">AMG</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">Affiliated Managers Group, Inc.</span></div>
   <div class="sec">Financial Services</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+52.8%</div><div class="track"><div class="bar pos" style="width:35.2%"></div></div></div>
@@ -401,9 +419,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.07429112868548479" data-r1y="0.6502227824544482">
   <div class="id"><span class="rank">8</span>
     <span class="tick">DRH</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">DiamondRock Hospitality Company</span></div>
   <div class="sec">Real Estate</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+65.0%</div><div class="track"><div class="bar pos" style="width:43.3%"></div></div></div>
@@ -412,9 +431,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Real Estate cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.07269608570726974" data-r1y="0.3748722196442078">
   <div class="id"><span class="rank">9</span>
     <span class="tick">PFG</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">Principal Financial Group, Inc.</span></div>
   <div class="sec">Financial Services</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+37.5%</div><div class="track"><div class="bar pos" style="width:25.0%"></div></div></div>
@@ -423,15 +443,17 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
 </div>
 
-<div class="row hm">
+<div class="row hm k-stock" data-ev="0.06731173729050409" data-r1y="0.4679529155778652">
   <div class="id"><span class="rank">10</span>
     <span class="tick">MSM</span>
+    <span class="kchip stock">STOCK</span>
     <span class="nm">MSC Industrial Direct Co., Inc.</span></div>
   <div class="sec">Industrials</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+46.8%</div><div class="track"><div class="bar pos" style="width:31.2%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.7%</div><div class="track"><div class="bar est" style="width:33.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="why" data-cap="Why not picked">Industrials cap full</div>
+</div>
 </div>
 
 <div class="note">
