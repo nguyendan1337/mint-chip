@@ -2821,7 +2821,14 @@ def thesis_check(track_days=THESIS_TRACK_DAYS):
         if t not in px:
             continue
         s = px[t].dropna()
-        s = s[s.index >= pd.Timestamp(e["date"])]
+        s = px[t].dropna()
+        # Anchor to the last available bar on or before the pick date, so
+        # weekend picks (dated Sat/Sun with no price bars) measure from
+        # Friday's close instead of tracking nothing.
+        _anchor = s.index[s.index <= pd.Timestamp(e["date"])]
+        if len(_anchor) == 0:
+            continue
+        s = s.loc[_anchor[-1]:]
         if len(s) == 0:
             continue
         pp = float(e["pick_price"])
