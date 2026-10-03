@@ -626,6 +626,12 @@ def log_levers(args):
         "dd_freq = fraction of rolling 1m windows losing >10%")
     log("  character = Composure z-sum of quality/entry-timing/structure "
         "(excludes momentum+volatility, no double-count), clamped [-2,2]")
+    log("  character(stocks) = 0.10*z_roe + 0.08*z_margin + 0.07*z_earn + 0.05*z_fcf "
+        "+ 0.08*z_blowoff + 0.04*z_ext + 0.04*z_trend + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
+    log("  character(ETFs)   = 0.05*z_blowoff + 0.05*z_trend + 0.10*z_expense "
+        "+ 0.10*z_aum + 0.10*z_dvol")
+    log("  (z_* are cross-sectional z-scores across the scored outperformer set; "
+        "per-ticker character parts are in the 'character breakdown' section)")
     log(f"EV floor --min-est={args.min_est:+.1%}: every pick must earn its place; "
         "empty slots beat filler")
     log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
@@ -701,6 +707,39 @@ _ETF_SCORE_GROUPS = {
     "liq": [(0.10, "z_dvol")],
     "struct": [(0.10, "z_expense"), (0.10, "z_aum")],
 }
+
+
+_CHAR_PARTS_STOCK = [("z_roe", 0.10), ("z_margin", 0.08), ("z_earn", 0.07),
+                      ("z_fcf", 0.05), ("z_blowoff", 0.08), ("z_ext", 0.04),
+                      ("z_trend", 0.04), ("z_dte", 0.05), ("z_fpe", 0.03),
+                      ("z_ptb", 0.02)]
+_CHAR_PARTS_ETF = [("z_blowoff", 0.05), ("z_trend", 0.05), ("z_expense", 0.10),
+                   ("z_aum", 0.10), ("z_dvol", 0.10)]
+
+
+def log_character_breakdown(df, label, parts):
+    """Per-ticker Composure decomposition: which sub-components drive character.
+
+    Lets an independent reviewer judge the scorer's construction, not just its
+    output — e.g. whether z_earn is doing real work or just adding noise.
+    """
+    log(f"--- character breakdown: {label} ({len(df)} tickers) ---")
+    for _, r in df.iterrows():
+        try:
+            comps = []
+            for z, w in parts:
+                v = r.get(z, float("nan"))
+                try:
+                    v = float(v)
+                except Exception:
+                    v = float("nan")
+                if v != v:  # NaN -> 0, mirroring the .fillna(0) in scoring
+                    v = 0.0
+                comps.append(f"{z[2:]} {w * v:+.2f}")
+            log(f"  {r['ticker']:6s} char={float(r['character']):+.2f} "
+                f"({' | '.join(comps)})")
+        except Exception:
+            continue
 
 
 def log_score_breakdown(df, label, groups):
@@ -821,9 +860,8 @@ def winsorize_base(df):
     df["base_w"] = df["base_score"].clip(upper=cap)
     df.attrs["base_cap"] = cap
     clipped = df[df["base_score"] > cap]["ticker"].tolist()
-    if clipped:
-        log(f"winsorize: base_score capped at p95={cap:+.2f}; "
-            f"clipped: {clipped}")
+    log(f"winsorize: base_score p95 cap={cap:+.2f}"
+        + (f"; clipped: {clipped}" if clipped else "; nothing clipped"))
     return df, cap
 
 
@@ -1823,6 +1861,8 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
               f"base={r['base_score']:+.2f} 1y={r['ret_1y']:+.0%}")
     log(f"etf base_score stats: {edf['base_score'].describe().to_dict()}")
     log_score_breakdown(edf, "etfs", _ETF_SCORE_GROUPS)
+    _etf_pool = edf.head(args.n_etf_research) if not edf.empty else edf
+    log_character_breakdown(_etf_pool, "etfs (research pool)", _CHAR_PARTS_ETF)
     edf, egate = apply_risk_gates(edf, max_vol=args.max_vol, min_dd=args.min_dd)
     edf, ecap = winsorize_base(edf)
     edf["base_cap"] = ecap
@@ -2743,6 +2783,8 @@ def main():
     log(f"base_score stats: {df['base_score'].describe().to_dict()}")
     log_score_breakdown(df.head(50), "stocks (research pool: top 50)",
                         _STOCK_SCORE_GROUPS)
+    log_character_breakdown(df.head(50), "stocks (research pool: top 50)",
+                            _CHAR_PARTS_STOCK)
 
     # 6b) Enrich top 100 with insider + earnings signals, adjust scores
     enrich_n = min(100, len(df))
