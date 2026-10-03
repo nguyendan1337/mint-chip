@@ -1057,21 +1057,27 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
 
     sections = [(titles[0] if titles else "Top 10 stocks — most confident", stocks_df),
                 (titles[1] if titles else "Top 10 ETFs — most confident", etfs_df)]
-    # scale bars to the largest absolute value shown
-    vmax = 0.01
+    # bars get independent scales per column: 1y returns dwarf expected
+    # values, so a shared scale would shrink every gold bar to a sliver and
+    # make them useless. Each column's best fills its own track.
+    vmax_1y, vmax_est = 0.01, 0.01
     for _, df in sections:
         for _, r in df.iterrows():
-            for k in ("ret_1y", "est_next_1y"):
-                try:
-                    vmax = max(vmax, abs(float(r[k])))
-                except Exception:
-                    pass
+            try:
+                vmax_1y = max(vmax_1y, abs(float(r["ret_1y"])))
+            except Exception:
+                pass
+            try:
+                vmax_est = max(vmax_est, abs(float(r["est_next_1y"])))
+            except Exception:
+                pass
 
     def bar(val, gold=False):
         try:
             v = float(val)
         except Exception:
             return ""
+        vmax = vmax_est if gold else vmax_1y
         w = max(2, abs(v) / vmax * 100)
         cls = "neg" if v < 0 else ("est" if gold else "pos")
         return (f'<div class="track"><div class="bar {cls}" style="width:{w:.1f}%">'
@@ -1092,6 +1098,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
   <div>Confidence</div><div>Stability</div>
 </div>
 """
+    # ticker -> latest thesis status, for watch/broken badges on pick rows
+    thmap = {str(t.get("ticker")): t for t in (thesis or [])}
     rows_html = ""
     for title, df in sections:
         rows_html += f'<h2>{_html.escape(title)}</h2>\n' + header
@@ -1100,10 +1108,15 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
             ctry = str(r.get("country") or "")
             nonus = (f' <span class="nonus" title="Domiciled in {_html.escape(ctry)}">'
                      f"non-US</span>" if ctry and ctry != "United States" else "")
+            th = thmap.get(str(r["ticker"]), {})
+            tst = th.get("status", "intact")
+            tbadge = (f' <span class="tbadge {tst}" '
+                      f'title="{_html.escape(str(th.get("reason", "")))}">{tst}</span>'
+                      if tst in ("watch", "broken") else "")
             rows_html += f"""
 <div class="row">
   <div class="id"><span class="rank">{i}</span>
-    <span class="tick">{_html.escape(str(r['ticker']))}</span>
+    <span class="tick">{_html.escape(str(r['ticker']))}</span>{tbadge}
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
@@ -1117,58 +1130,37 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
     etf_bench = meta.get("etf_benchmark", bench)
     bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
                    if etf_bench != bench else bench)
-    # --- Thesis watch: compact by design. "intact" is the boring default and
-    # collapses behind a <details>; watch/broken are the signal and stay
-    # visible, broken first. A one-line summary up top keeps the section
-    # readable no matter how many names accumulate.
+    # --- Thesis watch: a slim strip, not a section. The picks are already on
+    # this page; repeating them as a 15-row table doubles the page for no
+    # new information. One summary line carries the state; names needing
+    # attention get inline chips here AND a badge on their main-table row.
+    # The full per-ticker record lives in thesis_ledger.jsonl (linked).
     thesis_html = ""
     if thesis:
-        def _trow(t):
-            rsp = t.get("ret_since_pick")
-            try:
-                rsp = float(rsp)
-                if abs(rsp) < 0.0005:
-                    rsp = 0.0
-                rsp_txt = f"{rsp:+.1%}"
-                rsp_cls = "pos" if rsp >= 0 else "neg"
-            except Exception:
-                rsp_txt, rsp_cls = "—", ""
-            st = str(t.get("status", "intact"))
-            held = t.get("days_held", 0)
-            held_txt = f"{held}d" if isinstance(held, int) else str(held)
-            return (
-                '<div class="trow">'
-                f'<div data-cap="Ticker"><b>{_html.escape(str(t.get("ticker", "")))}</b></div>'
-                f'<div data-cap="Held">{_html.escape(held_txt)}</div>'
-                f'<div data-cap="Since pick" class="{rsp_cls}">{rsp_txt}</div>'
-                f'<div data-cap="Status"><span class="badge {st}">{_html.escape(st)}</span></div>'
-                f'<div data-cap="Note" class="tnote">{_html.escape(str(t.get("reason", "")))}</div>'
-                '</div>')
-        _order = {"broken": 0, "watch": 1, "intact": 2}
-        srows = sorted(thesis,
-                       key=lambda t: (_order.get(t.get("status"), 2),
-                                      str(t.get("ticker", ""))))
         nb = sum(1 for t in thesis if t.get("status") == "broken")
         nw = sum(1 for t in thesis if t.get("status") == "watch")
         ni = len(thesis) - nb - nw
+        chips = []
+        for t in sorted(thesis, key=lambda t: ({"broken": 0, "watch": 1}.get(
+                t.get("status"), 2), str(t.get("ticker", "")))):
+            if t.get("status") in ("watch", "broken"):
+                try:
+                    rsptxt = f" {float(t.get('ret_since_pick')):+.1%}"
+                except Exception:
+                    rsptxt = ""
+                chips.append(
+                    f'<span class="tbadge {t["status"]}" '
+                    f'title="{_html.escape(str(t.get("reason", "")))}">'
+                    f'{_html.escape(str(t.get("ticker", "")))} · '
+                    f'{t["status"]}{rsptxt}</span>')
+        chips_html = (" " + " ".join(chips)) if chips else ""
         attn = " · needs attention" if (nb or nw) else ""
-        open_rows = [_trow(t) for t in srows if t.get("status") != "intact"]
-        intact_rows = [_trow(t) for t in srows if t.get("status") != "broken"
-                       and t.get("status") != "watch"]
-        body = "\n".join(open_rows)
-        if intact_rows:
-            det = ('<details class="tdet"><summary>'
-                   f'{ni} intact — expand</summary>\n'
-                   + "\n".join(intact_rows) + '\n</details>')
-            body = (body + "\n" + det) if body else det
         thesis_html = (
-            "<h2>Thesis watch</h2>\n"
-            f'<div class="tsum">{len(thesis)} tracked · {ni} intact · '
-            f'{nw} watch · {nb} broken{attn}</div>\n'
-            '<div class="thesis">\n'
-            '<div class="trow thead"><div>Ticker</div><div>Held</div>'
-            '<div>Since pick</div><div>Status</div><div>Note</div></div>\n'
-            + body + "\n</div>\n")
+            '<div class="twatch">'
+            f'<b>Thesis watch</b> · {len(thesis)} tracked · {ni} intact · '
+            f'{nw} watch · {nb} broken{attn}{chips_html}'
+            ' <span class="tledger"><a href="thesis_ledger.jsonl">full ledger</a></span>'
+            '</div>\n')
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
@@ -1242,31 +1234,19 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }}
 .note b {{ color: var(--gold); }}
-.thesis {{ margin-top: 6px; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 16px; overflow: hidden; background: rgba(255,255,255,0.02); }}
-.trow {{ display: grid; grid-template-columns: 1.2fr 0.8fr 1fr 1fr 2.4fr;
-  gap: 8px; padding: 10px 18px; font-size: 13px; align-items: center;
-  border-bottom: 1px solid rgba(255,255,255,0.05); }}
-.trow:last-child {{ border-bottom: none; }}
-.trow.thead {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
-  color: #93a093; padding: 8px 18px; }}
-.badge {{ display: inline-block; font-size: 11px; font-weight: 700;
-  border-radius: 999px; padding: 2px 10px; }}
-.badge.intact {{ color: #4ade80; background: rgba(74,222,128,0.12);
-  border: 1px solid rgba(74,222,128,0.35); }}
-.badge.watch {{ color: #fbbf24; background: rgba(251,191,36,0.12);
+.twatch {{ margin-top: 22px; font-size: 13px; color: #9aa79a; padding: 12px 18px;
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+  background: rgba(255,255,255,0.02); line-height: 2; }}
+.twatch b {{ color: var(--gold); }}
+.tbadge {{ display: inline-block; font-size: 11px; font-weight: 700;
+  border-radius: 999px; padding: 1px 9px; margin-left: 8px; white-space: nowrap; }}
+.tbadge.watch {{ color: #fbbf24; background: rgba(251,191,36,0.12);
   border: 1px solid rgba(251,191,36,0.35); }}
-.badge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
+.tbadge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
   border: 1px solid rgba(248,113,113,0.35); }}
-.tnote {{ font-size: 11px; color: #9aa79a; }}
-.tsum {{ font-size: 13px; color: #9aa79a; margin: -4px 0 10px; }}
-.tdet {{ border-top: 1px solid rgba(255,255,255,0.05); }}
-.tdet summary {{ cursor: pointer; padding: 10px 18px; font-size: 13px;
-  color: #9aa79a; list-style: none; }}
-.tdet summary::-webkit-details-marker {{ display: none; }}
-.tdet summary::before {{ content: "▸  "; color: var(--gold); }}
-.tdet[open] summary::before {{ content: "▾  "; }}
-.tdet[open] summary {{ border-bottom: 1px solid rgba(255,255,255,0.05); }}
+.id .tbadge {{ margin-left: 6px; }}
+.tledger a {{ color: #9aa79a; font-size: 12px; margin-left: 10px;
+  text-decoration: underline; text-underline-offset: 2px; }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
@@ -1277,12 +1257,6 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: #93a093; margin-bottom: 3px; }}
   .cf, .stab {{ text-align: left; font-size: 14px; }}
-  .trow {{ grid-template-columns: 1fr 1fr; row-gap: 6px; }}
-  .trow.thead {{ display: none; }}
-  .trow > div::before {{
-    content: attr(data-cap); display: block;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
-    color: #93a093; margin-bottom: 2px; }}
 }}
 @media (prefers-color-scheme: light) {{
   body {{ color: #1c241c;
@@ -1339,9 +1313,12 @@ unstable → near zero; obvious decliners → negative. { "All tickers you suppl
 red = negative. Confidence = how much the researcher trusts the assessment
 given headline quality. Stability grades blend volatility, drawdown and event
 dependence (A = calmest). A "non-US" tag marks names domiciled outside the
-United States. The Thesis watch section tracks every pick the system has
-published: a one-line summary up top, names needing attention (watch/broken)
-shown openly, and intact names collapsed — expand to see them. Not financial advice. Past performance doesn't
+United States. Bars are scaled independently per column, so the strongest
+1-year return and the strongest expected value each fill their own bar —
+green and gold bars aren't on the same scale. The Thesis watch strip
+summarizes every pick the system has published (intact / watch / broken);
+a watch or broken badge also appears on that pick's row, and the full
+per-ticker record is linked as the ledger. Not financial advice. Past performance doesn't
 predict future returns.
 </div>
 </body></html>
