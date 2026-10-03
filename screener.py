@@ -223,37 +223,42 @@ def apply_trash_filters(rows, closes, infos, us_only=True):
     Returns (kept_rows, report_dict).
     """
     report = {}
+    dropped_names = {}
+    def _drop(reason, t):
+        report[reason] = report.get(reason, 0) + 1
+        dropped_names.setdefault(reason, []).append(t)
     kept = []
     for r in rows:
         t = r["ticker"]
         s = closes.get(t)
         if s is None or len(s) < 120:
-            report["no_price_history"] = report.get("no_price_history", 0) + 1
+            _drop("no_price_history", t)
             continue
         if _religious_theme(r.get("name", ""), t):
-            report["religious_theme"] = report.get("religious_theme", 0) + 1
+            _drop("religious_theme", t)
             continue
         dd = max_drawdown(s)
         if not pd.isna(dd) and dd < -0.70:
-            report["drawdown_worse_than_-70%"] = report.get("drawdown_worse_than_-70%", 0) + 1
+            _drop("drawdown_worse_than_-70%", t)
             continue
         info = infos.get(t, {})
         if us_only:
             ctry = info.get("country")
             if ctry and ctry != "United States":
-                report["foreign_domicile"] = report.get("foreign_domicile", 0) + 1
+                _drop("foreign_domicile", t)
                 continue
         try:
             adv = info.get("averageDailyVolume10Day") or info.get("averageVolume") or 0
             px = info.get("regularMarketPrice") or s.iloc[-1]
             if float(adv) * float(px) < 2_000_000:
-                report["dollar_volume_lt_$2M"] = report.get("dollar_volume_lt_$2M", 0) + 1
+                _drop("dollar_volume_lt_$2M", t)
                 continue
         except Exception:
             pass
         kept.append(r)
     report["kept"] = len(kept)
     report["dropped_total"] = len(rows) - len(kept)
+    report["dropped_names"] = dropped_names
     return kept, report
 
 
@@ -587,9 +592,10 @@ def apply_risk_gates(df, max_vol=0.80, min_dd=-0.40):
     report = {"gated_vol_gt": f"{max_vol:.0%}", "n_gated_vol": int(gated_vol.sum()),
               "gated_dd_lt": f"{min_dd:.0%}", "n_gated_dd": int(gated_dd.sum()),
               "gated_total": len(gated), "kept": len(kept),
-              "gated_tickers": gated["ticker"].tolist()[:20]}
+              "gated_tickers": gated["ticker"].tolist()}
     log(f"Risk gates: {report['gated_total']} excluded "
         f"(vol>{max_vol:.0%}: {report['n_gated_vol']}, dd<{min_dd:.0%}: {report['n_gated_dd']})")
+    log(f"  risk-gated tickers: {report['gated_tickers']}")
     return kept, report
 
 
@@ -1458,15 +1464,28 @@ def apply_news_adjustment(df, risk_themes, top_k=50, cache=None, w_outlier=1.0):
     return candidates.sort_values("adj_score", ascending=False)
 
 
+def _ev_of(r):
+    """Expected value as a float; NaN sorts as -inf so it never wins a tiebreak."""
+    try:
+        v = float(r.get("est_next_1y", float("nan")))
+        return v if v == v else float("-inf")
+    except Exception:
+        return float("-inf")
+
+
 def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
                              veto_dep=None, initial_counts=None):
     """Pick top n with sector cap. Never fills slots with sub-floor or
     vetoed stocks: fewer strong picks beats 10 diluted ones.
+    EV tiebreak: when the cap forces a choice inside a sector, the
+    highest-expected-value names survive — a hard cap should cut the
+    lowest-EV name, not whichever final_score happened to order last.
     initial_counts seeds the per-sector tally (used by the fill pass so the
     cap stays hard across both passes)."""
     picked, skipped = [], Counter()
     skipped_names = {}
     sector_counts = Counter(initial_counts) if initial_counts else Counter()
+    picked_by_sector = {}  # sec -> list of picked rows (enables the EV tiebreak)
     for _, r in df.iterrows():
         if r["final_score"] < min_score:
             skipped["below_floor"] += 1
@@ -1482,11 +1501,31 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
                 pass
         sec = r["sector"]
         if sector_counts[sec] >= max_per_sector:
+            cur_ev = _ev_of(r)
+            incumbents = picked_by_sector.get(sec, [])
+            if incumbents:
+                weakest = min(incumbents, key=_ev_of)
+                if cur_ev > _ev_of(weakest):
+                    # EV tiebreak: swap the weakest picked name in this sector out
+                    picked = [x for x in picked if x is not weakest]
+                    picked_by_sector[sec] = [x for x in incumbents if x is not weakest]
+                    skipped["sector_cap"] += 1
+                    skipped_names.setdefault("sector_cap", []).append(
+                        f"{weakest['ticker']}({sec},ev={_ev_of(weakest):+.1%})")
+                    log(f"  ev_tiebreak: {r['ticker']} ({cur_ev:+.1%}) replaces "
+                        f"{weakest['ticker']} ({_ev_of(weakest):+.1%}) in {sec}")
+                    picked.append(r)
+                    picked_by_sector[sec].append(r)
+                    # sector_counts unchanged: still at cap
+                    if len(picked) >= n:
+                        break
+                    continue
             skipped["sector_cap"] += 1
             skipped_names.setdefault("sector_cap", []).append(
                 f"{r['ticker']}({sec})")
             continue
         picked.append(r)
+        picked_by_sector.setdefault(sec, []).append(r)
         sector_counts[sec] += 1
         if len(picked) >= n:
             break
@@ -1825,6 +1864,27 @@ def pick_final(adj, args, llm_path):
                 log(f"fill pass ({label}): +{len(fill)} within category cap: "
                     f"{fill['ticker'].tolist()}")
                 first = pd.concat([first, fill], ignore_index=True)
+        # divergence self-check (informational, not a gate): how much does
+        # final_score-ordered selection disagree with pure EV ordering?
+        # Flags high-EV unpicked names (e.g. HPE) for the monthly audit.
+        try:
+            ev_rank = est_ok.sort_values("est_next_1y", ascending=False)
+            ev_top = list(ev_rank["ticker"].head(n))
+            sel = list(first["ticker"]) if len(first) else []
+
+            def _fmt(t):
+                v = float(ev_rank.loc[ev_rank["ticker"] == t,
+                                     "est_next_1y"].iloc[0])
+                return "%s(%+.1f%%)" % (t, 100 * v)
+
+            hi_unpicked = [_fmt(t) for t in ev_top if t not in sel]
+            lo_picked = [_fmt(t) for t in sel if t not in ev_top]
+            log("selection/divergence check (%s): EV-top-%d overlap %d/%d; "
+                "high-EV unpicked: %s; picked outside EV-top-%d: %s"
+                % (label, n, n - len(hi_unpicked), n,
+                   hi_unpicked or ["none"], n, lo_picked or ["none"]))
+        except Exception as e:
+            log("selection/divergence check (%s): skipped (%s)" % (label, e))
         return first
 
     final_stocks = pick_group(srank, args.n_stocks, args.max_per_sector, "stocks")
@@ -2540,11 +2600,17 @@ def main():
                                                us_only=args.us_only)
     log(f"Trash filter: {trash_report['dropped_total']} dropped, {trash_report['kept']} kept")
     for k, v in trash_report.items():
-        if k not in ("kept", "dropped_total") and v:
+        if k not in ("kept", "dropped_total", "dropped_names") and v:
             log(f"  trash reason - {k}: {v}")
+    for k, names in trash_report.get("dropped_names", {}).items():
+        # full name lists for the interesting (small) reasons; foreign_domicile
+        # is large and uninteresting, so cap it
+        shown = names if k != "foreign_domicile" else names[:20]
+        suffix = f" (+{len(names) - 20} more)" if k == "foreign_domicile" and len(names) > 20 else ""
+        log(f"  trash dropped[{k}]: {shown}{suffix}")
     print(f"\nTrash filter: {trash_report['dropped_total']} dropped, {trash_report['kept']} kept")
     for k, v in trash_report.items():
-        if k not in ("kept", "dropped_total") and v:
+        if k not in ("kept", "dropped_total", "dropped_names") and v:
             print(f"  - {k}: {v}")
     if not kept:
         print("Everything was filtered as trash. Loosen filters and retry.")
