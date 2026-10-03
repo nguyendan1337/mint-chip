@@ -1194,8 +1194,7 @@ body {{ font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-s
     radial-gradient(600px 400px at 55% 45%, rgba(74,222,128,0.05), transparent 65%),
     #070b09; background-attachment: fixed; }}
 h1 {{ font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
-  background: linear-gradient(100deg, #a7f3c7, var(--green) 45%, var(--green-deep));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: #a7f3c7;
   text-shadow: 0 2px 24px rgba(74,222,128,0.25); margin-bottom: 4px; }}
 h1 span.chip {{ -webkit-text-fill-color: var(--gold); color: var(--gold); }}
 .tagline {{ font-size: 15px; font-style: italic; letter-spacing: 0.06em;
@@ -1289,8 +1288,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
       radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.12), transparent 60%),
       radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.14), transparent 60%),
       #f4f7f2; }}
-  h1 {{ background: linear-gradient(100deg, #4ade80, #15803d 55%, #166534);
-    text-shadow: none; }}
+  h1 {{ color: #15803d; text-shadow: none; }}
   h1 span {{ -webkit-text-fill-color: #6b756b; color: #6b756b; }}
   h1 span.chip {{ -webkit-text-fill-color: #b45309; color: #b45309; }}
   h2 {{ color: #15803d; text-shadow: none; }}
