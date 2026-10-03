@@ -1613,14 +1613,25 @@ document.querySelectorAll('.sortctl').forEach(function(ctl){{
         var rk = r.querySelector('.rank');
         if(rk) rk.textContent = i + 1;
       }});
+      if(pl.id === 'pl2'){{ applyHmLimit(); }}
     }});
   }});
 }});
+function applyHmLimit(){{
+  var pl2 = document.getElementById('pl2');
+  if(!pl2) return;
+  var open = pl2.classList.contains('showall');
+  Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){{
+    r.classList.toggle('hm-extra', !open && i >= 10);
+  }});
+}}
+applyHmLimit();
 var hmt = document.getElementById('hm-toggle');
 if(hmt){{
   hmt.addEventListener('click', function(){{
     var pl2 = document.getElementById('pl2');
     var open = pl2.classList.toggle('showall');
+    applyHmLimit();
     hmt.textContent = open ? 'Show fewer \u2191'
       : 'Show all ' + hmt.getAttribute('data-n') + ' \u2193';
   }});
