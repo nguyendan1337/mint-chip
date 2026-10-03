@@ -1588,8 +1588,9 @@ or hype-driven.
 Mint is built around a simple idea: find strength, question the story, respect
 the downside, and only make room for what earns it.
 
-Not financial advice. Past performance doesn&apos;t
-predict future returns.
+Not financial advice. Past performance doesn&apos;t predict future returns.
+Also: gremlins control the markets, they hate you personally, and they will do
+the exact opposite of your buys and sells out of pure spite.
 </div>
 <script>
 document.querySelectorAll('.sortctl').forEach(function(ctl){{
