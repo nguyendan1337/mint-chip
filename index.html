@@ -30,10 +30,19 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   text-shadow: 0 0 18px rgba(74,222,128,0.35); }
 .row { display: grid; grid-template-columns: 290px 160px 1fr 1fr 80px 70px;
   gap: 10px; align-items: center; padding: 12px 16px; margin-bottom: 10px;
-  background: rgba(255,255,255,0.045);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25); backdrop-filter: blur(14px) saturate(1.25);
-  border: 1px solid rgba(255,255,255,0.09); border-radius: 16px;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.10); }
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }
+.row::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
+    transparent 48%); }
+.row.head::before { display: none; }
+.row.k-stock { --sheen: rgba(125,211,252,0.13); }
+.row.k-etf { --sheen: rgba(196,181,253,0.13); }
 .row.head { background: none; border: none; box-shadow: none;
   -webkit-backdrop-filter: none; backdrop-filter: none;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
@@ -42,8 +51,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .row.head > div { overflow: visible; }
 @media (hover: hover) {
   .row { transition: border-color 0.25s ease, box-shadow 0.25s ease; }
-  .row:hover { border-color: rgba(255,255,255,0.18);
-    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.16); }
+  .row:hover { border-color: rgba(255,255,255,0.22);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }
 }
 .id { white-space: nowrap; text-overflow: ellipsis; }
 .id .nm { overflow: hidden; text-overflow: ellipsis; }
@@ -76,13 +85,14 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
 .note { position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
   color: #9aa79a; line-height: 1.6; padding: 16px 20px;
-  background: rgba(255,255,255,0.035);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 28px rgba(0,0,0,0.38); }
+  background: rgba(255,255,255,0.025);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,213,79,0.18); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 8px 28px rgba(0,0,0,0.38); }
 .note::before { content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(115deg, rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.025) 30%, rgba(255,255,255,0) 48%); }
+  background: linear-gradient(115deg, rgba(255,213,79,0.12) 0%,
+    rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 50%); }
 .note b { color: var(--gold); }
 .note p { margin: 0 0 13px; }
 .note p:last-child { margin-bottom: 0; }
@@ -292,13 +302,13 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="row k-etf" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
+<div class="row k-etf" data-ev="0.0461239070964403" data-r1y="0.8788231575831043">
   <div class="id"><span class="rank">3</span>
-    <span class="tick">SKYY</span>
-    <span class="nm">First Trust Cloud Computing ETF</span></div>
+    <span class="tick">SMH</span>
+    <span class="nm">VanEck Semiconductor ETF</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.5%</div><div class="track"><div class="bar pos" style="width:16.3%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:26.8%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+87.9%</div><div class="track"><div class="bar pos" style="width:58.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.6%</div><div class="track"><div class="bar est" style="width:23.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">B</div>
 </div>
@@ -512,8 +522,20 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
-<div class="row hm k-stock hm-extra" data-ev="0.04848773486181395" data-r1y="0.4301633353067458">
+<div class="row hm k-etf hm-extra" data-ev="0.053502189798911706" data-r1y="0.24492819805289434">
   <div class="id"><span class="rank">17</span>
+    <span class="tick">SKYY</span>
+    <span class="kchip etf">ETF</span>
+    <span class="nm">First Trust Cloud Computing ETF</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.5%</div><div class="track"><div class="bar pos" style="width:16.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:26.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="why" data-cap="Why not picked">Technology cap full</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.04848773486181395" data-r1y="0.4301633353067458">
+  <div class="id"><span class="rank">18</span>
     <span class="tick">RS</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Reliance, Inc.</span></div>
@@ -525,7 +547,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.04805768884961707" data-r1y="0.5744920512811231">
-  <div class="id"><span class="rank">18</span>
+  <div class="id"><span class="rank">19</span>
     <span class="tick">EXPD</span>
     <span class="kchip stock">STOCK</span>
     <span class="nm">Expeditors International of Washington</span></div>
@@ -534,18 +556,6 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.8%</div><div class="track"><div class="bar est" style="width:24.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Industrials cap full</div>
-</div>
-
-<div class="row hm k-etf hm-extra" data-ev="0.0461239070964403" data-r1y="0.8788231575831043">
-  <div class="id"><span class="rank">19</span>
-    <span class="tick">SMH</span>
-    <span class="kchip etf">ETF</span>
-    <span class="nm">VanEck Semiconductor ETF</span></div>
-  <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+87.9%</div><div class="track"><div class="bar pos" style="width:58.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.6%</div><div class="track"><div class="bar est" style="width:23.1%"></div></div></div>
-  <div class="cf" data-cap="Confidence">65%</div>
-  <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
 <div class="row hm k-etf hm-extra" data-ev="0.043562045990643866" data-r1y="0.39064162498078403">
@@ -557,7 +567,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+39.1%</div><div class="track"><div class="bar pos" style="width:26.0%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.4%</div><div class="track"><div class="bar est" style="width:21.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
-  <div class="why" data-cap="Why not picked">overlaps SMH (33%) — kept the higher-EV fund</div>
+  <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.04301879329663398" data-r1y="0.7289350406806332">
@@ -581,7 +591,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+100.3%</div><div class="track"><div class="bar pos" style="width:66.9%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.2%</div><div class="track"><div class="bar est" style="width:21.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
-  <div class="why" data-cap="Why not picked">overlaps SMH (48%) — kept the higher-EV fund</div>
+  <div class="why" data-cap="Why not picked">Technology cap full</div>
 </div>
 
 <div class="row hm k-stock hm-extra" data-ev="0.0413344990570229" data-r1y="0.5048792559075475">

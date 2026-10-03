@@ -655,8 +655,9 @@ def log_levers(args):
         f"--max-per-etf-category={args.max_per_etf_category} (ETFs); hard across both "
         "pick passes; cap ties broken by EV (highest-EV names survive)")
     log(f"--max-etf-overlap={args.max_etf_overlap:.0%}: pairwise top-10 holdings "
-        f"overlap cap for ETFs; lower-EV member of over-threshold pairs is "
-        f"excluded (redundancy is not diversification)")
+        f"overlap cap for ETFs, enforced on the SELECTED portfolio: when two "
+        f"picks overlap above the cap the lower-EV one is evicted and the slot "
+        f"refilled (redundancy is not diversification)")
     log(f"score floor --min-score={args.min_score}")
     log(f"final slots: --n-stocks={args.n_stocks} + --n-etfs={args.n_etfs}")
     log("--- end levers ---")
@@ -1390,10 +1391,19 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   text-shadow: 0 0 18px rgba(74,222,128,0.35); }}
 .row {{ display: grid; grid-template-columns: 290px 160px 1fr 1fr 80px 70px;
   gap: 10px; align-items: center; padding: 12px 16px; margin-bottom: 10px;
-  background: rgba(255,255,255,0.045);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25); backdrop-filter: blur(14px) saturate(1.25);
-  border: 1px solid rgba(255,255,255,0.09); border-radius: 16px;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.10); }}
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }}
+.row::before {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
+    transparent 48%); }}
+.row.head::before {{ display: none; }}
+.row.k-stock {{ --sheen: rgba(125,211,252,0.13); }}
+.row.k-etf {{ --sheen: rgba(196,181,253,0.13); }}
 .row.head {{ background: none; border: none; box-shadow: none;
   -webkit-backdrop-filter: none; backdrop-filter: none;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
@@ -1402,8 +1412,8 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .row.head > div {{ overflow: visible; }}
 @media (hover: hover) {{
   .row {{ transition: border-color 0.25s ease, box-shadow 0.25s ease; }}
-  .row:hover {{ border-color: rgba(255,255,255,0.18);
-    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.16); }}
+  .row:hover {{ border-color: rgba(255,255,255,0.22);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }}
 }}
 .id {{ white-space: nowrap; text-overflow: ellipsis; }}
 .id .nm {{ overflow: hidden; text-overflow: ellipsis; }}
@@ -1436,13 +1446,14 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }}
 .note {{ position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
   color: #9aa79a; line-height: 1.6; padding: 16px 20px;
-  background: rgba(255,255,255,0.035);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 28px rgba(0,0,0,0.38); }}
+  background: rgba(255,255,255,0.025);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,213,79,0.18); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 8px 28px rgba(0,0,0,0.38); }}
 .note::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(115deg, rgba(255,255,255,0.10) 0%,
-    rgba(255,255,255,0.025) 30%, rgba(255,255,255,0) 48%); }}
+  background: linear-gradient(115deg, rgba(255,213,79,0.12) 0%,
+    rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 50%); }}
 .note b {{ color: var(--gold); }}
 .note p {{ margin: 0 0 13px; }}
 .note p:last-child {{ margin-bottom: 0; }}
@@ -1813,57 +1824,108 @@ def holdings_overlap(h1, h2):
     return sum(min(h1[s], h2[s]) for s in set(h1) & set(h2))
 
 
-def apply_etf_overlap_cap(edf, max_overlap=0.30):
-    """Drop the lower-EV member of ETF pairs whose top-10 holdings overlap
-    exceeds max_overlap. Runs on the EV-floor passers, before selection."""
-    df = edf.sort_values("est_next_1y", ascending=False).copy()
-    tickers = list(df["ticker"])
-    if len(tickers) < 2:
-        return df
-    log(f"etf overlap: checking {len(tickers)} floor-passing ETFs "
-        f"(max overlap {max_overlap:.0%}, top-10 holdings)")
-    holds = {t: etf_top_holdings(t) for t in tickers}
-    ev = {t: float(df.loc[df["ticker"] == t, "est_next_1y"].iloc[0])
-          for t in tickers}
-    pairs = []
-    for i in range(len(tickers)):
-        for j in range(i + 1, len(tickers)):
-            a, b = tickers[i], tickers[j]
-            if not holds[a] or not holds[b]:
-                continue
-            pairs.append((holdings_overlap(holds[a], holds[b]), a, b))
-    pairs.sort(reverse=True)
-    alive, dropped = set(tickers), []
+def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
+                       min_score=0.0, veto_dep=None):
+    """Enforce the holdings-overlap cap on the SELECTED ETF portfolio.
+
+    While any two picks overlap above max_overlap (top-10 holdings), evict
+    the lower-EV one and refill the slot from eligible candidates that
+    neither breach the category cap nor overlap a survivor. A pre-selection
+    filter can't do this correctly: it drops funds for overlapping a
+    'winner' that may never make the chart (e.g. SOXQ/TTEQ were excluded
+    for overlapping SMH, which then lost the Technology cap).
+    """
     global _LAST_OVERLAP_DROPS
     _LAST_OVERLAP_DROPS = {}
-    for ov, a, b in pairs:
-        if ov <= max_overlap or a not in alive or b not in alive:
-            continue
+    sel = selected.copy().reset_index(drop=True)
+    if len(sel) < 2:
+        return sel
+
+    def _ev(r):
+        try:
+            return float(r["est_next_1y"])
+        except Exception:
+            return float("-inf")
+
+    def _dep_ok(v):
+        if veto_dep is None:
+            return True
+        try:
+            return not (float(v) > veto_dep)
+        except Exception:
+            return True
+
+    evicted = set()
+    while len(sel) >= 2:
+        tickers = list(sel["ticker"])
+        holds = {t: etf_top_holdings(t) for t in tickers}
+        ev = {t: _ev(sel.loc[sel["ticker"] == t].iloc[0]) for t in tickers}
+        pairs = []
+        for i in range(len(tickers)):
+            for j in range(i + 1, len(tickers)):
+                a, b = tickers[i], tickers[j]
+                if not holds[a] or not holds[b]:
+                    continue
+                ov = holdings_overlap(holds[a], holds[b])
+                if ov > max_overlap:
+                    pairs.append((ov, a, b))
+        if not pairs:
+            break
+        pairs.sort(reverse=True)
+        ov, a, b = pairs[0]
         loser = a if ev[a] < ev[b] else b
         winner = b if loser == a else a
-        alive.discard(loser)
-        dropped.append(loser)
+        lrow = sel.loc[sel["ticker"] == loser].iloc[0]
         _LAST_OVERLAP_DROPS[loser] = (winner, ov)
-        log(f"etf overlap: {loser} overlaps {winner} {ov:.0%} "
-            f"(top-10 holdings) > {max_overlap:.0%} — lower EV "
-            f"({ev[loser]:+.1%} vs {ev[winner]:+.1%}) excluded")
+        log(f"etf overlap repair: {loser} overlaps selected {winner} {ov:.0%} "
+            f"(top-10 holdings) > {max_overlap:.0%} — evicting lower EV "
+            f"({ev[loser]:+.1%} vs {ev[winner]:+.1%})")
         ledger_append(REJECTED_LEDGER, {
             "event": "rejected", "ticker": loser, "kind": "etf",
-            "name": str(df.loc[df['ticker'] == loser, 'name'].iloc[0]),
+            "name": str(lrow.get("name", "")),
             "price": None,
-            "reason": (f"etf holdings overlap {ov:.0%} with {winner} "
+            "reason": (f"etf holdings overlap {ov:.0%} with selected {winner} "
                        f"> {max_overlap:.0%} (lower EV)"),
             "est_next_1y": round(ev[loser], 4),
-            "dep": _safe(df.loc[df['ticker'] == loser,
-                                'llm_event_dependence'].iloc[0]),
-            "cont": _safe(df.loc[df['ticker'] == loser,
-                                 'llm_continuation'].iloc[0]),
-            "conf": _safe(df.loc[df['ticker'] == loser,
-                                 'llm_confidence'].iloc[0]),
+            "dep": _safe(lrow.get("llm_event_dependence")),
+            "cont": _safe(lrow.get("llm_continuation")),
+            "conf": _safe(lrow.get("llm_confidence")),
         })
-    if dropped:
-        log(f"etf overlap: excluded {len(dropped)} redundant ETFs: {dropped}")
-    return df[df["ticker"].isin(alive)]
+        evicted.add(loser)
+        sel = sel[sel["ticker"] != loser].reset_index(drop=True)
+        # refill the freed slot: same hard gates as selection, plus the
+        # category cap against survivors and no overlap with survivors
+        counts = Counter(sel["sector"]) if len(sel) else Counter()
+        cands = pool[~pool["ticker"].isin(set(sel["ticker"]) | evicted)].copy()
+        cands = cands[cands["final_score"] >= min_score]
+        if "llm_event_dependence" in cands.columns:
+            cands = cands[cands["llm_event_dependence"].map(_dep_ok)]
+        cands = cands[cands["sector"].map(lambda s: counts.get(s, 0) < cap)]
+        surv_holds = {t: etf_top_holdings(t) for t in sel["ticker"]}
+
+        def _clear(r):
+            hh = etf_top_holdings(str(r["ticker"]))
+            if not hh:
+                return True
+            return all(holdings_overlap(hh, surv_holds[t]) <= max_overlap
+                       for t in surv_holds if surv_holds[t])
+
+        if not cands.empty:
+            cands = cands[cands.apply(_clear, axis=1)]
+        if cands.empty:
+            log("etf overlap repair: no eligible refill — slot left empty")
+            continue
+        cands = cands.copy()
+        cands["_newcat"] = (~cands["sector"].isin(set(counts))).astype(int)
+        cands = cands.sort_values(["_newcat", "final_score"],
+                                  ascending=[False, False])
+        add = cands.iloc[0:1].copy()
+        add["pick_pass"] = 3
+        log(f"etf overlap repair: refill +{add['ticker'].tolist()} "
+            f"(ev={_ev(add.iloc[0]):+.1%})")
+        sel = pd.concat([sel, add.drop(columns=["_newcat"], errors="ignore")],
+                        ignore_index=True)
+    return sel
 
 
 def honorable_mentions(ranked, final, args, top_k=30):
@@ -2292,10 +2354,6 @@ def pick_final(adj, args, llm_path):
             log(f"est floor ({args.min_est:+.1%}): {len(cut)} {label} excluded: "
                 f"{cut['ticker'].tolist()}")
         est_ok = ranked[ranked["est_next_1y"] >= args.min_est]
-        if label == "ETFs":
-            # redundancy is not diversification: one wrapper per theme cluster
-            est_ok = apply_etf_overlap_cap(est_ok,
-                                           max_overlap=args.max_etf_overlap)
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
                                          min_score=args.min_score, veto_dep=veto)
         first = first.copy()
@@ -2326,6 +2384,13 @@ def pick_final(adj, args, llm_path):
                 log(f"fill pass ({label}): +{len(fill)} within category cap: "
                     f"{fill['ticker'].tolist()}")
                 first = pd.concat([first, fill], ignore_index=True)
+        if label == "ETFs" and len(first):
+            # redundancy is not diversification: enforce the overlap cap on
+            # the selected portfolio (post-selection repair, not pre-filter)
+            first = repair_etf_overlap(first, est_ok,
+                                       max_overlap=args.max_etf_overlap,
+                                       cap=cap, min_score=args.min_score,
+                                       veto_dep=veto)
         # divergence self-check (informational, not a gate): how much does
         # final_score-ordered selection disagree with pure EV ordering?
         # Flags high-EV unpicked names (e.g. HPE) for the monthly audit.
