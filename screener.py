@@ -131,6 +131,27 @@ def setup_logging():
     return LOG_FILE
 
 
+def continue_logging(path):
+    """Continue a previous phase's log file so one pipeline run = one log.
+
+    Phase A writes its log path into the research bundle meta; Phase B picks
+    it up and appends. An auditor (human or LLM) reads a single file and sees
+    every stage: universe -> cuts -> research -> selection."""
+    global LOG_FILE
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        LOG_FILE = path
+        with open(LOG_FILE, "a") as f:
+            f.write(f"\n=== continuing log {datetime.now().isoformat()} ===\n")
+            f.write(f"args: {' '.join(sys.argv)}\n")
+    except Exception as e:
+        print(f"WARNING: could not continue log file {path}: {e}", flush=True)
+        LOG_FILE = None
+    return LOG_FILE
+
+
 LOG_FILE = None
 
 
@@ -577,6 +598,43 @@ def enrich_candidates(tickers, workers=6):
                 log(f"  enrichment {done}/{len(tickers)}...")
             out[t] = {"insider_ratio": ir, "earnings_in_days": ed}
     return out
+
+
+def log_levers(args):
+    """Every tunable of the pipeline with its current value and what it does.
+
+    This is the lever panel for an auditor (human or LLM): to change what the
+    pipeline selects, push/pull these. Values are read from the live args so
+    this block can never go stale."""
+    _eb = etf_benchmark(args)
+    log("--- pipeline levers (tunables: push/pull these to change selection) ---")
+    log(f"universe: yfinance screener, mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f}")
+    log(f"benchmark={args.benchmark} (stocks must beat its 1y; 5pp slack on screener 52w%); "
+        f"etf_benchmark={_eb} (ETFs must beat its 1y)")
+    log("trash filters (hard, pre-scoring): history>=120 trading days; "
+        "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
+    log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
+        f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
+    log(f"research pool: top 50 stocks + top {args.n_etf_research} ETFs by base_score")
+    log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
+        f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
+        "base_w = base_score winsorized at p95, excess = amount above cap)")
+    log("expected value = conf * (1+0.25*character) * "
+        "(cont*upside - (1-cont)*downside - dep*20%)")
+    log("  upside = 6m run: first 25% at full weight, excess at half, input capped at 50%")
+    log("  downside = max(|maxDD|*50%, 10%) * (1 + dd_freq); "
+        "dd_freq = fraction of rolling 1m windows losing >10%")
+    log("  character = Composure z-sum of quality/entry-timing/structure "
+        "(excludes momentum+volatility, no double-count), clamped [-2,2]")
+    log(f"EV floor --min-est={args.min_est:+.1%}: every pick must earn its place; "
+        "empty slots beat filler")
+    log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
+    log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
+        f"--max-per-etf-category={args.max_per_etf_category} (ETFs); hard across both "
+        "pick passes; cap ties broken by EV (highest-EV names survive)")
+    log(f"score floor --min-score={args.min_score}")
+    log(f"final slots: --n-stocks={args.n_stocks} + --n-etfs={args.n_etfs}")
+    log("--- end levers ---")
 
 
 def apply_risk_gates(df, max_vol=0.80, min_dd=-0.40):
@@ -2408,10 +2466,15 @@ def main():
     if args.llm_apply:
         import json as _json
         from llm_research import apply_llm_outputs
-        setup_logging()
-        log(f"Phase B: applying LLM research")
         with open(args.llm_apply[0]) as f:
             bundle = _json.load(f)
+        phase_a_log = (bundle.get("meta") or {}).get("phase_a_log")
+        if phase_a_log and os.path.exists(phase_a_log):
+            continue_logging(phase_a_log)
+            log("=== PHASE B: applying LLM research (same log as Phase A) ===")
+        else:
+            setup_logging()
+            log("Phase B: applying LLM research (no Phase A log found; new file)")
         with open(args.llm_apply[1]) as f:
             outputs = _json.load(f)
         df = pd.DataFrame(bundle["candidates"])
@@ -2482,6 +2545,7 @@ def main():
 
     log_path = setup_logging()
     log(f"Logging to {log_path}" if log_path else "File logging unavailable")
+    log_levers(args)
 
     from cache import StepCache
     cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log)
@@ -2551,6 +2615,8 @@ def main():
     log(f"candidate outperformers: {len(cands)} (sorted by screener 52w%)")
     log("raw input top 20 by screener 52w%: " +
         ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands[:20]))
+    log(f"all candidates by screener 52w% ({len(cands)}): " +
+        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands))
 
     cand_tickers = [c["ticker"] for c in cands if c["ticker"] not in BENCHMARK_CHOICES]
     prices_key = "prices_" + StepCache.tickers_key(cand_tickers)
@@ -2572,6 +2638,8 @@ def main():
     print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
     log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
         f"({bench_ret:+.1%} 1y): {len(outperformers)}")
+    log("confirmed outperformer tickers: " +
+        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers))
     if not outperformers:
         print(f"No stocks beat the benchmark. Per your rule: just buy {args.benchmark}.")
         sys.exit(0)
@@ -2627,7 +2695,8 @@ def main():
     for _, r in df.head(5).iterrows():
         print(f"  {r['ticker']:8s} {r['sector'][:22]:22s} base={r['base_score']:+.2f} 1y={r['ret_1y']:+.0%}")
     log(f"base_score stats: {df['base_score'].describe().to_dict()}")
-    log_score_breakdown(df.head(30), "stocks (top 30)", _STOCK_SCORE_GROUPS)
+    log_score_breakdown(df.head(50), "stocks (research pool: top 50)",
+                        _STOCK_SCORE_GROUPS)
 
     # 6b) Enrich top 100 with insider + earnings signals, adjust scores
     enrich_n = min(100, len(df))
@@ -2734,8 +2803,10 @@ def main():
                 cands, market_headlines,
                 {"benchmark": args.benchmark,
                  "etf_benchmark": _eb,
+                 "phase_a_log": os.path.abspath(LOG_FILE) if LOG_FILE else None,
                  "note": "quant base scores included; LLM decides event_dependence/continuation. "
-                         "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark."})
+                         "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark. "
+                         "phase_a_log: Phase B must append to this file so one run = one log."})
             bp = f"research_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}.json"
             with open(bp, "w") as f:
                 _json.dump(bundle, f, indent=1, default=str)
