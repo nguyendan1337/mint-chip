@@ -368,12 +368,13 @@ def run_auto_layers(candidates, market_headlines, log=None):
 
 # ---------------------------------------------------------------- agent backend: bundle / apply
 
-def build_research_bundle(candidates, market_headlines, meta):
+def build_research_bundle(candidates, market_headlines, meta, market_internals=None):
     """Build the JSON bundle an agent (human/AI) researches from."""
     return {
         "generated_at": __import__("datetime").datetime.now().isoformat(),
         "meta": meta,
-        "world_headlines": market_headlines[:80],
+        "world_headlines": market_headlines[:120],
+        "market_internals": market_internals or {},
         "instructions": (
             "You are the LLM research layer. 1) Read world_headlines and list "
             "current market drivers + risk events. 2) For EACH candidate, read "
@@ -382,6 +383,9 @@ def build_research_bundle(candidates, market_headlines, meta):
             "(0..1: likely to keep doing well without a sharp drawdown), and "
             "confidence (0..1: how confident you are in the assessment given "
             "headline quality). "
+            "market_internals carries the latest VIX (market fear gauge) and "
+            "10Y Treasury yield (borrowing-cost gauge) — use them as numeric "
+            "context for the world layer, independent of headline emphasis. "
             "Candidates have kind=stock or kind=etf. For ETFs, judge the "
             "THEME's durability and the fund's structure (fees, AUM/closure "
             "risk, concentration) — use the ETF stats provided. "
@@ -393,6 +397,10 @@ def build_research_bundle(candidates, market_headlines, meta):
             "Stamp EVERY assessment with assessed_date (today's date, "
             "YYYY-MM-DD) — later runs must be able to tell fresh research "
             "from carried-over assessments."
+            " Every risk_event must state its market mechanism in plain "
+            "words — not just what is happening, but HOW it reaches stock "
+            "prices (e.g. Hormuz disruption -> oil supply risk -> inflation "
+            "-> rate pressure -> lower valuations)."
         ),
         "output_schema": {
             "world": {"drivers": [{"title": "", "summary": "",

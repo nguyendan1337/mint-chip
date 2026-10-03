@@ -27,7 +27,7 @@ import sys
 import time
 import warnings
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 warnings.filterwarnings("ignore")
 
@@ -1663,20 +1663,45 @@ if(hmt){{
 
 # ---------------- News layer: dynamic risk discovery ----------------
 
-def fetch_rss_headlines(query, max_items=30):
+def fetch_rss_headlines(query, max_items=30, max_age_days=7):
+    """Google News RSS titles for a query, dropping items older than max_age_days.
+
+    Stale items (e.g. a 2025 headline in a 2026 bundle) are worse than useless
+    for the world layer — they read as current context."""
     url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=en-US&gl=US&ceid=US:en"
     try:
         feed = feedparser.parse(url)
-        return [e.title for e in feed.entries[:max_items] if hasattr(e, "title")]
     except Exception:
         return []
+    now = datetime.now(timezone.utc)
+    out = []
+    for e in feed.entries[:max_items]:
+        if not hasattr(e, "title"):
+            continue
+        try:
+            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+            if (now - pub).days > max_age_days:
+                continue
+        except Exception:
+            pass  # keep items with unparseable dates
+        out.append(e.title)
+    return out
 
 
 def fetch_market_headlines():
-    """Recent market headlines from free RSS (shared by rules + LLM layers)."""
+    """Recent market headlines from free RSS (shared by rules + LLM layers).
+
+    Generic queries catch whatever is loudest; topical queries guarantee
+    coverage of geopolitics, energy, and rates — the things that move markets
+    even when they aren't the top story (a 7-month war once surfaced as 4
+    vague mentions out of 80 and was missed entirely)."""
+    queries = ["stock market", "global economy markets", "wall street",
+               "middle east war oil", "oil prices opec",
+               "federal reserve interest rates", "inflation cpi report",
+               "treasury yields bonds"]
     headlines = []
-    for q in ["stock market", "global economy markets", "wall street"]:
-        headlines += fetch_rss_headlines(q, 30)
+    for q in queries:
+        headlines += fetch_rss_headlines(q, 20)
         time.sleep(0.5)
     # dedupe, keep order
     seen, out = set(), []
@@ -1684,6 +1709,24 @@ def fetch_market_headlines():
         if h not in seen:
             seen.add(h)
             out.append(h)
+    return out[:120]
+
+
+def fetch_market_internals():
+    """Fear/rate gauges for the world layer: VIX and 10Y yield, latest values.
+
+    Gives the researcher a numeric read on market fear and borrowing costs
+    every run, independent of what the headlines happen to emphasize."""
+    out = {}
+    try:
+        for sym, key in [("^VIX", "vix"), ("^TNX", "tnx_10y")]:
+            hist = yf.Ticker(sym).history(period="5d")
+            if len(hist):
+                out[key] = round(float(hist["Close"].iloc[-1]), 2)
+        if out:
+            log(f"market internals: {out}")
+    except Exception as e:
+        log(f"market internals unavailable ({e})")
     return out
 
 
@@ -2666,7 +2709,8 @@ def run_watchlist(args, tickers):
         {"mode": "watchlist", "tickers": tickers,
          "note": "user-supplied tickers; no benchmark comparison. "
                  "LLM decides event_dependence/continuation/confidence; "
-                 "output sorted by est_next_1y, no floors."})
+                 "output sorted by est_next_1y, no floors."},
+        fetch_market_internals())
     bp = f"watchlist_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(bp, "w") as f:
         _json.dump(bundle, f, indent=1, default=str)
@@ -3468,7 +3512,8 @@ def main():
                  "phase_a_log": os.path.abspath(LOG_FILE) if LOG_FILE else None,
                  "note": "quant base scores included; LLM decides event_dependence/continuation. "
                          "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark. "
-                         "phase_a_log: Phase B must append to this file so one run = one log."})
+                         "phase_a_log: Phase B must append to this file so one run = one log."},
+                fetch_market_internals())
             bp = f"research_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}.json"
             with open(bp, "w") as f:
                 _json.dump(bundle, f, indent=1, default=str)
