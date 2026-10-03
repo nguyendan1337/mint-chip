@@ -672,6 +672,8 @@ def log_research_assessments(ranked):
     about each name and why, in one line each.
     """
     log("--- research assessments ---")
+    today = __import__("datetime").date.today().isoformat()
+    n_fresh, n_carried, n_unknown = 0, 0, 0
     for _, r in ranked.iterrows():
         try:
             dep = float(r.get("llm_event_dependence", float("nan")))
@@ -680,8 +682,18 @@ def log_research_assessments(ranked):
             dep_s, cont_s, conf_s = f"{dep:.2f}", f"{cont:.2f}", f"{conf:.2f}"
         except Exception:
             dep_s = cont_s = conf_s = "n/a"
+        # provenance: fresh research vs carried-over from an earlier run
+        ad = str(r.get("llm_assessed_date", "") or "")
+        if ad == today:
+            prov, n_fresh = "fresh", n_fresh + 1
+        elif ad:
+            prov, n_carried = f"carried({ad})", n_carried + 1
+        else:
+            prov, n_unknown = "carried(?)", n_unknown + 1
         why = str(r.get("llm_rationale", "") or "").replace("\n", " ")[:160]
-        log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} | {why}")
+        log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} [{prov}] | {why}")
+    log(f"research provenance: {n_fresh} fresh, {n_carried} carried-over, "
+        f"{n_unknown} unknown (pre-dates date stamping)")
 
 
 def winsorize_base(df):
@@ -1453,21 +1465,26 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
     initial_counts seeds the per-sector tally (used by the fill pass so the
     cap stays hard across both passes)."""
     picked, skipped = [], Counter()
+    skipped_names = {}
     sector_counts = Counter(initial_counts) if initial_counts else Counter()
     for _, r in df.iterrows():
         if r["final_score"] < min_score:
             skipped["below_floor"] += 1
+            skipped_names.setdefault("below_floor", []).append(r["ticker"])
             continue
         if veto_dep is not None and "llm_event_dependence" in df.columns:
             try:
                 if float(r["llm_event_dependence"]) > veto_dep:
                     skipped["vetoed_event_dep"] += 1
+                    skipped_names.setdefault("vetoed_event_dep", []).append(r["ticker"])
                     continue
             except Exception:
                 pass
         sec = r["sector"]
         if sector_counts[sec] >= max_per_sector:
             skipped["sector_cap"] += 1
+            skipped_names.setdefault("sector_cap", []).append(
+                f"{r['ticker']}({sec})")
             continue
         picked.append(r)
         sector_counts[sec] += 1
@@ -1475,6 +1492,8 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
             break
     log(f"pick_top: {len(picked)} selected (floor={min_score}, veto_dep={veto_dep}), "
         f"skipped={dict(skipped)}")
+    for reason, names in skipped_names.items():
+        log(f"  skipped[{reason}]: {names}")
     return pd.DataFrame(picked)
 
 
@@ -1774,7 +1793,7 @@ def pick_final(adj, args, llm_path):
         cut = ranked[ranked["est_next_1y"] < args.min_est]
         if len(cut):
             log(f"est floor ({args.min_est:+.1%}): {len(cut)} {label} excluded: "
-                f"{cut['ticker'].tolist()[:10]}")
+                f"{cut['ticker'].tolist()}")
         est_ok = ranked[ranked["est_next_1y"] >= args.min_est]
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
                                          min_score=args.min_score, veto_dep=veto)
@@ -2465,6 +2484,13 @@ def main():
         cands = cands[:args.max_outperformers]
     print(f"\n{len(cands)} candidate outperformers from {len(universe)}-stock universe "
           f"(screener 52w% > {bench_pct - 5:.0f}%)")
+    log(f"universe: {len(universe)} stocks pulled from yfinance screener "
+        f"(mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f})")
+    log(f"benchmark {args.benchmark}: 1y={bench_ret:+.1%} -> 52w% cutoff "
+        f">{bench_pct - 5:.0f}% (5pp slack for methodology drift)")
+    log(f"candidate outperformers: {len(cands)} (sorted by screener 52w%)")
+    log("raw input top 20 by screener 52w%: " +
+        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands[:20]))
 
     cand_tickers = [c["ticker"] for c in cands if c["ticker"] not in BENCHMARK_CHOICES]
     prices_key = "prices_" + StepCache.tickers_key(cand_tickers)
@@ -2484,12 +2510,16 @@ def main():
             outperformers.append(c)
     outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
     print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
+    log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
+        f"({bench_ret:+.1%} 1y): {len(outperformers)}")
     if not outperformers:
         print(f"No stocks beat the benchmark. Per your rule: just buy {args.benchmark}.")
         sys.exit(0)
     print("Top 5 outperformers:")
     for c in outperformers[:5]:
         print(f"  {c['ticker']:8s} {c['ret_1y']:+.0%}  {c['name'][:45]}")
+    log("confirmed top 10 by precise 1y return: " +
+        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers[:10]))
 
     # 4) Fundamentals for ALL outperformers (this is where trash gets identified)
     out_tickers = [c["ticker"] for c in outperformers]

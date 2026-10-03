@@ -389,7 +389,10 @@ def build_research_bundle(candidates, market_headlines, meta):
             "continuation when earnings are within 14 days (earn_soon), "
             "insiders are net selling heavily, or the move is a vertical "
             "spike on thin operating news. Be conservative. "
-            "Write llm_outputs.json in the schema below."
+            "Write llm_outputs.json in the schema below. "
+            "Stamp EVERY assessment with assessed_date (today's date, "
+            "YYYY-MM-DD) — later runs must be able to tell fresh research "
+            "from carried-over assessments."
         ),
         "output_schema": {
             "world": {"drivers": [{"title": "", "summary": "",
@@ -397,7 +400,9 @@ def build_research_bundle(candidates, market_headlines, meta):
                       "risk_events": [{"title": "", "summary": "",
                                        "affected_sectors": [], "severity": 0}]},
             "stocks": {"TICKER": {"event_dependence": 0.0, "continuation": 0.0,
-                                  "risks": [], "rationale": ""}}
+                                  "confidence": 0.0, "risks": [],
+                                  "rationale": "",
+                                  "assessed_date": "YYYY-MM-DD"}}
         },
         "candidates": candidates,
     }
@@ -424,7 +429,7 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
                                      float(df["base_score"].quantile(0.95))),
                         index=df.index)
     excess = (df["base_score"] - cap).clip(lower=0).fillna(0)
-    downs, ups, rats, risks = [], [], [], []
+    downs, ups, rats, risks, adates = [], [], [], [], []
     for _, r in df.iterrows():
         s = stocks.get(r["ticker"], {})
         try:
@@ -440,10 +445,14 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
         rats.append(s.get("rationale", ""))
         _rk = s.get("risks", [])
         risks.append(_rk if isinstance(_rk, str) else "; ".join(_rk))
+        # provenance: when was this ticker actually researched? Lets later
+        # runs (and auditors) tell fresh assessments from carried-over ones.
+        adates.append(str(s.get("assessed_date", "") or ""))
     df["llm_event_dependence"] = downs
     df["llm_continuation"] = ups
     df["llm_rationale"] = rats
     df["llm_risks"] = risks
+    df["llm_assessed_date"] = adates
     # research-driven hard exclusion (e.g. rule violations the quant gates
     # can't see, like a global mandate slipping the keyword filter)
     exc, exc_r = [], []
