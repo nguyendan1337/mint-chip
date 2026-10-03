@@ -1372,6 +1372,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 body {{ font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
   max-width: 980px; margin: 24px auto; padding: 0 16px 40px; color: #f2f5f1;
   background:
+    radial-gradient(1000px 420px at 50% -8%, rgba(125,211,252,0.10), transparent 60%),
     radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.14), transparent 60%),
     radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.12), transparent 60%),
     radial-gradient(600px 400px at 55% 45%, rgba(74,222,128,0.05), transparent 65%),
@@ -1399,6 +1400,11 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   color: #93a093; padding: 4px 16px 8px; margin-bottom: 2px; }}
 .row > div {{ min-width: 0; overflow: hidden; }}
 .row.head > div {{ overflow: visible; }}
+@media (hover: hover) {{
+  .row {{ transition: border-color 0.25s ease, box-shadow 0.25s ease; }}
+  .row:hover {{ border-color: rgba(255,255,255,0.18);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.16); }}
+}}
 .id {{ white-space: nowrap; text-overflow: ellipsis; }}
 .id .nm {{ overflow: hidden; text-overflow: ellipsis; }}
 .sec {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
@@ -1412,7 +1418,11 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .lbl.neg {{ color: var(--red) !important; }}
 .track {{ background: rgba(255,255,255,0.07); height: 10px; border-radius: 6px;
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); overflow: hidden; }}
-.bar {{ height: 10px; border-radius: 6px; }}
+.bar {{ height: 10px; border-radius: 6px; position: relative; overflow: hidden; }}
+.bar::after {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.14) 42%, rgba(255,255,255,0) 62%);
+  pointer-events: none; }}
 .bar.pos {{ background: linear-gradient(90deg, var(--green-deep), var(--green));
   box-shadow: 0 0 12px rgba(74,222,128,0.55); }}
 .bar.est {{ background: linear-gradient(90deg, var(--gold-deep), var(--gold));
@@ -1424,11 +1434,15 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .nonus {{ display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
   background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
   border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }}
-.note {{ margin-top: 26px; font-size: 12px; color: #9aa79a; line-height: 1.6;
-  padding: 16px 20px; background: rgba(255,255,255,0.035);
+.note {{ position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
+  color: #9aa79a; line-height: 1.6; padding: 16px 20px;
+  background: rgba(255,255,255,0.035);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }}
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 28px rgba(0,0,0,0.38); }}
+.note::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.025) 30%, rgba(255,255,255,0) 48%); }}
 .note b {{ color: var(--gold); }}
 .note p {{ margin: 0 0 13px; }}
 .note p:last-child {{ margin-bottom: 0; }}
@@ -1441,11 +1455,21 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
   font-size: 12px; color: #93a093; letter-spacing: 0.06em; }}
 .sbtn {{ font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
-  color: #a8b3a8; background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12); border-radius: 999px;
-  padding: 4px 14px; cursor: pointer; }}
-.sbtn.on {{ color: #0a0f0c; font-weight: 700; background: var(--gold);
-  border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }}
+  color: #cfd6cf;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 999px;
+  padding: 4px 14px; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }}
+.sbtn.on {{ color: #0a0f0c; font-weight: 700;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(0,0,0,0.14) 100%),
+    linear-gradient(90deg, var(--gold-deep), var(--gold));
+  border-color: rgba(255,213,79,0.8);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }}
 .why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
 .row.hm {{ opacity: 0.88; }}
 .hm-extra {{ display: none; }}
