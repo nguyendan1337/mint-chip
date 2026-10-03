@@ -70,6 +70,11 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
 .note b { color: var(--gold); }
+.note p { margin: 0 0 13px; }
+.note p:last-child { margin-bottom: 0; }
+.note .stages-head { font-weight: 700; color: #cfd6cf;
+  margin-top: 18px; }
+.note .fineprint { font-size: 11px; color: #7d887d; }
 .twatch-det { margin-top: 22px; border: 1px solid rgba(255,255,255,0.08);
   border-radius: 14px; background: rgba(255,255,255,0.02); }
 .twatch-det > summary { cursor: pointer; padding: 12px 18px; font-size: 13px;
@@ -665,40 +670,34 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="hm-more"><button class="sbtn" id="hm-toggle" data-n="27">Show all 27 ↓</button></div>
 
 <div class="note">
-<b>About Mint.</b> Mint looks for American stocks and ETFs that have already
+<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
 proven themselves &mdash; names that beat their benchmark over the past year &mdash;
 then asks the harder question: which are most likely to keep winning without
-stumbling right after you buy?
+stumbling right after you buy?</p>
 
-
-The philosophy is simple: avoid losses first. We look past recent gains to the
+<p>The philosophy is simple: avoid losses first. We look past recent gains to the
 business behind each name, the risks that could derail it, and whether its
 success looks durable or depends on hype, headlines, or a one-time event.
 Strong recent performance gets a name noticed. Strong evidence earns it a spot.
 If nothing clears the bar, we leave the slot empty &mdash; every pick earns its
-place.
-
-How it works, in three stages:
-
-<b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
+place.</p>
+<p class="stages-head">How it works, in three stages:</p>
+<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
 over the past year, then scored on the quality of the business, the timing of
-entry, and the steadiness of the ride.
-
-<b>Question the story.</b> Hard risk gates throw out anything too volatile or
+entry, and the steadiness of the ride.</p>
+<p><b>Question the story.</b> Hard risk gates throw out anything too volatile or
 too deeply scarred. Survivors get researched: how much does the story depend on
 events outside the company&apos;s control? How likely is the strength to
-continue? How much do we trust our own read?
-
-<b>Respect the downside.</b> Those judgments become one number &mdash; expected
+continue? How much do we trust our own read?</p>
+<p><b>Respect the downside.</b> Those judgments become one number &mdash; expected
 value: the likely gains, minus the likely pain, marked down for anything shaky
-or hype-driven.
-
-Mint is built around a simple idea: find strength, question the story, respect
-the downside, and only make room for what earns it.
-
-Not financial advice. Past performance doesn&apos;t predict future returns.
-Also: gremlins control the markets, they hate you personally, and they will do
-the exact opposite of your buys and sells out of pure spite.
+or hype-driven.</p>
+<p>Mint is built around a simple idea: find strength, question the story, respect
+the downside, and only make room for what earns it.</p>
+<p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
+future returns. Also: gremlins control the markets, they hate you personally,
+and they will do the exact opposite of your buys and sells out of pure
+spite.</p>
 </div>
 <script>
 document.querySelectorAll('.sortctl').forEach(function(ctl){
