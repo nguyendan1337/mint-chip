@@ -1210,14 +1210,19 @@ def build_etf_scores(closes, infos):
     return df.sort_values("base_score", ascending=False)
 
 
-def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
+def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
+                  honorable=None):
     """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
 
     Columns: 1-year performance %, sector, and expected value %
     (continuation-vs-downside expected value heuristic). `titles` optionally
     overrides the two section headings. `thesis` is a list of status dicts
     for the Thesis watch section (ticker, days_held, ret_since_pick, status,
-    reason). Rows carrying a non-US `country` get a small flag.
+    reason). `honorable` is a list of dicts (ticker, kind, name, sector,
+    ret_1y, est_next_1y, confidence, reason) rendered as the Honorable
+    mentions table after the thesis section. Rows carrying a non-US `country`
+    get a small flag. Pick tables are sortable client-side by expected value
+    or 1-year return (descending).
     """
     import html as _html
 
@@ -1272,8 +1277,13 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
     # ticker -> latest thesis status, for watch/broken badges on pick rows
     thmap = {str(t.get("ticker")): t for t in (thesis or [])}
     rows_html = ""
-    for title, df in sections:
-        rows_html += f'<h2>{_html.escape(title)}</h2>\n' + header
+    for si, (title, df) in enumerate(sections):
+        rows_html += f'<h2>{_html.escape(title)}</h2>\n'
+        rows_html += (
+            f'<div class="sortctl" data-pl="pl{si}"><span>Sort by:</span> '
+            f'<button class="sbtn on" data-k="ev">Expected value</button>'
+            f'<button class="sbtn" data-k="r1y">1-year return</button></div>\n')
+        rows_html += header + f'<div class="picklist" id="pl{si}">\n'
         for i, (_, r) in enumerate(df.iterrows(), 1):
             est = r.get("est_next_1y")
             ctry = str(r.get("country") or "")
@@ -1284,8 +1294,16 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
             tbadge = (f' <span class="tbadge {tst}" '
                       f'title="{_html.escape(str(th.get("reason", "")))}">{tst}</span>'
                       if tst in ("watch", "broken") else "")
+            try:
+                _evf = float(est)
+            except Exception:
+                _evf = float("nan")
+            try:
+                _r1yf = float(r.get("ret_1y"))
+            except Exception:
+                _r1yf = float("nan")
             rows_html += f"""
-<div class="row">
+<div class="row" data-ev="{_evf}" data-r1y="{_r1yf}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(r['ticker']))}</span>{tbadge}
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
@@ -1296,6 +1314,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
 </div>
 """
+        rows_html += '</div>\n'  # close .picklist
     now = meta.get("asof", "")
     bench = meta.get("benchmark", "")
     etf_bench = meta.get("etf_benchmark", bench)
@@ -1353,6 +1372,30 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
             '<div class="tlist">' + "\n".join(items) + '</div>'
             '<div class="tledger"><a href="thesis_ledger.jsonl">full ledger (JSONL)</a></div>'
             '</details>\n')
+    # --- Honorable mentions: cleared the EV floor, didn't make the cut.
+    # The near-miss table Dan asked for — alternatives worth a look, with the
+    # reason each missed (cap, overlap, or final-score order).
+    hm_html = ""
+    if honorable:
+        hm_rows = []
+        for i, h in enumerate(honorable, 1):
+            hm_rows.append(f"""
+<div class="row hm">
+  <div class="id"><span class="rank">{i}</span>
+    <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
+    <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span></div>
+  <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
+  <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
+  <div class="cell" data-cap="Expected value"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
+  <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
+  <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
+</div>""")
+        hm_html = (
+            '<h2>Honorable mentions — cleared the bar, didn\u2019t make the cut</h2>\n'
+            '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
+            '<div>1-year return</div><div>Expected value</div>'
+            '<div>Confidence</div><div>Why not picked</div></div>\n'
+            + "\n".join(hm_rows) + "\n")
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -1449,6 +1492,16 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .tledger {{ padding: 0 18px 12px; }}
 .tledger a {{ color: #9aa79a; font-size: 12px;
   text-decoration: underline; text-underline-offset: 2px; }}
+.sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+  font-size: 12px; color: #93a093; letter-spacing: 0.06em; }}
+.sbtn {{ font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
+  color: #a8b3a8; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 999px;
+  padding: 4px 14px; cursor: pointer; }}
+.sbtn.on {{ color: #0a0f0c; font-weight: 700; background: var(--gold);
+  border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }}
+.why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
+.row.hm {{ opacity: 0.88; }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
@@ -1467,6 +1520,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
 {rows_html}
 {thesis_html}
+{hm_html}
 <div class="note">
 <b>How to read this.</b> The goal is simple: the strongest names of the past
 year most likely to <i>keep</i> doing well &mdash; downside protection first.
@@ -1489,6 +1543,32 @@ day. Thesis watch tracks every published pick; expand it for the list.
 Not financial advice. Past performance doesn&apos;t
 predict future returns.
 </div>
+<script>
+document.querySelectorAll('.sortctl').forEach(function(ctl){{
+  var pl = document.getElementById(ctl.getAttribute('data-pl'));
+  if(!pl) return;
+  ctl.querySelectorAll('.sbtn').forEach(function(btn){{
+    btn.addEventListener('click', function(){{
+      ctl.querySelectorAll('.sbtn').forEach(function(b){{ b.classList.remove('on'); }});
+      btn.classList.add('on');
+      var k = btn.getAttribute('data-k');
+      var rows = Array.prototype.slice.call(pl.querySelectorAll('.row'));
+      rows.sort(function(a, b){{
+        var va = parseFloat(a.getAttribute('data-' + k));
+        var vb = parseFloat(b.getAttribute('data-' + k));
+        va = isNaN(va) ? -Infinity : va;
+        vb = isNaN(vb) ? -Infinity : vb;
+        return vb - va;
+      }});
+      rows.forEach(function(r, i){{
+        pl.appendChild(r);
+        var rk = r.querySelector('.rank');
+        if(rk) rk.textContent = i + 1;
+      }});
+    }});
+  }});
+}});
+</script>
 </body></html>
 """
     with open(path, "w") as f:
@@ -1740,6 +1820,8 @@ def apply_etf_overlap_cap(edf, max_overlap=0.30):
             pairs.append((holdings_overlap(holds[a], holds[b]), a, b))
     pairs.sort(reverse=True)
     alive, dropped = set(tickers), []
+    global _LAST_OVERLAP_DROPS
+    _LAST_OVERLAP_DROPS = {}
     for ov, a, b in pairs:
         if ov <= max_overlap or a not in alive or b not in alive:
             continue
@@ -1747,6 +1829,7 @@ def apply_etf_overlap_cap(edf, max_overlap=0.30):
         winner = b if loser == a else a
         alive.discard(loser)
         dropped.append(loser)
+        _LAST_OVERLAP_DROPS[loser] = (winner, ov)
         log(f"etf overlap: {loser} overlaps {winner} {ov:.0%} "
             f"(top-10 holdings) > {max_overlap:.0%} — lower EV "
             f"({ev[loser]:+.1%} vs {ev[winner]:+.1%}) excluded")
@@ -1767,6 +1850,69 @@ def apply_etf_overlap_cap(edf, max_overlap=0.30):
     if dropped:
         log(f"etf overlap: excluded {len(dropped)} redundant ETFs: {dropped}")
     return df[df["ticker"].isin(alive)]
+
+
+def honorable_mentions(ranked, final, args, top_k=10):
+    """Near-miss table: researched names that cleared the EV floor but didn't
+    make the chart — alternatives worth a look, each with the reason it
+    missed (overlap, cap, or final-score order). Sorted by EV, descending."""
+    if ranked is None or ranked.empty or final is None:
+        return []
+    if "est_next_1y" not in ranked.columns:
+        # pick_final enriches a copy via add_research_columns; the caller's
+        # frame lacks est_next_1y — enrich here so near-misses can be ranked
+        ranked = add_research_columns(ranked, llm_path=True)
+    picked = set(final["ticker"]) if len(final) else set()
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    floor = getattr(args, "min_est", 0.03)
+    contenders = []
+    for _, r in ranked.iterrows():
+        t = str(r["ticker"])
+        if t in picked or bool(r.get("llm_excluded")):
+            continue
+        try:
+            ev = float(r["est_next_1y"])
+        except Exception:
+            continue
+        if ev < floor:
+            continue
+        try:
+            if (r.get("llm_event_dependence") is not None
+                    and float(r["llm_event_dependence"]) > veto):
+                continue
+        except Exception:
+            pass
+        contenders.append(r)
+    caps = {"stock": getattr(args, "max_per_sector", 2),
+            "etf": getattr(args, "max_per_etf_category", 2)}
+    sec_counts = {}
+    for _, r in final.iterrows():
+        k = (str(r.get("kind", "")), str(r.get("sector", "")))
+        sec_counts[k] = sec_counts.get(k, 0) + 1
+    out = []
+    for r in sorted(contenders, key=lambda r: float(r["est_next_1y"]),
+                    reverse=True)[:top_k]:
+        t = str(r["ticker"])
+        kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
+        if t in _LAST_OVERLAP_DROPS:
+            w, ov = _LAST_OVERLAP_DROPS[t]
+            reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
+        elif sec_counts.get((kind, sec), 0) >= caps.get(kind, 2):
+            reason = f"{sec} cap full"
+        else:
+            reason = "edged out on final-score order"
+        try:
+            conf = float(r.get("llm_confidence"))
+        except Exception:
+            conf = None
+        out.append({"ticker": t, "kind": kind, "name": str(r.get("name", "")),
+                    "sector": sec, "ret_1y": r.get("ret_1y"),
+                    "est_next_1y": float(r["est_next_1y"]), "confidence": conf,
+                    "reason": reason})
+    if out:
+        log(f"honorable mentions: {len(out)} near-misses "
+            f"({', '.join(h['ticker'] for h in out)})")
+    return out
 
 
 def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
@@ -2488,6 +2634,7 @@ def _ledger_seen_today(path, event="picked"):
 
 
 _LAST_DATA_COMPLETENESS = {}
+_LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
 
 
 def fetch_pick_prices(tickers):
@@ -2855,11 +3002,12 @@ def main():
         print(f"Saved: {out}")
         chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
                       f"{args.benchmark}_llm.html")
+        hm = honorable_mentions(ranked, final, args)
         make_chart_html(final_stocks, final_etfs, chart_path,
                         {"benchmark": args.benchmark,
                          "etf_benchmark": etf_benchmark(args),
                          "asof": datetime.now().strftime("%Y-%m-%d")},
-                        thesis=thesis_rows)
+                        thesis=thesis_rows, honorable=hm)
         print(f"Chart: {chart_path}")
         checks, fails = run_self_check(final, args, out)
         if fails:
