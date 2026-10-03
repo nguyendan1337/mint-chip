@@ -1367,9 +1367,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
                 f'<span class="tstat {st}">{st}</span>'
                 f'<span class="tnote">{_html.escape(str(t.get("reason", "")))}</span>'
                 '</div>')
-        open_attr = " open" if (nb or nw) else ""
         thesis_html = (
-            f'<details class="twatch-det"{open_attr}>'
+            f'<details class="twatch-det">'
             f'<summary><b>Thesis watch</b> \u00b7 {len(thesis)} tracked \u00b7 {ni} intact \u00b7 '
             f'{nw} watch \u00b7 {nb} broken{attn}{chips_html}</summary>'
             '<div class="tlist">' + "\n".join(items) + '</div>'
@@ -1393,7 +1392,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
                 _hr1y = float(h.get("ret_1y"))
             except Exception:
                 _hr1y = float("nan")
-            _extra = " hm-extra" if i > 10 else ""
+            _extra = " hm-extra" if i > 5 else ""
             hm_rows.append(f"""
 <div class="row hm k-{_hk}{_extra}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
@@ -1418,7 +1417,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
             + "\n".join(hm_rows) + "\n</div>\n"
             + (f'<div class="hm-more"><button class="sbtn" id="hm-toggle" '
                 f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\n'
-                if len(honorable) > 10 else ""))
+                if len(honorable) > 5 else ""))
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -1627,7 +1626,7 @@ function applyHmLimit(){{
   if(!pl2) return;
   var open = pl2.classList.contains('showall');
   Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){{
-    r.classList.toggle('hm-extra', !open && i >= 10);
+    r.classList.toggle('hm-extra', !open && i >= 5);
   }});
 }}
 applyHmLimit();
