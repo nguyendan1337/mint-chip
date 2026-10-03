@@ -322,11 +322,16 @@ def get_sp500_tickers(limit=None):
     return tickers
 
 
-def download_prices(tickers, period="1y", batch_size=80):
+def download_prices(tickers, period="1y", batch_size=80, min_rows=50):
     """Batch download adjusted closes, in chunks with retry.
 
     Yahoo rate-limits big batches (shows up as bogus 'possibly delisted'
     errors), so we go chunk by chunk and retry misses individually.
+
+    min_rows is the sanity floor on returned history length. It defaults to
+    50 (the 1y use case); short-window callers (e.g. the 5d ledger fetch) must
+    pass a smaller floor, or every result is discarded — 5 rows never clears
+    a 50-row bar. (This exact bug silently zeroed the ledger price fetch.)
     """
     tickers = list(dict.fromkeys(tickers))  # dedupe, keep order
     log(f"Downloading {period} prices for {len(tickers)} tickers (this takes a bit)...")
@@ -338,7 +343,7 @@ def download_prices(tickers, period="1y", batch_size=80):
             for t in batch:
                 try:
                     s = data[t]["Close"].dropna()
-                    if len(s) > 50 and t not in closes:
+                    if len(s) >= min_rows and t not in closes:
                         closes[t] = s
                         got += 1
                 except Exception:
@@ -346,7 +351,7 @@ def download_prices(tickers, period="1y", batch_size=80):
         else:
             try:
                 s = data["Close"].dropna()
-                if len(s) > 50 and batch[0] not in closes:
+                if len(s) >= min_rows and batch[0] not in closes:
                     closes[batch[0]] = s
                     got += 1
             except Exception:
@@ -374,7 +379,7 @@ def download_prices(tickers, period="1y", batch_size=80):
                     # handle single-ticker multiindex quirk
                     if isinstance(close, pd.DataFrame):
                         close = close.iloc[:, 0].dropna()
-                    if len(close) > 50:
+                    if len(close) >= min_rows:
                         closes[t] = close
                 except Exception:
                     continue
@@ -2497,7 +2502,7 @@ def fetch_pick_prices(tickers):
     prices = {}
     for attempt in (1, 2):
         try:
-            px = download_prices(tickers, period="5d")
+            px = download_prices(tickers, period="5d", min_rows=3)
             for t in tickers:
                 s = px[t].dropna() if t in px else None
                 if s is not None and len(s):
