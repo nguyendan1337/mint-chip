@@ -1281,8 +1281,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
         rows_html += f'<h2>{_html.escape(title)}</h2>\n'
         rows_html += (
             f'<div class="sortctl" data-pl="pl{si}"><span>Sort by:</span> '
-            f'<button class="sbtn on" data-k="ev">Expected value</button>'
-            f'<button class="sbtn" data-k="r1y">1-year return</button></div>\n')
+            f'<button class="sbtn" data-k="r1y">1-year return</button>'
+            f'<button class="sbtn on" data-k="ev">Expected value</button></div>\n')
         rows_html += header + f'<div class="picklist" id="pl{si}">\n'
         for i, (_, r) in enumerate(df.iterrows(), 1):
             est = r.get("est_next_1y")
@@ -1409,8 +1409,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
         hm_html = (
             '<h2>Honorable mentions — cleared the bar, didn\u2019t make the cut</h2>\n'
             '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
-            '<button class="sbtn on" data-k="ev">Expected value</button>'
-            '<button class="sbtn" data-k="r1y">1-year return</button></div>\n'
+            '<button class="sbtn" data-k="r1y">1-year return</button>'
+            '<button class="sbtn on" data-k="ev">Expected value</button></div>\n'
             '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
             '<div>1-year return</div><div>Expected value</div>'
             '<div>Confidence</div><div>Why not picked</div></div>\n'
