@@ -1210,17 +1210,15 @@ def build_etf_scores(closes, infos):
     return df.sort_values("base_score", ascending=False)
 
 
-def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
+def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                   honorable=None):
     """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
 
     Columns: 1-year performance %, sector, and expected value %
     (continuation-vs-downside expected value heuristic). `titles` optionally
-    overrides the two section headings. `thesis` is a list of status dicts
-    for the Thesis watch section (ticker, days_held, ret_since_pick, status,
-    reason). `honorable` is a list of dicts (ticker, kind, name, sector,
+    overrides the two section headings. `honorable` is a list of dicts (ticker, kind, name, sector,
     ret_1y, est_next_1y, confidence, reason) rendered as the Honorable
-    mentions table after the thesis section. Rows carrying a non-US `country`
+    mentions table. Rows carrying a non-US `country`
     get a small flag. Pick tables are sortable client-side by expected value
     or 1-year return (descending).
     """
@@ -1274,8 +1272,6 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
   <div>Confidence</div><div>Stability</div>
 </div>
 """
-    # ticker -> latest thesis status, for watch/broken badges on pick rows
-    thmap = {str(t.get("ticker")): t for t in (thesis or [])}
     rows_html = ""
     for si, (title, df) in enumerate(sections):
         rows_html += f'<h2>{_html.escape(title)}</h2>\n'
@@ -1289,11 +1285,6 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
             ctry = str(r.get("country") or "")
             nonus = (f' <span class="nonus" title="Domiciled in {_html.escape(ctry)}">'
                      f"non-US</span>" if ctry and ctry != "United States" else "")
-            th = thmap.get(str(r["ticker"]), {})
-            tst = th.get("status", "intact")
-            tbadge = (f' <span class="tbadge {tst}" '
-                      f'title="{_html.escape(str(th.get("reason", "")))}">{tst}</span>'
-                      if tst in ("watch", "broken") else "")
             try:
                 _evf = float(est)
             except Exception:
@@ -1308,7 +1299,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
             rows_html += f"""
 <div class="row k-{_kk}" data-ev="{_evf}" data-r1y="{_r1yf}">
   <div class="id"><span class="rank">{i}</span>
-    <span class="tick">{_html.escape(str(r['ticker']))}</span>{tbadge}
+    <span class="tick">{_html.escape(str(r['ticker']))}</span>
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
@@ -1323,57 +1314,6 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
     etf_bench = meta.get("etf_benchmark", bench)
     bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
                    if etf_bench != bench else bench)
-    # --- Thesis watch: one <details> whose summary IS the status line.
-    # Boring state = a single collapsed line; the full tracked list expands
-    # in place (no file download needed). Watch/broken chips ride in the
-    # summary so the signal shows without expanding, and the section
-    # auto-opens when something needs attention.
-    thesis_html = ""
-    if thesis:
-        nb = sum(1 for t in thesis if t.get("status") == "broken")
-        nw = sum(1 for t in thesis if t.get("status") == "watch")
-        ni = len(thesis) - nb - nw
-        _tsort = lambda t: ({"broken": 0, "watch": 1}.get(
-            t.get("status"), 2), str(t.get("ticker", "")))
-        chips = []
-        for t in sorted(thesis, key=_tsort):
-            if t.get("status") in ("watch", "broken"):
-                try:
-                    rsptxt = f" {float(t.get('ret_since_pick')):+.1%}"
-                except Exception:
-                    rsptxt = ""
-                chips.append(
-                    f'<span class="tbadge {t["status"]}" '
-                    f'title="{_html.escape(str(t.get("reason", "")))}">'
-                    f'{_html.escape(str(t.get("ticker", "")))} \u00b7 '
-                    f'{t["status"]}{rsptxt}</span>')
-        chips_html = (" " + " ".join(chips)) if chips else ""
-        attn = " \u00b7 needs attention" if (nb or nw) else ""
-        items = []
-        for t in sorted(thesis, key=_tsort):
-            st = str(t.get("status", "intact"))
-            try:
-                rsp = float(t.get("ret_since_pick"))
-                if abs(rsp) < 0.0005:
-                    rsp = 0.0
-                rsptxt = f"{rsp:+.1%} since pick"
-            except Exception:
-                rsptxt = "\u2014"
-            held = t.get("days_held", 0)
-            items.append(
-                f'<div class="titem"><b>{_html.escape(str(t.get("ticker", "")))}</b>'
-                f'<span>held {held}d</span>'
-                f'<span>{rsptxt}</span>'
-                f'<span class="tstat {st}">{st}</span>'
-                f'<span class="tnote">{_html.escape(str(t.get("reason", "")))}</span>'
-                '</div>')
-        thesis_html = (
-            f'<details class="twatch-det">'
-            f'<summary><b>Thesis watch</b> \u00b7 {len(thesis)} tracked \u00b7 {ni} intact \u00b7 '
-            f'{nw} watch \u00b7 {nb} broken{attn}{chips_html}</summary>'
-            '<div class="tlist">' + "\n".join(items) + '</div>'
-            '<div class="tledger"><a href="thesis_ledger.jsonl">full ledger (JSONL)</a></div>'
-            '</details>\n')
     # --- Honorable mentions: cleared the EV floor, didn't make the cut.
     # The near-miss table Dan asked for — alternatives worth a look, with the
     # reason each missed (cap, overlap, or final-score order).
@@ -1495,28 +1435,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .note .stages-head {{ font-weight: 700; color: #cfd6cf;
   margin-top: 18px; }}
 .note .fineprint {{ font-size: 11px; color: #7d887d; }}
-.twatch-det {{ margin-top: 22px; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 14px; background: rgba(255,255,255,0.02); }}
-.twatch-det > summary {{ cursor: pointer; padding: 12px 18px; font-size: 13px;
-  color: #9aa79a; list-style: none; line-height: 2; }}
-.twatch-det > summary::-webkit-details-marker {{ display: none; }}
-.twatch-det > summary::before {{ content: "▸  "; color: var(--gold); }}
-.twatch-det[open] > summary::before {{ content: "▾  "; }}
-.twatch-det > summary b {{ color: var(--gold); }}
-.tlist {{ padding: 0 18px 6px; font-size: 12px; }}
-.titem {{ display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline;
-  padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.05); color: #9aa79a; }}
-.titem b {{ color: #e8ece8; }}
-.tstat.intact {{ color: #4ade80; }} .tstat.watch {{ color: #fbbf24; }}
-.tstat.broken {{ color: #f87171; }}
-.tbadge {{ display: inline-block; font-size: 11px; font-weight: 700;
-  border-radius: 999px; padding: 1px 9px; margin-left: 8px; white-space: nowrap; }}
-.tbadge.watch {{ color: #fbbf24; background: rgba(251,191,36,0.12);
-  border: 1px solid rgba(251,191,36,0.35); }}
-.tbadge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
-  border: 1px solid rgba(248,113,113,0.35); }}
-.id .tbadge {{ margin-left: 6px; }}
-.tledger {{ padding: 0 18px 12px; }}
+
 .tledger a {{ color: #9aa79a; font-size: 12px;
   text-decoration: underline; text-underline-offset: 2px; }}
 .sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
@@ -1558,7 +1477,6 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="tagline">Straight from the Mint.</div>
 <div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
 {rows_html}
-{thesis_html}
 {hm_html}
 <div class="note">
 <p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
@@ -2927,40 +2845,6 @@ def thesis_check(track_days=THESIS_TRACK_DAYS):
     return out
 
 
-def thesis_status_for_chart(track_days=THESIS_TRACK_DAYS):
-    """Latest status per tracked ticker for the chart's Thesis watch section."""
-    import json as _json
-    latest = {}
-    try:
-        with open(THESIS_LEDGER) as f:
-            for line in f:
-                try:
-                    e = _json.loads(line)
-                except Exception:
-                    continue
-                if e.get("event") in ("picked", "check") and e.get("ticker"):
-                    latest[e["ticker"]] = e
-    except FileNotFoundError:
-        return []
-    cutoff = (datetime.now() - timedelta(days=track_days)).strftime("%Y-%m-%d")
-    rows = []
-    for t, e in sorted(latest.items()):
-        if e.get("date", "") < cutoff:
-            continue
-        if e["event"] == "picked":
-            days = (datetime.now() - datetime.fromisoformat(e["date"])).days
-            rows.append({"ticker": t, "kind": e.get("kind", ""),
-                         "days_held": days, "ret_since_pick": None,
-                         "status": "intact", "reason": "freshly picked"})
-        else:
-            rows.append({"ticker": t, "kind": e.get("kind", ""),
-                         "days_held": e.get("days_held", 0),
-                         "ret_since_pick": e.get("ret_since_pick"),
-                         "status": e.get("status", "intact"),
-                         "reason": e.get("reason", "")})
-    return rows
-
-
 def main():
     ap = argparse.ArgumentParser(description="Free stock screener with dynamic news risk")
     ap.add_argument("--benchmark", default="SPMO", choices=BENCHMARK_CHOICES)
@@ -3067,7 +2951,6 @@ def main():
             record_picks_ledger(final, ranked, args)
         except Exception as e:
             log(f"ledger: record_picks_ledger failed ({e})")
-        thesis_rows = thesis_status_for_chart()
         out = (f"screener_results_{datetime.now().strftime('%Y%m%d')}_"
                f"{args.benchmark}_llm.csv")
         final.to_csv(out, index=False)
@@ -3079,7 +2962,7 @@ def main():
                         {"benchmark": args.benchmark,
                          "etf_benchmark": etf_benchmark(args),
                          "asof": datetime.now().strftime("%Y-%m-%d")},
-                        thesis=thesis_rows, honorable=hm)
+                        honorable=hm)
         print(f"Chart: {chart_path}")
         checks, fails = run_self_check(final, args, out)
         if fails:
