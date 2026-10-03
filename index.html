@@ -71,10 +71,20 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
 .note b { color: var(--gold); }
-.twatch { margin-top: 22px; font-size: 13px; color: #9aa79a; padding: 12px 18px;
-  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
-  background: rgba(255,255,255,0.02); line-height: 2; }
-.twatch b { color: var(--gold); }
+.twatch-det { margin-top: 22px; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px; background: rgba(255,255,255,0.02); }
+.twatch-det > summary { cursor: pointer; padding: 12px 18px; font-size: 13px;
+  color: #9aa79a; list-style: none; line-height: 2; }
+.twatch-det > summary::-webkit-details-marker { display: none; }
+.twatch-det > summary::before { content: "▸  "; color: var(--gold); }
+.twatch-det[open] > summary::before { content: "▾  "; }
+.twatch-det > summary b { color: var(--gold); }
+.tlist { padding: 0 18px 6px; font-size: 12px; }
+.titem { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline;
+  padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.05); color: #9aa79a; }
+.titem b { color: #e8ece8; }
+.tstat.intact { color: #4ade80; } .tstat.watch { color: #fbbf24; }
+.tstat.broken { color: #f87171; }
 .tbadge { display: inline-block; font-size: 11px; font-weight: 700;
   border-radius: 999px; padding: 1px 9px; margin-left: 8px; white-space: nowrap; }
 .tbadge.watch { color: #fbbf24; background: rgba(251,191,36,0.12);
@@ -82,7 +92,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .tbadge.broken { color: #f87171; background: rgba(248,113,113,0.12);
   border: 1px solid rgba(248,113,113,0.35); }
 .id .tbadge { margin-left: 6px; }
-.tledger a { color: #9aa79a; font-size: 12px; margin-left: 10px;
+.tledger { padding: 0 18px 12px; }
+.tledger a { color: #9aa79a; font-size: 12px;
   text-decoration: underline; text-underline-offset: 2px; }
 @media (max-width: 700px) {
   h1 { font-size: 20px; }
@@ -143,8 +154,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">FTNT</span>
     <span class="nm">Fortinet, Inc.</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+110.9%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.6%</div><div class="track"><div class="bar est" style="width:100.0%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+110.9%</div><div class="track"><div class="bar pos" style="width:73.9%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.6%</div><div class="track"><div class="bar est" style="width:58.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">B</div>
 </div>
@@ -154,8 +165,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">AVT</span>
     <span class="nm">Avnet, Inc.</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+110.5%</div><div class="track"><div class="bar pos" style="width:99.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.6%</div><div class="track"><div class="bar est" style="width:99.8%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+110.5%</div><div class="track"><div class="bar pos" style="width:73.7%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.6%</div><div class="track"><div class="bar est" style="width:57.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">B</div>
 </div>
@@ -165,8 +176,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">CON</span>
     <span class="nm">Concentra Group Holdings Parent, Inc.</span></div>
   <div class="sec">Healthcare</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+73.6%</div><div class="track"><div class="bar pos" style="width:66.4%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+10.2%</div><div class="track"><div class="bar est" style="width:88.0%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+73.6%</div><div class="track"><div class="bar pos" style="width:49.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+10.2%</div><div class="track"><div class="bar est" style="width:51.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -176,8 +187,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">CNO</span>
     <span class="nm">CNO Financial Group, Inc.</span></div>
   <div class="sec">Financial Services</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.3%</div><div class="track"><div class="bar pos" style="width:34.5%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.1%</div><div class="track"><div class="bar est" style="width:69.4%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.3%</div><div class="track"><div class="bar pos" style="width:25.5%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.1%</div><div class="track"><div class="bar est" style="width:40.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -187,8 +198,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">AMG</span>
     <span class="nm">Affiliated Managers Group, Inc.</span></div>
   <div class="sec">Financial Services</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+52.9%</div><div class="track"><div class="bar pos" style="width:47.7%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.0%</div><div class="track"><div class="bar est" style="width:69.1%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+52.9%</div><div class="track"><div class="bar pos" style="width:35.2%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.0%</div><div class="track"><div class="bar est" style="width:40.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -198,8 +209,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">NDSN</span>
     <span class="nm">Nordson Corporation</span></div>
   <div class="sec">Industrials</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+44.7%</div><div class="track"><div class="bar pos" style="width:40.3%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:65.1%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+44.7%</div><div class="track"><div class="bar pos" style="width:29.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:37.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -209,8 +220,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">RS</span>
     <span class="nm">Reliance, Inc.</span></div>
   <div class="sec">Basic Materials</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.0%</div><div class="track"><div class="bar pos" style="width:38.7%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.3%</div><div class="track"><div class="bar est" style="width:54.1%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.0%</div><div class="track"><div class="bar pos" style="width:28.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.3%</div><div class="track"><div class="bar est" style="width:31.4%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -220,8 +231,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">TGT</span>
     <span class="nm">Target Corporation</span></div>
   <div class="sec">Consumer Defensive</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+82.3%</div><div class="track"><div class="bar pos" style="width:74.2%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.0%</div><div class="track"><div class="bar est" style="width:52.0%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+82.3%</div><div class="track"><div class="bar pos" style="width:54.9%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.0%</div><div class="track"><div class="bar est" style="width:30.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -231,8 +242,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">IEX</span>
     <span class="nm">IDEX Corporation</span></div>
   <div class="sec">Industrials</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+41.6%</div><div class="track"><div class="bar pos" style="width:37.5%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.0%</div><div class="track"><div class="bar est" style="width:51.7%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+41.6%</div><div class="track"><div class="bar pos" style="width:27.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.0%</div><div class="track"><div class="bar est" style="width:29.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -242,8 +253,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">DRH</span>
     <span class="nm">DiamondRock Hospitality Company</span></div>
   <div class="sec">Real Estate</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+65.0%</div><div class="track"><div class="bar pos" style="width:58.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.3%</div><div class="track"><div class="bar est" style="width:45.3%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+65.0%</div><div class="track"><div class="bar pos" style="width:43.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.3%</div><div class="track"><div class="bar est" style="width:26.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -260,8 +271,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">QTEC</span>
     <span class="nm">First Trust NASDAQ-100-Technology Sect</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+44.2%</div><div class="track"><div class="bar pos" style="width:39.8%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.5%</div><div class="track"><div class="bar est" style="width:73.4%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+44.2%</div><div class="track"><div class="bar pos" style="width:29.5%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.5%</div><div class="track"><div class="bar est" style="width:42.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -271,8 +282,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">CIBR</span>
     <span class="nm">First Trust NASDAQ Cybersecurity ETF</span></div>
   <div class="sec">Technology</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+37.2%</div><div class="track"><div class="bar pos" style="width:33.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:71.8%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+37.2%</div><div class="track"><div class="bar pos" style="width:24.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:41.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">B</div>
 </div>
@@ -282,8 +293,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">VFLO</span>
     <span class="nm">Victoryshares Free Cash Flow ETF</span></div>
   <div class="sec">Mid-Cap Value</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.5%</div><div class="track"><div class="bar pos" style="width:34.7%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:71.7%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.5%</div><div class="track"><div class="bar pos" style="width:25.7%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:41.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -293,8 +304,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">QQQM</span>
     <span class="nm">Invesco NASDAQ 100 ETF</span></div>
   <div class="sec">Large Growth</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.9%</div><div class="track"><div class="bar pos" style="width:22.5%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.9%</div><div class="track"><div class="bar est" style="width:50.9%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.9%</div><div class="track"><div class="bar pos" style="width:16.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.9%</div><div class="track"><div class="bar est" style="width:29.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">80%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
@@ -304,13 +315,27 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     <span class="tick">USXF</span>
     <span class="nm">iShares ESG Advanced MSCI USA ETF</span></div>
   <div class="sec">Large Growth</div>
-  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+20.6%</div><div class="track"><div class="bar pos" style="width:18.6%"></div></div></div>
-  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.2%</div><div class="track"><div class="bar est" style="width:36.4%"></div></div></div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+20.6%</div><div class="track"><div class="bar pos" style="width:13.7%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.2%</div><div class="track"><div class="bar est" style="width:21.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
 </div>
 
-<div class="twatch"><b>Thesis watch</b> · 15 tracked · 15 intact · 0 watch · 0 broken <span class="tledger"><a href="thesis_ledger.jsonl">full ledger</a></span></div>
+<details class="twatch-det"><summary><b>Thesis watch</b> · 15 tracked · 15 intact · 0 watch · 0 broken</summary><div class="tlist"><div class="titem"><b>AMG</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>AVT</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>CIBR</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>CNO</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>CON</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>DRH</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>FTNT</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>IEX</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>NDSN</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>QQQM</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>QTEC</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>RS</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>TGT</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>USXF</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div>
+<div class="titem"><b>VFLO</b><span>held 0d</span><span>+0.0% since pick</span><span class="tstat intact">intact</span><span class="tnote">price-based: within tolerance</span></div></div><div class="tledger"><a href="thesis_ledger.jsonl">full ledger (JSONL)</a></div></details>
 
 <div class="note">
 <b>How to read this.</b> "1y" is the trailing one-year return
@@ -330,12 +355,13 @@ unstable → near zero; obvious decliners → negative. Picks with negative expe
 red = negative. Confidence = how much the researcher trusts the assessment
 given headline quality. Stability grades blend volatility, drawdown and event
 dependence (A = calmest). A "non-US" tag marks names domiciled outside the
-United States. Bars are scaled independently per column, so the strongest
-1-year return and the strongest expected value each fill their own bar —
-green and gold bars aren't on the same scale. The Thesis watch strip
-summarizes every pick the system has published (intact / watch / broken);
-a watch or broken badge also appears on that pick's row, and the full
-per-ticker record is linked as the ledger. Not financial advice. Past performance doesn't
+United States. Bars use fixed reference scales — a full bar is +150%
+1-year return or +20% expected value — so full means exceptional in
+absolute terms, never just best-of-today's-list, and bars stay comparable
+day to day. The Thesis watch strip summarizes every pick the system has
+published; expand it for the per-ticker list. A watch or broken badge also
+appears on that pick's row, and the full record is linked as the ledger.
+Not financial advice. Past performance doesn't
 predict future returns.
 </div>
 </body></html>

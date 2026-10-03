@@ -1057,28 +1057,21 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
 
     sections = [(titles[0] if titles else "Top 10 stocks — most confident", stocks_df),
                 (titles[1] if titles else "Top 10 ETFs — most confident", etfs_df)]
-    # bars get independent scales per column: 1y returns dwarf expected
-    # values, so a shared scale would shrink every gold bar to a sliver and
-    # make them useless. Each column's best fills its own track.
-    vmax_1y, vmax_est = 0.01, 0.01
-    for _, df in sections:
-        for _, r in df.iterrows():
-            try:
-                vmax_1y = max(vmax_1y, abs(float(r["ret_1y"])))
-            except Exception:
-                pass
-            try:
-                vmax_est = max(vmax_est, abs(float(r["est_next_1y"])))
-            except Exception:
-                pass
+    # Fixed reference scales, stated honestly in the note: a full bar means
+    # something absolute, not "best of today's list." Full 1y bar = +150%
+    # (a monster year); full EV bar = +20% (an exceptional expected value).
+    # Per-column max scaling made the top pick look godly (100% fill) even
+    # when its EV was merely good; fixed scales keep every bar an absolute
+    # gauge — and comparable across days, since the scale never moves.
+    REF_1Y, REF_EV = 1.50, 0.20
 
     def bar(val, gold=False):
         try:
             v = float(val)
         except Exception:
             return ""
-        vmax = vmax_est if gold else vmax_1y
-        w = max(2, abs(v) / vmax * 100)
+        ref = REF_EV if gold else REF_1Y
+        w = max(2, min(100, abs(v) / ref * 100))
         cls = "neg" if v < 0 else ("est" if gold else "pos")
         return (f'<div class="track"><div class="bar {cls}" style="width:{w:.1f}%">'
                 f"</div></div>")
@@ -1130,19 +1123,20 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
     etf_bench = meta.get("etf_benchmark", bench)
     bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
                    if etf_bench != bench else bench)
-    # --- Thesis watch: a slim strip, not a section. The picks are already on
-    # this page; repeating them as a 15-row table doubles the page for no
-    # new information. One summary line carries the state; names needing
-    # attention get inline chips here AND a badge on their main-table row.
-    # The full per-ticker record lives in thesis_ledger.jsonl (linked).
+    # --- Thesis watch: one <details> whose summary IS the status line.
+    # Boring state = a single collapsed line; the full tracked list expands
+    # in place (no file download needed). Watch/broken chips ride in the
+    # summary so the signal shows without expanding, and the section
+    # auto-opens when something needs attention.
     thesis_html = ""
     if thesis:
         nb = sum(1 for t in thesis if t.get("status") == "broken")
         nw = sum(1 for t in thesis if t.get("status") == "watch")
         ni = len(thesis) - nb - nw
+        _tsort = lambda t: ({"broken": 0, "watch": 1}.get(
+            t.get("status"), 2), str(t.get("ticker", "")))
         chips = []
-        for t in sorted(thesis, key=lambda t: ({"broken": 0, "watch": 1}.get(
-                t.get("status"), 2), str(t.get("ticker", "")))):
+        for t in sorted(thesis, key=_tsort):
             if t.get("status") in ("watch", "broken"):
                 try:
                     rsptxt = f" {float(t.get('ret_since_pick')):+.1%}"
@@ -1151,16 +1145,36 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
                 chips.append(
                     f'<span class="tbadge {t["status"]}" '
                     f'title="{_html.escape(str(t.get("reason", "")))}">'
-                    f'{_html.escape(str(t.get("ticker", "")))} · '
+                    f'{_html.escape(str(t.get("ticker", "")))} \u00b7 '
                     f'{t["status"]}{rsptxt}</span>')
         chips_html = (" " + " ".join(chips)) if chips else ""
-        attn = " · needs attention" if (nb or nw) else ""
+        attn = " \u00b7 needs attention" if (nb or nw) else ""
+        items = []
+        for t in sorted(thesis, key=_tsort):
+            st = str(t.get("status", "intact"))
+            try:
+                rsp = float(t.get("ret_since_pick"))
+                if abs(rsp) < 0.0005:
+                    rsp = 0.0
+                rsptxt = f"{rsp:+.1%} since pick"
+            except Exception:
+                rsptxt = "\u2014"
+            held = t.get("days_held", 0)
+            items.append(
+                f'<div class="titem"><b>{_html.escape(str(t.get("ticker", "")))}</b>'
+                f'<span>held {held}d</span>'
+                f'<span>{rsptxt}</span>'
+                f'<span class="tstat {st}">{st}</span>'
+                f'<span class="tnote">{_html.escape(str(t.get("reason", "")))}</span>'
+                '</div>')
+        open_attr = " open" if (nb or nw) else ""
         thesis_html = (
-            '<div class="twatch">'
-            f'<b>Thesis watch</b> · {len(thesis)} tracked · {ni} intact · '
-            f'{nw} watch · {nb} broken{attn}{chips_html}'
-            ' <span class="tledger"><a href="thesis_ledger.jsonl">full ledger</a></span>'
-            '</div>\n')
+            f'<details class="twatch-det"{open_attr}>'
+            f'<summary><b>Thesis watch</b> \u00b7 {len(thesis)} tracked \u00b7 {ni} intact \u00b7 '
+            f'{nw} watch \u00b7 {nb} broken{attn}{chips_html}</summary>'
+            '<div class="tlist">' + "\n".join(items) + '</div>'
+            '<div class="tledger"><a href="thesis_ledger.jsonl">full ledger (JSONL)</a></div>'
+            '</details>\n')
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
@@ -1234,10 +1248,20 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }}
 .note b {{ color: var(--gold); }}
-.twatch {{ margin-top: 22px; font-size: 13px; color: #9aa79a; padding: 12px 18px;
-  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
-  background: rgba(255,255,255,0.02); line-height: 2; }}
-.twatch b {{ color: var(--gold); }}
+.twatch-det {{ margin-top: 22px; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px; background: rgba(255,255,255,0.02); }}
+.twatch-det > summary {{ cursor: pointer; padding: 12px 18px; font-size: 13px;
+  color: #9aa79a; list-style: none; line-height: 2; }}
+.twatch-det > summary::-webkit-details-marker {{ display: none; }}
+.twatch-det > summary::before {{ content: "▸  "; color: var(--gold); }}
+.twatch-det[open] > summary::before {{ content: "▾  "; }}
+.twatch-det > summary b {{ color: var(--gold); }}
+.tlist {{ padding: 0 18px 6px; font-size: 12px; }}
+.titem {{ display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline;
+  padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.05); color: #9aa79a; }}
+.titem b {{ color: #e8ece8; }}
+.tstat.intact {{ color: #4ade80; }} .tstat.watch {{ color: #fbbf24; }}
+.tstat.broken {{ color: #f87171; }}
 .tbadge {{ display: inline-block; font-size: 11px; font-weight: 700;
   border-radius: 999px; padding: 1px 9px; margin-left: 8px; white-space: nowrap; }}
 .tbadge.watch {{ color: #fbbf24; background: rgba(251,191,36,0.12);
@@ -1245,7 +1269,8 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .tbadge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
   border: 1px solid rgba(248,113,113,0.35); }}
 .id .tbadge {{ margin-left: 6px; }}
-.tledger a {{ color: #9aa79a; font-size: 12px; margin-left: 10px;
+.tledger {{ padding: 0 18px 12px; }}
+.tledger a {{ color: #9aa79a; font-size: 12px;
   text-decoration: underline; text-underline-offset: 2px; }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
@@ -1313,12 +1338,13 @@ unstable → near zero; obvious decliners → negative. { "All tickers you suppl
 red = negative. Confidence = how much the researcher trusts the assessment
 given headline quality. Stability grades blend volatility, drawdown and event
 dependence (A = calmest). A "non-US" tag marks names domiciled outside the
-United States. Bars are scaled independently per column, so the strongest
-1-year return and the strongest expected value each fill their own bar —
-green and gold bars aren't on the same scale. The Thesis watch strip
-summarizes every pick the system has published (intact / watch / broken);
-a watch or broken badge also appears on that pick's row, and the full
-per-ticker record is linked as the ledger. Not financial advice. Past performance doesn't
+United States. Bars use fixed reference scales — a full bar is +150%
+1-year return or +20% expected value — so full means exceptional in
+absolute terms, never just best-of-today's-list, and bars stay comparable
+day to day. The Thesis watch strip summarizes every pick the system has
+published; expand it for the per-ticker list. A watch or broken badge also
+appears on that pick's row, and the full record is linked as the ledger.
+Not financial advice. Past performance doesn't
 predict future returns.
 </div>
 </body></html>
