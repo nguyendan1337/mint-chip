@@ -1212,7 +1212,7 @@ def build_etf_scores(closes, infos):
 
 
 def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
-                  honorable=None):
+                  honorable=None, market_chat=None):
     """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
 
     Columns: 1-year performance %, sector, and expected value %
@@ -1319,6 +1319,40 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # The near-miss table Dan asked for — alternatives worth a look, with the
     # reason each missed (cap, overlap, or final-score order).
     hm_html = ""
+    # --- Market chat: reader-facing plain-language section (market overview,
+    # per-sector paragraphs, per-ticker what/why). Content is written by the
+    # researcher into market_chat.json; the chart only renders it.
+    mc_html = ""
+    if market_chat and market_chat.get("sectors"):
+        _parts = ['<h2>Market chat</h2>']
+        _ov = str(market_chat.get("overview") or "").strip()
+        if _ov:
+            _parts.append(
+                '<div class="note"><p>' + _html.escape(_ov) + '</p>'
+                '<p class="fineprint">As of ' +
+                _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
+        for _sec in market_chat["sectors"]:
+            _items = []
+            for _t in _sec.get("tickers", []):
+                _kk = str(_t.get("kind", "")).strip().lower()
+                if _kk not in ("stock", "etf"):
+                    _kk = "stock"
+                _items.append(
+                    f'<div class="mc-item">'
+                    f'<span class="mc-tick {_kk}">'
+                    f'{_html.escape(str(_t.get("ticker", "")))}</span>'
+                    f' <span class="mc-nm">{_html.escape(str(_t.get("name", "")))}</span>'
+                    f' <span class="kchip {_kk}">{_kk.upper()}</span><br>'
+                    f'<span class="mc-what">{_html.escape(str(_t.get("what", "")))}</span><br>'
+                    f'<span class="mc-why">{_html.escape(str(_t.get("why", "")))}</span>'
+                    f'</div>')
+            _parts.append(
+                f'<details class="mc-sec"><summary>'
+                f'{_html.escape(str(_sec.get("name", "")))}</summary>'
+                f'<div class="mc-body"><p>'
+                f'{_html.escape(str(_sec.get("blurb", "")))}</p>'
+                + "".join(_items) + '</div></details>')
+        mc_html = "\n".join(_parts)
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
@@ -1495,6 +1529,31 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(125,211,252,0.35); }}
 .kchip.etf {{ color: #c4b5fd; background: rgba(196,181,253,0.12);
   border: 1px solid rgba(196,181,253,0.35); }}
+.mc-sec {{ position: relative; overflow: hidden; margin-bottom: 10px;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }}
+.mc-sec::before {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.07) 0%, transparent 48%); }}
+.mc-sec > summary {{ position: relative; cursor: pointer; padding: 13px 18px;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #cfd6cf;
+  list-style: none; }}
+.mc-sec > summary::-webkit-details-marker {{ display: none; }}
+.mc-sec > summary::before {{ content: "▸  "; color: var(--gold); }}
+.mc-sec[open] > summary::before {{ content: "▾  "; }}
+.mc-body {{ position: relative; padding: 0 18px 14px; font-size: 13px;
+  color: #a8b3a8; line-height: 1.65; }}
+.mc-body p {{ margin: 0 0 12px; }}
+.mc-item {{ margin: 12px 0; }}
+.mc-tick {{ font-weight: 700; letter-spacing: 0.03em; }}
+.mc-tick.stock {{ color: #7dd3fc; }}
+.mc-tick.etf {{ color: #c4b5fd; }}
+.mc-nm {{ color: #cfd6cf; font-weight: 600; }}
+.mc-what {{ color: #8a938a; }}
+.mc-why {{ color: #a8b3a8; }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
@@ -1512,6 +1571,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="tagline">Straight from the Mint.</div>
 <div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
 {rows_html}
+{mc_html}
 {hm_html}
 <div class="note">
 <p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
@@ -1926,6 +1986,35 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         sel = pd.concat([sel, add.drop(columns=["_newcat"], errors="ignore")],
                         ignore_index=True)
     return sel
+
+
+def fetch_pick_summaries(tickers, path="business_summaries.json"):
+    """One-line business descriptions for picks (market-chat grounding).
+
+    Fetches longBusinessSummary via yfinance; the researcher condenses each
+    to one plain line. Failures leave that ticker blank (never fatal)."""
+    import json as _json
+    out = {}
+    try:
+        out = _json.load(open(path))
+    except Exception:
+        out = {}
+    for t in tickers:
+        if out.get(t, {}).get("summary"):
+            continue
+        try:
+            info = yf.Ticker(str(t)).info or {}
+            s = info.get("longBusinessSummary") or ""
+            out[t] = {"name": info.get("longName") or info.get("shortName") or t,
+                      "summary": s[:700]}
+        except Exception as e:
+            log(f"pick summaries: {t} unavailable ({e})")
+            out.setdefault(t, {"name": t, "summary": ""})
+    try:
+        _json.dump(out, open(path, "w"), indent=1)
+        log(f"pick summaries: {path} ({len(out)} tickers)")
+    except Exception as e:
+        log(f"pick summaries: could not write ({e})")
 
 
 def honorable_mentions(ranked, final, args, top_k=30):
@@ -3058,11 +3147,26 @@ def main():
         chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
                       f"{args.benchmark}_llm.html")
         hm = honorable_mentions(ranked, final, args)
+        # market chat (researcher-written, plain language) + business
+        # summaries for tomorrow's market chat — both optional files
+        mc = None
+        try:
+            import json as _json
+            with open("market_chat.json") as _f:
+                mc = _json.load(_f)
+        except Exception:
+            mc = None
+        try:
+            _picks = list(final["ticker"]) if len(final) else []
+            if _picks:
+                fetch_pick_summaries(_picks)
+        except Exception as e:
+            log(f"pick summaries: skipped ({e})")
         make_chart_html(final_stocks, final_etfs, chart_path,
                         {"benchmark": args.benchmark,
                          "etf_benchmark": etf_benchmark(args),
                          "asof": datetime.now().strftime("%Y-%m-%d")},
-                        honorable=hm)
+                        honorable=hm, market_chat=mc)
         print(f"Chart: {chart_path}")
         checks, fails = run_self_check(final, args, out)
         if fails:
