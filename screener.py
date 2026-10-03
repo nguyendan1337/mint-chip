@@ -379,6 +379,22 @@ def max_drawdown(series):
     return float(dd.min())  # negative number, e.g. -0.25
 
 
+def drawdown_frequency(series, window=21, thresh=-0.10):
+    """Fraction of rolling 1-month windows that lost more than 10%.
+
+    Depth-only drawdown misses 'death by a thousand cuts': a name that dips
+    15% every other month has the same maxdd as one with a single 15% dip,
+    but very different post-buy pain risk. Used to scale the EV downside.
+    """
+    s = series.dropna()
+    if len(s) < window + 1:
+        return 0.0
+    rets = s.pct_change(window).dropna()
+    if len(rets) == 0:
+        return 0.0
+    return float((rets < thresh).mean())
+
+
 def zscore(series):
     s = pd.Series(series, dtype=float)
     mu = s.mean(skipna=True)
@@ -441,6 +457,7 @@ def build_scores(closes, infos):
         # --- risk (the "don't go negative right after I buy" part) ---
         row["vol60"] = float(daily_ret.iloc[-60:].std() * np.sqrt(252)) if len(daily_ret) >= 60 else np.nan
         row["maxdd"] = max_drawdown(px)  # negative
+        row["dd_freq"] = drawdown_frequency(px)  # how often it hurts, not just how deep
         beta = info.get("beta", np.nan)
         row["beta"] = float(beta) if isinstance(beta, (int, float)) else np.nan
 
@@ -488,6 +505,15 @@ def build_scores(closes, infos):
         + 0.05 * df["z_dte"]
         + 0.03 * df["z_fpe"] + 0.02 * df["z_ptb"]
     )
+    # character: the Composure parts the expected-value estimate doesn't
+    # already see — quality + entry timing + leverage/value. est uses ret_6m
+    # and maxdd directly, so momentum/vol/drawdown z-scores are deliberately
+    # excluded here (no double-counting). Used as a multiplier on the EV.
+    df["character"] = (
+        0.10 * df["z_roe"] + 0.08 * df["z_margin"] + 0.07 * df["z_earn"] + 0.05 * df["z_fcf"]
+        + 0.08 * df["z_blowoff"] + 0.04 * df["z_ext"] + 0.04 * df["z_trend"]
+        + 0.05 * df["z_dte"] + 0.03 * df["z_fpe"] + 0.02 * df["z_ptb"]
+    ).fillna(0)
     return df.sort_values("base_score", ascending=False)
 
 
@@ -681,9 +707,9 @@ def winsorize_base(df):
 
 
 def est_parts(row, dep, cont, conf=1.0):
-    """Decompose the est_next_1y heuristic into auditable components.
+    """Decompose the expected-value heuristic into auditable components.
 
-    Returns dict(r6, upside, dd, downside, dep, cont, conf, est).
+    Returns dict(r6, upside, dd, dd_freq, downside, character, dep, cont, conf, est).
     estimate_next_year() is a thin wrapper over this; the log prints the
     components per ticker so any reviewer can re-derive every estimate
     from logged inputs alone.
@@ -708,24 +734,44 @@ def est_parts(row, dep, cont, conf=1.0):
         conf = max(0.0, min(1.0, float(conf)))
     except Exception:
         conf = 1.0
+    try:
+        ddf = max(0.0, min(1.0, float(row.get("dd_freq", 0) or 0)))
+    except Exception:
+        ddf = 0.0
+    try:
+        char = max(-2.0, min(2.0, float(row.get("character", 0) or 0)))
+    except Exception:
+        char = 0.0
     r6c = min(max(r6, 0.0), 0.50)
     upside = min(r6c, 0.25) + 0.5 * max(r6c - 0.25, 0.0)
-    downside = max(abs(dd) * 0.5, 0.10)
-    est = conf * (cont * upside - (1 - cont) * downside - dep * 0.20)
-    return {"r6": r6, "upside": upside, "dd": dd, "downside": downside,
+    # downside: half the worst 1y drawdown, floored at 10%, scaled by how
+    # OFTEN pain arrives (dd_freq): frequent dippers hurt more than rare ones.
+    downside = max(abs(dd) * 0.5, 0.10) * (1 + ddf)
+    # character: the Composure parts est doesn't already see (quality, entry
+    # timing, structure/cost) adjust the whole estimate up/down by up to ~50%.
+    est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep * 0.20)
+    return {"r6": r6, "upside": upside, "dd": dd, "dd_freq": ddf,
+            "downside": downside, "character": char,
             "dep": dep, "cont": cont, "conf": conf, "est": est}
 
 
 def estimate_next_year(row, dep, cont, conf=1.0):
-    """Heuristic expected 1-year return, for display — NOT a prediction.
+    """Heuristic expected value, for display and ranking — NOT a prediction.
 
-    EV = conf * (cont * upside - (1 - cont) * downside - dep * event_unwind)
+    EV = conf x (1 + 0.25 x character) x
+         (cont x upside - (1 - cont) x downside - dep x event_unwind)
       upside      = last-6m run with a mean-reversion dampener: the first 25%
                     counts in full, anything beyond counts at half weight
                     (capped at 50%): monster half-years fade, so the estimate
                     must not let a historic run repeat at full weight;
-      downside    = half the historical 1y max-drawdown magnitude (floor 10%):
-                    if it breaks, you eat a serious but not worst-case loss;
+      downside    = half the historical 1y max-drawdown magnitude (floor 10%),
+                    scaled by (1 + drawdown frequency): names that dip 10%+
+                    often hurt more than names with one deep dip;
+      character   = the Composure parts this formula doesn't already see
+                    (quality, entry timing, structure/cost), as a z-sum:
+                    high-character names get their estimate lifted, low-
+                    character names get it cut. Momentum and volatility are
+                    deliberately excluded (ret_6m/maxdd already cover them);
       event_unwind= 20% haircut scaled by event_dependence;
       conf        = researcher's confidence in the assessment (0..1): low
                     confidence shrinks the estimate toward zero (neutral).
@@ -944,6 +990,7 @@ def build_etf_scores(closes, infos):
         rets = px.pct_change().dropna()
         row["vol60"] = float(rets.tail(60).std() * np.sqrt(252)) if len(rets) >= 60 else np.nan
         row["maxdd"] = max_drawdown(px)
+        row["dd_freq"] = drawdown_frequency(px)
         try:
             adv = info.get("averageDailyVolume10Day") or info.get("averageVolume") or 0
             lastpx = info.get("regularMarketPrice") or last
@@ -975,16 +1022,24 @@ def build_etf_scores(closes, infos):
         + 0.15 * df["z_vol"] + 0.15 * df["z_dd"] + 0.10 * df["z_dvol"]
         + 0.10 * df["z_expense"] + 0.10 * df["z_aum"]
     )
+    # character: the ETF parts the EV doesn't already see — structure/cost/
+    # liquidity + entry timing. Excludes momentum and risk z-scores (est uses
+    # ret_6m/maxdd directly; no double-counting). EV multiplier.
+    df["character"] = (
+        0.05 * df["z_blowoff"] + 0.05 * df["z_trend"]
+        + 0.10 * df["z_expense"] + 0.10 * df["z_aum"] + 0.10 * df["z_dvol"]
+    ).fillna(0)
     return df.sort_values("base_score", ascending=False)
 
 
-def make_chart_html(stocks_df, etfs_df, path, meta, titles=None):
-    """HTML chart: stocks + ETFs with 1y return, est next-1y, confidence.
+def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
+    """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
 
-    Columns: 1-year performance %, sector, and estimated next-1y %
+    Columns: 1-year performance %, sector, and expected value %
     (continuation-vs-downside expected value heuristic). `titles` optionally
-    overrides the two section headings. Rows carrying a non-US `country`
-    get a small flag.
+    overrides the two section headings. `thesis` is a list of status dicts
+    for the Thesis watch section (ticker, days_held, ret_since_pick, status,
+    reason). Rows carrying a non-US `country` get a small flag.
     """
     import html as _html
 
@@ -1033,7 +1088,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None):
     header = """
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
-  <div>1-year return</div><div>Est. next 1y</div>
+  <div>1-year return</div><div>Expected value</div>
   <div>Confidence</div><div>Stability</div>
 </div>
 """
@@ -1052,7 +1107,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None):
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
-  <div class="cell" data-cap="Est. next 1y"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
+  <div class="cell" data-cap="Expected value"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
 </div>
@@ -1062,6 +1117,31 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None):
     etf_bench = meta.get("etf_benchmark", bench)
     bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
                    if etf_bench != bench else bench)
+    # --- Thesis watch section: post-buy accountability for tracked picks ---
+    thesis_html = ""
+    if thesis:
+        trows = ['<div class="trow thead"><div>Ticker</div><div>Held</div>'
+                 '<div>Since pick</div><div>Status</div><div>Note</div></div>']
+        for t in thesis:
+            rsp = t.get("ret_since_pick")
+            try:
+                rsp_txt = f"{float(rsp):+.1%}"
+                rsp_cls = "pos" if float(rsp) >= 0 else "neg"
+            except Exception:
+                rsp_txt, rsp_cls = "—", ""
+            st = str(t.get("status", "intact"))
+            held = t.get("days_held", 0)
+            held_txt = f"{held}d" if isinstance(held, int) else str(held)
+            trows.append(
+                '<div class="trow">'
+                f'<div data-cap="Ticker"><b>{_html.escape(str(t.get("ticker", "")))}</b></div>'
+                f'<div data-cap="Held">{_html.escape(held_txt)}</div>'
+                f'<div data-cap="Since pick" class="{rsp_cls}">{rsp_txt}</div>'
+                f'<div data-cap="Status"><span class="badge {st}">{_html.escape(st)}</span></div>'
+                f'<div data-cap="Note" class="tnote">{_html.escape(str(t.get("reason", "")))}</div>'
+                '</div>')
+        thesis_html = ("<h2>Thesis watch</h2>\n<div class=\"thesis\">\n"
+                       + "\n".join(trows) + "\n</div>\n")
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
@@ -1135,6 +1215,23 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }}
 .note b {{ color: var(--gold); }}
+.thesis {{ margin-top: 6px; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px; overflow: hidden; background: rgba(255,255,255,0.02); }}
+.trow {{ display: grid; grid-template-columns: 1.2fr 0.8fr 1fr 1fr 2.4fr;
+  gap: 8px; padding: 10px 18px; font-size: 13px; align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.05); }}
+.trow:last-child {{ border-bottom: none; }}
+.trow.thead {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #93a093; padding: 8px 18px; }}
+.badge {{ display: inline-block; font-size: 11px; font-weight: 700;
+  border-radius: 999px; padding: 2px 10px; }}
+.badge.intact {{ color: #4ade80; background: rgba(74,222,128,0.12);
+  border: 1px solid rgba(74,222,128,0.35); }}
+.badge.watch {{ color: #fbbf24; background: rgba(251,191,36,0.12);
+  border: 1px solid rgba(251,191,36,0.35); }}
+.badge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
+  border: 1px solid rgba(248,113,113,0.35); }}
+.tnote {{ font-size: 11px; color: #9aa79a; }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
@@ -1145,6 +1242,12 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: #93a093; margin-bottom: 3px; }}
   .cf, .stab {{ text-align: left; font-size: 14px; }}
+  .trow {{ grid-template-columns: 1fr 1fr; row-gap: 6px; }}
+  .trow.thead {{ display: none; }}
+  .trow > div::before {{
+    content: attr(data-cap); display: block;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #93a093; margin-bottom: 2px; }}
 }}
 @media (prefers-color-scheme: light) {{
   body {{ color: #1c241c;
@@ -1182,22 +1285,28 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <div class="tagline">Straight from the Mint.</div>
 <div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
 {rows_html}
+{thesis_html}
 <div class="note">
 <b>How to read this.</b> "1y" is the trailing one-year return
 (stocks vs { _html.escape(bench) }, ETFs vs { _html.escape(etf_bench) }).
-"Est. next 1y" is a heuristic expected value, not a prediction:
+"Expected value" is a heuristic expected value, not a prediction:
 continuation-likelihood × (last-6-month run with a mean-reversion dampener —
 the first 25% counts in full, beyond that at half weight, capped at 50%,
 since monster half-years fade) minus
-break-risk × (half the historical max-drawdown magnitude) minus an event-unwind
-haircut (event_dependence × 20%), all scaled by the researcher's confidence in
+break-risk × (half the historical max-drawdown magnitude, scaled up when the
+name dips 10%+ often) minus an event-unwind
+haircut (event_dependence × 20%), all adjusted by the name's character
+(quality, entry timing, structure — steady compounders get lifted, fragile
+spikes get cut) and scaled by the researcher's confidence in
 the assessment (thin/contradictory headlines → estimate shrinks toward zero).
 Strong, stable continuation → clearly positive;
 unstable → near zero; obvious decliners → negative. { "All tickers you supplied are shown, sorted by expected value — red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Picks with negative expected value are excluded from the final list." } Green = positive estimate,
 red = negative. Confidence = how much the researcher trusts the assessment
 given headline quality. Stability grades blend volatility, drawdown and event
 dependence (A = calmest). A "non-US" tag marks names domiciled outside the
-United States. Not financial advice. Past performance doesn't
+United States. The Thesis watch section tracks every pick the system has
+published: how long it's been held, its return since the pick date, and
+whether the original thesis still holds (intact / watch / broken). Not financial advice. Past performance doesn't
 predict future returns.
 </div>
 </body></html>
@@ -1587,16 +1696,20 @@ def add_research_columns(df, llm_path=True):
     sub["stability"] = sub.apply(stability_grade, axis=1)
     # --- est audit trail: formula + per-ticker components, so any reviewer
     # (human or LLM) can re-derive every estimate from the log alone ---
-    log("--- est_next_1y audit: est = conf x (cont x upside - (1-cont) x downside "
-        "- dep x 0.20); upside = first 25% of 6m run at full weight, beyond at "
-        "half weight (cap 50%); downside = max(|maxDD| x 0.5, 10%)")
+    log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
+        "(cont x upside - (1-cont) x downside - dep x 0.20); "
+        "upside = first 25% of 6m run at full weight, beyond at half weight "
+        "(cap 50%); downside = max(|maxDD| x 0.5, 10%) x (1 + drawdown_freq); "
+        "character = quality/entry-timing/structure z-sum, clamped [-2, 2]")
     for (_, r), d, c, f in zip(sub.iterrows(), dep, cont, conf):
         p = est_parts(r, d, c, f)
         log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
+            f"{1 + 0.25 * p['character']:.2f}char x "
             f"({p['cont']:.2f} x {p['upside']:.3f} - {1 - p['cont']:.2f} x "
             f"{p['downside']:.3f} - {p['dep']:.2f} x 0.20) "
             f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%}; "
-            f"dd={p['dd']:+.0%} -> down {p['downside']:.1%}]")
+            f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%}; "
+            f"char={p['character']:+.2f}]")
     return sub
 
 
@@ -1716,6 +1829,8 @@ def _watchlist_cand(r, headlines):
         "ret_3m": _safe(r.get("ret_3m")),
         "vol60": float(r["vol60"]),
         "maxdd": float(r["maxdd"]),
+        "dd_freq": _safe(r.get("dd_freq")),
+        "character": _safe(r.get("character")),
         "beta": _safe(r.get("beta")), "roe": _safe(r.get("roe")),
         "margin": _safe(r.get("margin")), "fpe": _safe(r.get("fpe")),
         "base_score": float(r["base_score"]),
@@ -1925,6 +2040,185 @@ def run_watchlist_apply(args):
          "chart": chart_path})
 
 
+# ---------------- Thesis ledger: post-buy accountability ----------------
+# The system used to forget its picks the moment it published them. The ledger
+# records every pick (with the prediction it was picked on) and every rejected
+# near-miss (the control group), append-only, so a later audit can measure
+# predictions against outcomes and the formula can be improved from evidence.
+THESIS_LEDGER = "thesis_ledger.jsonl"
+REJECTED_LEDGER = "rejected_ledger.jsonl"
+THESIS_TRACK_DAYS = 90  # price-based checks cover picks this fresh or newer
+
+
+def ledger_append(path, event):
+    import json as _json
+    event = dict(event)
+    event.setdefault("date", datetime.now().strftime("%Y-%m-%d"))
+    event.setdefault("ts", datetime.now().isoformat())
+    with open(path, "a") as f:
+        f.write(_json.dumps(event, default=str) + "\n")
+
+
+def record_picks_ledger(final, ranked, args):
+    """Append pick events for today's finals + rejected events for the
+    audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
+    import json as _json  # noqa: F401 (kept local like the rest of this file)
+    tickers = list(final["ticker"])
+    prices = {}
+    try:
+        px = download_prices(tickers, period="5d")
+        for t in tickers:
+            s = px[t].dropna() if t in px else None
+            if s is not None and len(s):
+                prices[t] = float(s.iloc[-1])
+    except Exception as e:
+        log(f"ledger: pick-price fetch failed ({e}); recording without prices")
+    for _, r in final.iterrows():
+        ledger_append(THESIS_LEDGER, {
+            "event": "picked",
+            "ticker": r["ticker"], "kind": r.get("kind", ""),
+            "name": r.get("name", ""), "sector": r.get("sector", ""),
+            "pick_price": prices.get(r["ticker"]),
+            "ret_1y": _safe(r.get("ret_1y")),
+            "est_next_1y": _safe(r.get("est_next_1y")),
+            "dep": _safe(r.get("llm_event_dependence")),
+            "cont": _safe(r.get("llm_continuation")),
+            "conf": _safe(r.get("llm_confidence")),
+            "character": _safe(r.get("character")),
+            "dd_freq": _safe(r.get("dd_freq")),
+            "base_score": _safe(r.get("base_score")),
+            "final_score": _safe(r.get("final_score")),
+            "rationale": str(r.get("llm_rationale", "") or "")[:500],
+            "benchmark": args.benchmark,
+            "etf_benchmark": etf_benchmark(args),
+        })
+    # rejected control group: names the system said no to, so the audit can
+    # ask whether the vetoes/exclusions/floors were right
+    final_set = set(tickers)
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    recorded = 0
+    for _, r in ranked.iterrows():
+        t = r["ticker"]
+        if t in final_set or recorded >= 15:
+            continue
+        d = _safe(r.get("llm_event_dependence"))
+        c = _safe(r.get("llm_continuation"))
+        f_ = _safe(r.get("llm_confidence"))
+        p = est_parts(r, d if d is not None else 0.3,
+                      c if c is not None else 0.5, f_ if f_ is not None else 1.0)
+        reason = None
+        if r.get("llm_excluded"):
+            reason = f"research exclusion: {str(r.get('llm_exclude_reason', ''))[:200]}"
+        elif d is not None and d > veto:
+            reason = f"event-dependence veto (dep={d:.2f} > {veto})"
+        elif p["est"] < args.min_est:
+            reason = f"expected-value floor (est={p['est']:+.1%} < {args.min_est:+.0%})"
+        else:
+            continue  # sector cap / score rank — not audit-interesting
+        ledger_append(REJECTED_LEDGER, {
+            "event": "rejected", "ticker": t, "kind": r.get("kind", ""),
+            "name": r.get("name", ""), "price": prices.get(t),
+            "reason": reason, "est_next_1y": round(p["est"], 4),
+            "dep": d, "cont": c, "conf": f_,
+        })
+        recorded += 1
+    log(f"ledger: recorded {len(final)} picks, {recorded} rejected (control group)")
+
+
+def thesis_check(track_days=THESIS_TRACK_DAYS):
+    """Price-based thesis check for picks made within the last `track_days`.
+
+    Appends 'check' events (intact/watch/broken) to the ledger and returns
+    the status list. The daily agent does the news-based re-verification on
+    top and amends reasons; this function only measures price truth.
+    """
+    import json as _json
+    picks = {}
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "picked":
+                    picks[e["ticker"]] = e
+    except FileNotFoundError:
+        return []
+    cutoff = (datetime.now() - timedelta(days=track_days)).strftime("%Y-%m-%d")
+    tracked = {t: e for t, e in picks.items()
+               if e.get("date", "") >= cutoff and e.get("pick_price")}
+    if not tracked:
+        return []
+    out = []
+    try:
+        px = download_prices(list(tracked), period="3mo")
+    except Exception as e:
+        log(f"thesis_check: price fetch failed ({e})")
+        return []
+    today = datetime.now().strftime("%Y-%m-%d")
+    for t, e in tracked.items():
+        if t not in px:
+            continue
+        s = px[t].dropna()
+        s = s[s.index >= pd.Timestamp(e["date"])]
+        if len(s) == 0:
+            continue
+        pp = float(e["pick_price"])
+        ret = float(s.iloc[-1] / pp - 1)
+        dd = float(((s - s.cummax()) / s.cummax()).min())
+        days = (datetime.now() - datetime.fromisoformat(e["date"])).days
+        status = "intact"
+        reason = "price-based: within tolerance"
+        if dd <= -0.15 or ret <= -0.15:
+            status, reason = "broken", f"price-based: {dd:+.0%} max dip since pick"
+        elif dd <= -0.08 or ret <= -0.08:
+            status, reason = "watch", f"price-based: {dd:+.0%} dip since pick"
+        rec = {"event": "check", "ticker": t, "date": today, "status": status,
+               "days_held": days, "ret_since_pick": round(ret, 4),
+               "dd_since_pick": round(dd, 4), "pick_price": pp, "reason": reason}
+        ledger_append(THESIS_LEDGER, rec)
+        out.append(rec)
+    nb = sum(1 for r in out if r["status"] == "broken")
+    nw = sum(1 for r in out if r["status"] == "watch")
+    log(f"thesis_check: {len(out)} tracked, {nb} broken, {nw} watch")
+    return out
+
+
+def thesis_status_for_chart(track_days=THESIS_TRACK_DAYS):
+    """Latest status per tracked ticker for the chart's Thesis watch section."""
+    import json as _json
+    latest = {}
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") in ("picked", "check") and e.get("ticker"):
+                    latest[e["ticker"]] = e
+    except FileNotFoundError:
+        return []
+    cutoff = (datetime.now() - timedelta(days=track_days)).strftime("%Y-%m-%d")
+    rows = []
+    for t, e in sorted(latest.items()):
+        if e.get("date", "") < cutoff:
+            continue
+        if e["event"] == "picked":
+            days = (datetime.now() - datetime.fromisoformat(e["date"])).days
+            rows.append({"ticker": t, "kind": e.get("kind", ""),
+                         "days_held": days, "ret_since_pick": None,
+                         "status": "intact", "reason": "freshly picked"})
+        else:
+            rows.append({"ticker": t, "kind": e.get("kind", ""),
+                         "days_held": e.get("days_held", 0),
+                         "ret_since_pick": e.get("ret_since_pick"),
+                         "status": e.get("status", "intact"),
+                         "reason": e.get("reason", "")})
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description="Free stock screener with dynamic news risk")
     ap.add_argument("--benchmark", default="SPMO", choices=BENCHMARK_CHOICES)
@@ -2018,6 +2312,12 @@ def main():
         final_stocks, final_etfs = pick_final(ranked, args, llm_path=True)
         final = pd.concat([final_stocks, final_etfs], ignore_index=True)
         _print_llm_final(final_stocks, final_etfs, args)
+        # thesis ledger: record picks + rejected control group (audit trail)
+        try:
+            record_picks_ledger(final, ranked, args)
+        except Exception as e:
+            log(f"ledger: record_picks_ledger failed ({e})")
+        thesis_rows = thesis_status_for_chart()
         out = (f"screener_results_{datetime.now().strftime('%Y%m%d')}_"
                f"{args.benchmark}_llm.csv")
         final.to_csv(out, index=False)
@@ -2027,7 +2327,8 @@ def main():
         make_chart_html(final_stocks, final_etfs, chart_path,
                         {"benchmark": args.benchmark,
                          "etf_benchmark": etf_benchmark(args),
-                         "asof": datetime.now().strftime("%Y-%m-%d")})
+                         "asof": datetime.now().strftime("%Y-%m-%d")},
+                        thesis=thesis_rows)
         print(f"Chart: {chart_path}")
         checks, fails = run_self_check(final, args, out)
         if fails:
@@ -2276,6 +2577,8 @@ def main():
                 "ret_3m": _safe(r.get("ret_3m")),
                 "vol60": float(r["vol60"]),
                 "maxdd": float(r["maxdd"]),
+                "dd_freq": _safe(r.get("dd_freq")),
+                "character": _safe(r.get("character")),
                 "beta": _safe(r.get("beta")), "roe": _safe(r.get("roe")),
                 "margin": _safe(r.get("margin")), "fpe": _safe(r.get("fpe")),
                 "base_score": float(r["base_score"]),

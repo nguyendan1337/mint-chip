@@ -43,7 +43,7 @@ Reranks by research (`final = base_w − w_down·dep + w_up·cont −
 w_outlier·outlier_excess·dep`), applies risk gates, the expected-value
 floor, and the event-dependence veto, then writes the chart:
 `chart_<timestamp>_VGT_llm.html` — top 10 stocks + top 10 ETFs, each sorted
-by estimated next-year return, highest first.
+by expected value, highest first.
 
 Without `--with-llm`, the run uses the rules-based news layer instead and
 completes in one step (faster, no research depth).
@@ -62,18 +62,18 @@ python3 screener.py --watchlist "DAC,AYA,DIVB,XBI,HNGE,CDNA,VFLO"
 
 # (research the bundle, write watchlist_outputs.json)
 
-# Phase B: apply research → chart sorted by est. next 1y
+# Phase B: apply research → chart sorted by expected value
 python3 screener.py --watchlist-apply watchlist_bundle_<ts>.json watchlist_outputs.json
 ```
 
-## How the estimated next-year return works
+## How the expected value works
 
 A heuristic expected value, **not a prediction**:
 
 ```
-est = confidence × (continuation × upside
-                    − (1 − continuation) × downside
-                    − event_dependence × 20%)
+EV = confidence × (1 + 0.25 × character)
+     × (continuation × upside − (1 − continuation) × downside
+        − event_dependence × 20%)
 ```
 
 - **upside** — last-6-month run with a mean-reversion dampener: the first
@@ -81,11 +81,33 @@ est = confidence × (continuation × upside
   Monster half-years fade; the estimate must not let a historic run
   repeat at full weight.
 - **downside** — half the historical 1-year max-drawdown magnitude
-  (floor 10%): if it breaks, you eat a serious but not worst-case loss.
+  (floor 10%), scaled by (1 + drawdown frequency): a name that dips 10%+
+  in a third of all months hurts more than one with a single deep dip.
+  Depth tells you how bad it can get; frequency tells you how often.
+- **character** — the Composure parts the formula doesn't already see
+  (quality, entry timing, structure/cost), as a z-sum clamped to [-2, 2].
+  Steady compounders get their estimate lifted (up to ~1.5×), fragile
+  spikes get it cut (down to ~0.5×). Momentum and volatility are
+  deliberately excluded — ret_6m/maxdd already cover them, no double-counting.
 - **event_dependence × 20%** — haircut for how much the run rides fragile
   event drivers (war, headlines, binary catalysts).
 - **confidence** — the researcher's confidence shrinks the estimate
   toward zero when headlines are thin or contradictory.
+
+## Thesis ledger: post-buy accountability
+
+Every Phase B run appends to `thesis_ledger.jsonl` (one JSON object per
+line, never rewritten): each pick with its price, expected value,
+dep/cont/conf, character, and the rationale it was picked on — plus a
+rejected control group (`rejected_ledger.jsonl`) of vetoed, excluded, and
+EV-floor-failed names, so the audit can ask whether the nos were right.
+The daily run price-checks every pick from the last 90 days
+(intact / watch at −8% / broken at −15% from pick price) and the agent
+re-verifies the news behind watch/broken names. The chart carries a
+**Thesis watch** section: days held, return since pick, status, one-line
+note. A monthly audit job measures predictions against realized outcomes
+and proposes formula changes from the evidence — it proposes, Dan disposes;
+weights are never auto-tuned.
 
 ## Key options
 
@@ -106,16 +128,19 @@ est = confidence × (continuation × upside
 ## Outputs (all in this directory)
 
 - `chart_<ts>_<BENCH>_llm.html` / `watchlist_chart_<ts>.html` — the final
-  chart. Columns: 1-year return, sector, est. next 1y, confidence,
+  chart. Columns: 1-year return, sector, expected value, confidence,
   stability grade. Readable in light and dark mode.
 - `screener_results_<date>_<BENCH>_llm.csv` / `watchlist_results_<date>.csv`
 - `run_summary_<ts>_<BENCH>_llm.json` / `watchlist_summary_<ts>.json` —
   picks, scores, self-checks, and the investor philosophy.
 - `logs/screener_<ts>.log` — **the full audit trail**: investor philosophy,
   per-ticker quant score breakdowns, research assessments (dep/cont/conf +
-  rationale), the est formula with per-ticker component math, gate/floor
+  rationale), the expected-value formula with per-ticker component math, gate/floor
   cuts, and final picks. Any LLM reading the log can verify the process
   and critique any stage.
+- `thesis_ledger.jsonl` / `rejected_ledger.jsonl` — append-only record of
+  every pick (with its prediction) and every rejected near-miss; the raw
+  material for the monthly calibration audit.
 - `research_bundle_<ts>_<BENCH>.json` / `watchlist_bundle_<ts>.json` —
   Phase A handoff; `llm_outputs.json` / `watchlist_outputs.json` — research.
 - `cache/<date>/` — date-partitioned cache (prices, fundamentals,

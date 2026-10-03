@@ -24,3 +24,6 @@ this one should make them less likely, not pretend they're impossible.
 - The process must be auditable. Any good analyst reading the record of a run
   should be able to check the work, disagree with a stage, and propose a
   better one. If the method can't be questioned, it can't be trusted.
+- The method keeps score on itself. Every prediction is recorded alongside
+  what actually happened, and the record is used to question and improve the
+  method — including what happens *after* buying, not just the buy decision.
