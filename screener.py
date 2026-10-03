@@ -1117,22 +1117,26 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
     etf_bench = meta.get("etf_benchmark", bench)
     bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
                    if etf_bench != bench else bench)
-    # --- Thesis watch section: post-buy accountability for tracked picks ---
+    # --- Thesis watch: compact by design. "intact" is the boring default and
+    # collapses behind a <details>; watch/broken are the signal and stay
+    # visible, broken first. A one-line summary up top keeps the section
+    # readable no matter how many names accumulate.
     thesis_html = ""
     if thesis:
-        trows = ['<div class="trow thead"><div>Ticker</div><div>Held</div>'
-                 '<div>Since pick</div><div>Status</div><div>Note</div></div>']
-        for t in thesis:
+        def _trow(t):
             rsp = t.get("ret_since_pick")
             try:
-                rsp_txt = f"{float(rsp):+.1%}"
-                rsp_cls = "pos" if float(rsp) >= 0 else "neg"
+                rsp = float(rsp)
+                if abs(rsp) < 0.0005:
+                    rsp = 0.0
+                rsp_txt = f"{rsp:+.1%}"
+                rsp_cls = "pos" if rsp >= 0 else "neg"
             except Exception:
                 rsp_txt, rsp_cls = "—", ""
             st = str(t.get("status", "intact"))
             held = t.get("days_held", 0)
             held_txt = f"{held}d" if isinstance(held, int) else str(held)
-            trows.append(
+            return (
                 '<div class="trow">'
                 f'<div data-cap="Ticker"><b>{_html.escape(str(t.get("ticker", "")))}</b></div>'
                 f'<div data-cap="Held">{_html.escape(held_txt)}</div>'
@@ -1140,8 +1144,31 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
                 f'<div data-cap="Status"><span class="badge {st}">{_html.escape(st)}</span></div>'
                 f'<div data-cap="Note" class="tnote">{_html.escape(str(t.get("reason", "")))}</div>'
                 '</div>')
-        thesis_html = ("<h2>Thesis watch</h2>\n<div class=\"thesis\">\n"
-                       + "\n".join(trows) + "\n</div>\n")
+        _order = {"broken": 0, "watch": 1, "intact": 2}
+        srows = sorted(thesis,
+                       key=lambda t: (_order.get(t.get("status"), 2),
+                                      str(t.get("ticker", ""))))
+        nb = sum(1 for t in thesis if t.get("status") == "broken")
+        nw = sum(1 for t in thesis if t.get("status") == "watch")
+        ni = len(thesis) - nb - nw
+        attn = " · needs attention" if (nb or nw) else ""
+        open_rows = [_trow(t) for t in srows if t.get("status") != "intact"]
+        intact_rows = [_trow(t) for t in srows if t.get("status") != "broken"
+                       and t.get("status") != "watch"]
+        body = "\n".join(open_rows)
+        if intact_rows:
+            det = ('<details class="tdet"><summary>'
+                   f'{ni} intact — expand</summary>\n'
+                   + "\n".join(intact_rows) + '\n</details>')
+            body = (body + "\n" + det) if body else det
+        thesis_html = (
+            "<h2>Thesis watch</h2>\n"
+            f'<div class="tsum">{len(thesis)} tracked · {ni} intact · '
+            f'{nw} watch · {nb} broken{attn}</div>\n'
+            '<div class="thesis">\n'
+            '<div class="trow thead"><div>Ticker</div><div>Held</div>'
+            '<div>Since pick</div><div>Status</div><div>Note</div></div>\n'
+            + body + "\n</div>\n")
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
@@ -1232,6 +1259,14 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .badge.broken {{ color: #f87171; background: rgba(248,113,113,0.12);
   border: 1px solid rgba(248,113,113,0.35); }}
 .tnote {{ font-size: 11px; color: #9aa79a; }}
+.tsum {{ font-size: 13px; color: #9aa79a; margin: -4px 0 10px; }}
+.tdet {{ border-top: 1px solid rgba(255,255,255,0.05); }}
+.tdet summary {{ cursor: pointer; padding: 10px 18px; font-size: 13px;
+  color: #9aa79a; list-style: none; }}
+.tdet summary::-webkit-details-marker {{ display: none; }}
+.tdet summary::before {{ content: "▸  "; color: var(--gold); }}
+.tdet[open] summary::before {{ content: "▾  "; }}
+.tdet[open] summary {{ border-bottom: 1px solid rgba(255,255,255,0.05); }}
 @media (max-width: 700px) {{
   h1 {{ font-size: 20px; }}
   .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
@@ -1305,8 +1340,8 @@ red = negative. Confidence = how much the researcher trusts the assessment
 given headline quality. Stability grades blend volatility, drawdown and event
 dependence (A = calmest). A "non-US" tag marks names domiciled outside the
 United States. The Thesis watch section tracks every pick the system has
-published: how long it's been held, its return since the pick date, and
-whether the original thesis still holds (intact / watch / broken). Not financial advice. Past performance doesn't
+published: a one-line summary up top, names needing attention (watch/broken)
+shown openly, and intact names collapsed — expand to see them. Not financial advice. Past performance doesn't
 predict future returns.
 </div>
 </body></html>
@@ -2059,6 +2094,25 @@ def ledger_append(path, event):
         f.write(_json.dumps(event, default=str) + "\n")
 
 
+def _ledger_seen_today(path, event="picked"):
+    """Tickers already recorded with `event` today — keeps Phase B idempotent."""
+    import json as _json
+    seen = set()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        with open(path) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == event and e.get("date") == today:
+                    seen.add(e.get("ticker"))
+    except FileNotFoundError:
+        pass
+    return seen
+
+
 def record_picks_ledger(final, ranked, args):
     """Append pick events for today's finals + rejected events for the
     audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
@@ -2082,7 +2136,11 @@ def record_picks_ledger(final, ranked, args):
     if len(prices) < len(tickers):
         log(f"ledger: recording {len(tickers) - len(prices)} picks without prices; "
             f"backfill before thesis_check")
+    already = _ledger_seen_today(THESIS_LEDGER, "picked")
+    npick = 0
     for _, r in final.iterrows():
+        if r["ticker"] in already:
+            continue
         ledger_append(THESIS_LEDGER, {
             "event": "picked",
             "ticker": r["ticker"], "kind": r.get("kind", ""),
@@ -2101,14 +2159,16 @@ def record_picks_ledger(final, ranked, args):
             "benchmark": args.benchmark,
             "etf_benchmark": etf_benchmark(args),
         })
+        npick += 1
     # rejected control group: names the system said no to, so the audit can
     # ask whether the vetoes/exclusions/floors were right
     final_set = set(tickers)
+    rseen = _ledger_seen_today(REJECTED_LEDGER, "rejected")
     veto = getattr(args, "veto_dep", 0.7) or 0.7
     recorded = 0
     for _, r in ranked.iterrows():
         t = r["ticker"]
-        if t in final_set or recorded >= 15:
+        if t in final_set or t in rseen or recorded >= 15:
             continue
         d = _safe(r.get("llm_event_dependence"))
         c = _safe(r.get("llm_continuation"))
@@ -2131,7 +2191,8 @@ def record_picks_ledger(final, ranked, args):
             "dep": d, "cont": c, "conf": f_,
         })
         recorded += 1
-    log(f"ledger: recorded {len(final)} picks, {recorded} rejected (control group)")
+    log(f"ledger: recorded {npick} new picks ({len(final)} final), "
+        f"{recorded} rejected (control group)")
 
 
 def thesis_check(track_days=THESIS_TRACK_DAYS):
