@@ -730,10 +730,12 @@ def log_score_breakdown(df, label, groups):
 
 
 def log_research_assessments(ranked):
-    """Log each ticker's research-stage assessment: dep/cont/conf + rationale.
+    """Log each ticker's research-stage assessment: verdict + full rationale +
+    risks + the news the researcher based it on.
 
     This is the research stage, fully exposed: what the researcher decided
-    about each name and why, in one line each.
+    about each name, why, what could go wrong, and what news it read — so an
+    independent reviewer can re-judge every call from the log alone.
     """
     log("--- research assessments ---")
     today = __import__("datetime").date.today().isoformat()
@@ -754,10 +756,53 @@ def log_research_assessments(ranked):
             prov, n_carried = f"carried({ad})", n_carried + 1
         else:
             prov, n_unknown = "carried(?)", n_unknown + 1
-        why = str(r.get("llm_rationale", "") or "").replace("\n", " ")[:160]
-        log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} [{prov}] | {why}")
+        log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} [{prov}]")
+        why = str(r.get("llm_rationale", "") or "").replace("\n", " ").strip()
+        if why:
+            log(f"    rationale: {why}")
+        risks = str(r.get("llm_risks", "") or "").strip()
+        if risks:
+            log(f"    risks: {risks}")
+        try:
+            headlines = [str(h).strip() for h in (r.get("headlines", []) or [])
+                         if str(h).strip()]
+        except Exception:
+            headlines = []
+        if headlines:
+            log(f"    news seen ({len(headlines)}):")
+            for h in headlines:
+                log(f"      - {h[:220]}")
     log(f"research provenance: {n_fresh} fresh, {n_carried} carried-over, "
         f"{n_unknown} unknown (pre-dates date stamping)")
+
+
+def log_world_layer(outputs):
+    """Log the researcher's world/market context: drivers + risk events.
+
+    This is the macro layer every per-ticker assessment was conditioned on.
+    An independent reviewer needs it to judge whether the researcher read
+    the market right (e.g. did it register a freight-rate spike before
+    judging a tanker stock?). If the researcher skipped it, the log says so
+    — a missing world layer is itself audit signal.
+    """
+    w = (outputs or {}).get("world") or {}
+    drivers = w.get("drivers") or []
+    risk_events = w.get("risk_events") or []
+    log("--- world/market context (researcher's macro layer) ---")
+    if not drivers and not risk_events:
+        log("  world layer: NOT PROVIDED by researcher "
+            "(outputs.json has no 'world' key)")
+        return
+    for d in drivers:
+        log(f"  driver: {str(d.get('title', ''))[:200]} | "
+            f"{str(d.get('summary', ''))[:300]} | "
+            f"sectors={d.get('affected_sectors', [])} | "
+            f"direction={d.get('direction', '')}")
+    for e in risk_events:
+        log(f"  risk event: {str(e.get('title', ''))[:200]} | "
+            f"{str(e.get('summary', ''))[:300]} | "
+            f"sectors={e.get('affected_sectors', [])} | "
+            f"severity={e.get('severity', '')}")
 
 
 def winsorize_base(df):
@@ -2484,6 +2529,7 @@ def main():
         ranked = apply_llm_outputs(df, outputs,
                                    w_down=args.w_down, w_up=args.w_up,
                                    w_outlier=args.w_outlier)
+        log_world_layer(outputs)
         log_research_assessments(ranked)
         # absolute risk gates also apply on the Phase-B path
         ranked, gate_report = apply_risk_gates(ranked, max_vol=args.max_vol,
