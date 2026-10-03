@@ -1415,9 +1415,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
             '<div>1-year return</div><div>Expected value</div>'
             '<div>Confidence</div><div>Why not picked</div></div>\n'
             '<div class="picklist" id="pl2">\n'
-            + "\\n".join(hm_rows) + "\\n</div>\\n"
+            + "\n".join(hm_rows) + "\n</div>\n"
             + (f'<div class="hm-more"><button class="sbtn" id="hm-toggle" '
-                f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\\n'
+                f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\n'
                 if len(honorable) > 10 else ""))
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
