@@ -26,6 +26,10 @@ liquid, no blowups), scores for continuation + low post-buy drawdown risk,
 and writes a research bundle:
 `research_bundle_<timestamp>_<BENCH>.json`.
 
+Tip: `--etf-benchmark VOO` runs the ETF leg against a separate benchmark
+(VGT stays the stock hurdle) — a broader ETF benchmark diversifies the ETF
+candidate pool instead of concentrating it in the stock benchmark's sector.
+
 **Research (agent does this)** — read the bundle, research each candidate
 against current news, and write `llm_outputs.json` in the bundle's schema:
 per ticker, `event_dependence` (0–1), `continuation` (0–1), `confidence`
@@ -33,7 +37,7 @@ per ticker, `event_dependence` (0–1), `continuation` (0–1), `confidence`
 
 **Phase B — apply research, pick, chart**
 ```bash
-python3 screener.py --llm-apply research_bundle_<ts>_VGT.json llm_outputs.json --benchmark VGT
+python3 screener.py --llm-apply research_bundle_<ts>_VGT.json llm_outputs.json --benchmark VGT --etf-benchmark VOO
 ```
 Reranks by research (`final = base_w − w_down·dep + w_up·cont −
 w_outlier·outlier_excess·dep`), applies risk gates, the expected-value
@@ -91,7 +95,7 @@ est = confidence × (continuation × upside
 | `--veto-dep` | 0.7 | Event-dependence above this is vetoed from final picks |
 | `--max-vol` / `--min-dd` | 0.80 / −0.40 | Absolute risk gates on trailing volatility / max drawdown |
 | `--max-per-sector` | 2 | Max stocks per sector |
-| `--max-per-etf-category` | 4 | Max ETFs per category (fill pass may exceed it rather than leave slots empty) |
+| `--max-per-etf-category` | 2 | Hard max ETFs per category — a third tech ETF is redundant, not diversifying; empty slots stay empty |
 | `--min-score` | 0.0 | Quality floor on the reranked score |
 | `--w-down` / `--w-up` / `--w-outlier` | 1.5 / 1.0 / 0.5 | Rerank weights: event-dependence penalty, continuation reward, outlier×event interaction |
 | `--n-stocks` / `--n-etfs` | 10 / 10 | Final pick counts |

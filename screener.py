@@ -43,7 +43,14 @@ except ImportError as e:
     sys.exit(1)
 
 CACHE_DIR = "cache"
-BENCHMARK_CHOICES = ["SPMO", "VGT", "DIVB", "VFLO"]
+BENCHMARK_CHOICES = ["SPMO", "VGT", "DIVB", "VFLO", "VOO"]
+
+# ETF portfolio dedupe aliases: tickers mapping to the same underlying
+# portfolio (different wrappers). Surfaced by research; extend as found.
+_ETF_PORTFOLIO_ALIASES = {
+    "qqq": "nasdaq100",
+    "qqqm": "nasdaq100",
+}
 
 # Generic negative sentiment words (not event-specific, just tone)
 NEGATIVE_WORDS = {
@@ -1028,10 +1035,13 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None):
 """
     now = meta.get("asof", "")
     bench = meta.get("benchmark", "")
+    etf_bench = meta.get("etf_benchmark", bench)
+    bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
+                   if etf_bench != bench else bench)
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>Screener results vs { _html.escape(bench) } — { _html.escape(now) }</title>
+<title>Screener results vs { _html.escape(bench_label) } — { _html.escape(now) }</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1146,10 +1156,11 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <body>
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
-<div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench}") } — { _html.escape(now) }</div>
+<div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
 {rows_html}
 <div class="note">
-<b>How to read this.</b> "1y" is the trailing one-year return vs a { _html.escape(bench) } benchmark.
+<b>How to read this.</b> "1y" is the trailing one-year return
+(stocks vs { _html.escape(bench) }, ETFs vs { _html.escape(etf_bench) }).
 "Est. next 1y" is a heuristic expected value, not a prediction:
 continuation-likelihood × (last-6-month run with a mean-reversion dampener —
 the first 25% counts in full, beyond that at half weight, capped at 50%,
@@ -1300,10 +1311,14 @@ def apply_news_adjustment(df, risk_themes, top_k=50, cache=None, w_outlier=1.0):
     return candidates.sort_values("adj_score", ascending=False)
 
 
-def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0, veto_dep=None):
+def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
+                             veto_dep=None, initial_counts=None):
     """Pick top n with sector cap. Never fills slots with sub-floor or
-    vetoed stocks: fewer strong picks beats 10 diluted ones."""
-    picked, sector_counts, skipped = [], Counter(), Counter()
+    vetoed stocks: fewer strong picks beats 10 diluted ones.
+    initial_counts seeds the per-sector tally (used by the fill pass so the
+    cap stays hard across both passes)."""
+    picked, skipped = [], Counter()
+    sector_counts = Counter(initial_counts) if initial_counts else Counter()
     for _, r in df.iterrows():
         if r["final_score"] < min_score:
             skipped["below_floor"] += 1
@@ -1350,11 +1365,8 @@ def run_self_check(final, args, out_csv):
                               ("etf", args.max_per_etf_category)):
                 sub = final[final["kind"] == kind]
                 if len(sub):
-                    # pass-1 picks respect the category cap; pass-2 fill picks
-                    # may exceed it (documented rule: fill empty slots with
-                    # qualified names rather than leave them empty)
-                    p1 = sub[sub.get("pick_pass", 1) == 1] if "pick_pass" in sub.columns else sub
-                    sc = p1["sector"].value_counts() if len(p1) else sub["sector"].value_counts()
+                    # the category cap is hard across both pick passes
+                    sc = sub["sector"].value_counts()
                     check(f"sector_cap_{kind}",
                           bool((sc <= cap).all()), f"max/{kind}={sc.max()}")
         else:
@@ -1450,7 +1462,12 @@ def _print_llm_final(final_stocks, final_etfs, args):
                 f"stab={r.get('stability', '?')} final={r['final_score']:+.2f}")
 
 
-def run_etf_pipeline(args, cache, bench_ret):
+def etf_benchmark(args):
+    """Benchmark ticker for the ETF leg (defaults to the stock benchmark)."""
+    return args.etf_benchmark or args.benchmark
+
+
+def run_etf_pipeline(args, cache, bench_ret, bench_name):
     """Full ETF leg: universe -> outperformers -> infos -> trash -> scores -> gates.
 
     Returns a scored, gated, winsorized DataFrame (may be empty).
@@ -1483,7 +1500,7 @@ def run_etf_pipeline(args, cache, bench_ret):
             c["ret_1y"] = r
             eout.append(c)
     eout.sort(key=lambda d: d["ret_1y"], reverse=True)
-    print(f"{len(eout)} confirmed ETF outperformers beat {args.benchmark} "
+    print(f"{len(eout)} confirmed ETF outperformers beat {bench_name} "
           f"({bench_ret:+.1%} 1y)")
     if not eout:
         return pd.DataFrame()
@@ -1569,6 +1586,14 @@ def pick_final(adj, args, llm_path):
     veto = args.veto_dep if llm_path else None
     adj = add_research_columns(adj, llm_path=llm_path)
 
+    # research-driven hard exclusions (rule violations, etc.)
+    if "llm_excluded" in adj.columns and adj["llm_excluded"].any():
+        _ex = adj[adj["llm_excluded"]]
+        for _, r in _ex.iterrows():
+            log(f"RESEARCH EXCLUSION: {r['ticker']} — {r.get('llm_exclude_reason', '')}")
+        print(f"Research excluded {_ex['ticker'].tolist()}")
+        adj = adj[~adj["llm_excluded"]].copy()
+
     if "kind" in adj.columns:
         srank = adj[adj["kind"] == "stock"]
         erank = adj[adj["kind"] == "etf"]
@@ -1588,6 +1613,23 @@ def pick_final(adj, args, llm_path):
         if len(srank) < _n0:
             log(f"share-class dedupe: {_n0 - len(srank)} duplicate listings removed")
 
+    # ETF portfolio dedupe: never hold two wrappers of the same portfolio
+    # (ETF analogue of the GOOG/GOOGL rule, e.g. QQQ vs QQQM). Keyed on a
+    # small alias map for known identical-portfolio pairs surfaced by
+    # research, falling back to normalized fund name.
+    if not erank.empty and "name" in erank.columns:
+        _n0 = len(erank)
+        erank = erank.copy()
+        _noname = (erank["name"].str.lower()
+                   .str.replace(r"\b(etf|trust|fund|index|shares?)\b", "", regex=True)
+                   .str.replace(r"[^a-z0-9]", "", regex=True))
+        erank["_pkey"] = [_ETF_PORTFOLIO_ALIASES.get(str(t).lower(), n)
+                          for t, n in zip(erank["ticker"], _noname)]
+        erank = erank.sort_values("final_score", ascending=False).drop_duplicates("_pkey")
+        erank = erank.drop(columns=["_pkey"])
+        if len(erank) < _n0:
+            log(f"ETF portfolio dedupe: {_n0 - len(erank)} duplicate listings removed")
+
     def pick_group(ranked, n, cap, label):
         # expected-value floor first: never pick a negative-EV name
         cut = ranked[ranked["est_next_1y"] < args.min_est]
@@ -1599,36 +1641,37 @@ def pick_final(adj, args, llm_path):
                                          min_score=args.min_score, veto_dep=veto)
         first = first.copy()
         first["pick_pass"] = 1
-        # second pass: fill empty slots with the next-best floor-passers,
-        # ignoring the category cap. Diversification is a preference; the
-        # hard floors (score, est, veto, gates) never bend. Within the fill,
-        # prefer categories not yet represented before doubling up.
-        # An empty slot while a qualified name sits out serves no one.
+        # second pass: fill empty slots with the next-best floor-passers.
+        # The category cap is HARD: the fill pass may not exceed it either.
+        # Within the cap, prefer categories not yet represented before
+        # doubling up. An empty slot beats a redundant third-of-theme.
+        # (Hard floors — score, est, veto, gates — never bend.)
         if len(first) < n:
             taken = set(first["ticker"]) if len(first) else set()
-            taken_cats = set(first["sector"]) if len(first) else set()
+            taken_counts = Counter(first["sector"]) if len(first) else Counter()
             rest = est_ok[~est_ok["ticker"].isin(taken)].copy()
+            rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap)]
             if not rest.empty:
-                rest["_newcat"] = (~rest["sector"].isin(taken_cats)).astype(int)
+                rest["_newcat"] = (~rest["sector"].isin(set(taken_counts))).astype(int)
                 rest = rest.sort_values(["_newcat", "final_score"],
                                         ascending=[False, False])
                 rest = rest.drop(columns=["_newcat"])
             fill = pick_top_with_sector_cap(rest, n=n - len(first),
-                                            max_per_sector=n,
+                                            max_per_sector=cap,
                                             min_score=args.min_score,
-                                            veto_dep=veto)
+                                            veto_dep=veto,
+                                            initial_counts=taken_counts)
             if len(fill):
                 fill = fill.copy()
                 fill["pick_pass"] = 2
-                log(f"fill pass ({label}): +{len(fill)} beyond category cap: "
+                log(f"fill pass ({label}): +{len(fill)} within category cap: "
                     f"{fill['ticker'].tolist()}")
                 first = pd.concat([first, fill], ignore_index=True)
         return first
 
     final_stocks = pick_group(srank, args.n_stocks, args.max_per_sector, "stocks")
-    # for ETFs the 'sector' column holds the fund category; the cap is wider
-    # than the stock sector cap because the outperformer set is structurally
-    # concentrated in a few themes (recalibrated for 10 ETF slots)
+    # for ETFs the 'sector' column holds the fund category; the cap is a hard
+    # max of 2 per category (a third tech ETF is redundant, not diversifying)
     final_etfs = pick_group(erank, args.n_etfs, args.max_per_etf_category, "ETFs")
     # display order: highest confidence-weighted expected 1y return first
     if not final_stocks.empty:
@@ -1861,6 +1904,9 @@ def run_watchlist_apply(args):
 def main():
     ap = argparse.ArgumentParser(description="Free stock screener with dynamic news risk")
     ap.add_argument("--benchmark", default="SPMO", choices=BENCHMARK_CHOICES)
+    ap.add_argument("--etf-benchmark", default=None, choices=BENCHMARK_CHOICES,
+                    help="separate benchmark for the ETF leg "
+                         "(default: same as --benchmark)")
     ap.add_argument("--compare-benchmarks", action="store_true")
     ap.add_argument("--test", action="store_true", help="quick test (caps outperformers at 60)")
     ap.add_argument("--min-mcap", type=float, default=2e9,
@@ -1908,7 +1954,7 @@ def main():
                     help="disable the US-only filter")
     ap.add_argument("--n-etf-research", type=int, default=30,
                     help="top ETF quant candidates entering research (default 30)")
-    ap.add_argument("--max-per-etf-category", type=int, default=4,
+    ap.add_argument("--max-per-etf-category", type=int, default=2,
                     help="max final ETFs per fund category (default 4)")
     ap.add_argument("--no-cache", action="store_true",
                     help="ignore the on-disk cache; make all calls fresh")
@@ -1956,6 +2002,7 @@ def main():
                       f"{args.benchmark}_llm.html")
         make_chart_html(final_stocks, final_etfs, chart_path,
                         {"benchmark": args.benchmark,
+                         "etf_benchmark": etf_benchmark(args),
                          "asof": datetime.now().strftime("%Y-%m-%d")})
         print(f"Chart: {chart_path}")
         checks, fails = run_self_check(final, args, out)
@@ -2009,6 +2056,9 @@ def main():
 
     # 1) Benchmark 1y return
     bench_tickers = BENCHMARK_CHOICES if args.compare_benchmarks else [args.benchmark]
+    _eb = etf_benchmark(args)
+    if _eb not in bench_tickers:
+        bench_tickers = bench_tickers + [_eb]
     bench_closes = cache.get("bench_" + "_".join(bench_tickers))
     if bench_closes is None:
         bench_closes = download_prices(bench_tickers, period="1y")
@@ -2021,9 +2071,14 @@ def main():
         if pd.isna(bench_ret):
             print(f"Could not get benchmark {args.benchmark} return. Exiting.")
             sys.exit(1)
+        etf_bench_ret = bench_rets.get(_eb, np.nan)
+        if pd.isna(etf_bench_ret):
+            print(f"Could not get ETF benchmark {_eb} return. Exiting.")
+            sys.exit(1)
     else:
         # if comparing, use the best benchmark as the hurdle? No — use the user's chosen default SPMO
         bench_ret = bench_rets.get("SPMO", np.nan)
+        etf_bench_ret = bench_rets.get(_eb, bench_ret)
 
     # 2) Universe: FULL yfinance screener pull (paged), then outperformers only.
     # No top-N cap: every stock beating the benchmark goes through fundamentals.
@@ -2161,7 +2216,7 @@ def main():
         log(f"share-class dedupe: {_n0 - len(df)} duplicate listings removed")
 
     # 6d) ETF leg: separate universe + scorer (different fundamentals)
-    edf = run_etf_pipeline(args, cache, bench_ret)
+    edf = run_etf_pipeline(args, cache, etf_bench_ret, _eb)
 
     # research pool: top 50 stocks + top N ETFs
     _pool_etfs = edf.head(args.n_etf_research).copy() if not edf.empty else edf
@@ -2218,7 +2273,9 @@ def main():
             bundle = build_research_bundle(
                 cands, market_headlines,
                 {"benchmark": args.benchmark,
-                 "note": "quant base scores included; LLM decides event_dependence/continuation"})
+                 "etf_benchmark": _eb,
+                 "note": "quant base scores included; LLM decides event_dependence/continuation. "
+                         "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark."})
             bp = f"research_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}.json"
             with open(bp, "w") as f:
                 _json.dump(bundle, f, indent=1, default=str)
@@ -2230,8 +2287,9 @@ def main():
             print("Next: have your research agent (e.g. Muse) read the bundle,")
             print("research the web, and write llm_outputs.json per the schema")
             print("inside the bundle. Then run:")
+            _eb_flag = f" --etf-benchmark {_eb}" if _eb != args.benchmark else ""
             print(f"  python3 screener.py --llm-apply {bp} llm_outputs.json "
-                  f"--benchmark {args.benchmark}")
+                  f"--benchmark {args.benchmark}{_eb_flag}")
             return
 
         # auto backend: API failover chain, graceful fallback to rules
@@ -2304,7 +2362,7 @@ def main():
           f"(floor {args.min_score:+.1f})")
     print("=" * 70)
     final_lines = _print_group(f"STOCKS (max {args.max_per_sector} per sector)", final_stocks)
-    final_lines += _print_group("ETFs (max 2 per category)", final_etfs)
+    final_lines += _print_group(f"ETFs (max {args.max_per_etf_category} per category)", final_etfs)
     log("FINAL PICKS:\n" + "\n".join(final_lines))
     if len(final_stocks) < args.n_stocks or len(final_etfs) < args.n_etfs:
         log("NOTE: some slots intentionally left empty (floor/veto)")
@@ -2323,6 +2381,7 @@ def main():
     chart_path = f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}{tag}.html"
     make_chart_html(final_stocks, final_etfs, chart_path,
                     {"benchmark": args.benchmark,
+                     "etf_benchmark": etf_benchmark(args),
                      "asof": datetime.now().strftime("%Y-%m-%d")})
     print(f"Chart: {chart_path}")
 
