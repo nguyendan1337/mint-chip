@@ -1669,9 +1669,10 @@ def _watchlist_cand(r, headlines):
 def run_watchlist(args, tickers):
     """Phase A for --watchlist: Dan's tickers through quant + headlines.
 
-    No benchmark, no picking — every ticker that survives the trash filters
-    gets researched and charted, sorted by est_next_1y. Foreign-domiciled
-    names are flagged, not dropped (they're his explicit list).
+    No benchmark, no picking, no trash filters — every ticker the user
+    provided that has usable price history gets researched and charted,
+    sorted by est_next_1y. Foreign-domiciled names are flagged, not dropped
+    (they're his explicit list).
     """
     import json as _json
     from cache import StepCache
@@ -1704,36 +1705,30 @@ def run_watchlist(args, tickers):
                  for t in st]
         scloses = {t: closes[t] for t in st}
         sinfos = {t: infos[t] for t in st if t in infos}
-        kept, rep = apply_trash_filters(srows, scloses, sinfos, us_only=False)
-        log(f"watchlist stock trash: {rep}")
-        kt = [r["ticker"] for r in kept]
+        # No trash filters in watchlist mode: every user-supplied ticker
+        # with price data is scored, researched, and charted.
+        kt = [r["ticker"] for r in srows]
+        log(f"watchlist stocks: {len(kt)} (no trash filters)")
         sdf = build_scores({t: scloses[t] for t in kt},
                            {t: sinfos[t] for t in kt if t in sinfos})
         if not sdf.empty:
             sdf["kind"] = "stock"
             log_score_breakdown(sdf, "watchlist stocks", _STOCK_SCORE_GROUPS)
             frames.append(sdf)
-        for r in srows:
-            if r["ticker"] not in kt:
-                print(f"  {r['ticker']}: dropped by trash filter")
     if et:
         erows = [{"ticker": t, "name": str(infos.get(t, {}).get("longName") or t)}
                  for t in et]
         ecloses = {t: closes[t] for t in et}
         einfos = {t: infos[t] for t in et if t in infos}
-        ekept, erep = etf_trash_filter(erows, ecloses, einfos, us_only=False)
-        log(f"watchlist ETF trash: {erep}")
-        kt = [r["ticker"] for r in ekept]
+        kt = [r["ticker"] for r in erows]
+        log(f"watchlist ETFs: {len(kt)} (no trash filters)")
         edf = build_etf_scores({t: ecloses[t] for t in kt},
                                {t: einfos[t] for t in kt if t in einfos})
         if not edf.empty:
             log_score_breakdown(edf, "watchlist etfs", _ETF_SCORE_GROUPS)
             frames.append(edf)
-        for r in erows:
-            if r["ticker"] not in kt:
-                print(f"  {r['ticker']}: dropped by trash filter")
     if not frames:
-        print("Watchlist: nothing survived the trash filters.")
+        print("Watchlist: nothing to score.")
         return
     df = pd.concat(frames, ignore_index=True)
     df["country"] = df["ticker"].map(lambda t: infos.get(t, {}).get("country") or "")

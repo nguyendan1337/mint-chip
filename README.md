@@ -46,9 +46,10 @@ completes in one step (faster, no research depth).
 
 ### 2. Watchlist mode (your own tickers)
 
-No benchmark, no picking — every ticker that survives the trash filters is
-scored, researched, and charted, sorted by estimated next-year return.
-Foreign-domiciled names are flagged, not dropped.
+No benchmark, no picking, no trash filters — every ticker you list that has
+usable price history is scored, researched, and charted, sorted by estimated
+next-year return. Foreign-domiciled names are flagged, not dropped. (Trash
+filters apply to benchmark mode only.)
 
 ```bash
 # Phase A: quant + headlines → bundle
