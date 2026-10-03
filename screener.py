@@ -1393,8 +1393,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
                 _hr1y = float(h.get("ret_1y"))
             except Exception:
                 _hr1y = float("nan")
+            _extra = " hm-extra" if i > 10 else ""
             hm_rows.append(f"""
-<div class="row hm k-{_hk}" data-ev="{_hev}" data-r1y="{_hr1y}">
+<div class="row hm k-{_hk}{_extra}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
     <span class="kchip {_hk}">{_hk.upper()}</span>
@@ -1414,7 +1415,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None,
             '<div>1-year return</div><div>Expected value</div>'
             '<div>Confidence</div><div>Why not picked</div></div>\n'
             '<div class="picklist" id="pl2">\n'
-            + "\n".join(hm_rows) + "\n</div>\n")
+            + "\\n".join(hm_rows) + "\\n</div>\\n"
+            + (f'<div class="hm-more"><button class="sbtn" id="hm-toggle" '
+                f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\\n'
+                if len(honorable) > 10 else ""))
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -1521,6 +1525,9 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border-color: var(--gold); box-shadow: 0 0 12px rgba(255,213,79,0.4); }}
 .why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
 .row.hm {{ opacity: 0.88; }}
+.hm-extra {{ display: none; }}
+#pl2.showall .hm-extra {{ display: grid; }}
+.hm-more {{ margin: 4px 0 6px; }}
 .row.k-stock .tick {{ color: #7dd3fc; }}
 .row.k-etf .tick {{ color: #c4b5fd; }}
 .kchip {{ display: inline-block; font-size: 10px; font-weight: 700;
@@ -1603,6 +1610,15 @@ document.querySelectorAll('.sortctl').forEach(function(ctl){{
     }});
   }});
 }});
+var hmt = document.getElementById('hm-toggle');
+if(hmt){{
+  hmt.addEventListener('click', function(){{
+    var pl2 = document.getElementById('pl2');
+    var open = pl2.classList.toggle('showall');
+    hmt.textContent = open ? 'Show fewer \u2191'
+      : 'Show all ' + hmt.getAttribute('data-n') + ' \u2193';
+  }});
+}}
 </script>
 </body></html>
 """
@@ -1887,7 +1903,7 @@ def apply_etf_overlap_cap(edf, max_overlap=0.30):
     return df[df["ticker"].isin(alive)]
 
 
-def honorable_mentions(ranked, final, args, top_k=10):
+def honorable_mentions(ranked, final, args, top_k=30):
     """Near-miss table: researched names that cleared the EV floor but didn't
     make the chart — alternatives worth a look, each with the reason it
     missed (overlap, cap, or final-score order). Sorted by EV, descending."""
