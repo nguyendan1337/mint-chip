@@ -1582,11 +1582,12 @@ volatile or too deeply scarred.</p>
 <p><b>Question the story.</b> Survivors get researched: how much does the story depend on
 events outside the company&apos;s control? How likely is the strength to
 continue? How much do we trust our own read?</p>
-<p><b>Price the risk.</b> Those judgments become one number &mdash; expected
-value: the likely gains, minus the likely pain, marked down for anything shaky
-or hype-driven.</p>
-<p>Mint is built around a simple idea: find strength, question the story, price
-the risk, and only make room for what earns it.</p>
+<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those
+judgments become one number &mdash; expected value: the likely gains if it holds,
+minus the likely pain if it turns, adjusted for how much we trust our own
+read.</p>
+<p>Mint is built around a simple idea: find strength, question the story, weigh
+the odds, and only make room for what earns it.</p>
 <p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
 future returns. Also: there are gremlins that have control over the markets,
 they hate you personally,
