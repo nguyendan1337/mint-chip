@@ -19,6 +19,8 @@ this one should make them less likely, not pretend they're impossible.
   disguise.
 - American names only — US-domiciled stocks, US-focused ETFs. And diversified
   by construction: no accidental concentration in one sector, theme, or story.
+- No religious-themed securities. No faith-based screens, religious mandates,
+  or religiously-branded issuers in any holding — stocks, ETFs, or otherwise.
 - The process must be auditable. Any good analyst reading the record of a run
   should be able to check the work, disagree with a stage, and propose a
   better one. If the method can't be questioned, it can't be trusted.

@@ -230,6 +230,9 @@ def apply_trash_filters(rows, closes, infos, us_only=True):
         if s is None or len(s) < 120:
             report["no_price_history"] = report.get("no_price_history", 0) + 1
             continue
+        if _religious_theme(r.get("name", ""), t):
+            report["religious_theme"] = report.get("religious_theme", 0) + 1
+            continue
         dd = max_drawdown(s)
         if not pd.isna(dd) and dd < -0.70:
             report["drawdown_worse_than_-70%"] = report.get("drawdown_worse_than_-70%", 0) + 1
@@ -825,6 +828,23 @@ def etf_facts(info):
             "family": info.get("fundFamily") or ""}
 
 
+# Religious-themed securities (faith-based screens, religious mandates or
+# issuers). Dan's rule: no religious stocks, ETFs, or similar, ever.
+# Word-boundary matching; "church" deliberately excluded (Church & Dwight).
+_RELIGIOUS_THEME_PAT = re.compile(
+    r"\b(shariah|sharia|islamic|halal|wahed|biblical|bible|christian|"
+    r"catholic|gospel|torah|kosher|faith)\b", re.IGNORECASE)
+_RELIGIOUS_TICKERS = {"hlal", "spus", "bibl"}  # known faith-based ETFs whose
+# names don't carry keywords (e.g. Inspire 100)
+
+
+def _religious_theme(name, ticker=""):
+    """True if a stock/ETF name or ticker is religious-themed."""
+    if _RELIGIOUS_THEME_PAT.search(str(name or "")):
+        return True
+    return str(ticker or "").lower() in _RELIGIOUS_TICKERS
+
+
 def _foreign_focus(info, name):
     """True if an ETF's focus is non-US (foreign/emerging/global mandate).
 
@@ -851,7 +871,8 @@ def etf_trash_filter(rows, closes, infos, us_only=True):
     """Hard filters for ETFs: history, liquidity, scale, no blowups.
     Returns (kept_rows, report)."""
     kept, dropped = [], {"short_history": 0, "illiquid": 0, "tiny_aum": 0,
-                         "blown_up": 0, "leveraged_name": 0, "foreign_focus": 0}
+                         "blown_up": 0, "leveraged_name": 0, "foreign_focus": 0,
+                         "religious_theme": 0}
     pat = _leverage_pat()
     for r in rows:
         t = r["ticker"]
@@ -863,6 +884,9 @@ def etf_trash_filter(rows, closes, infos, us_only=True):
         name = str(info.get("longName") or r["name"] or "")
         if pat.search(name) or pat.search(t):
             dropped["leveraged_name"] += 1
+            continue
+        if _religious_theme(name, t):
+            dropped["religious_theme"] += 1
             continue
         if us_only and _foreign_focus(info, name):
             dropped["foreign_focus"] += 1

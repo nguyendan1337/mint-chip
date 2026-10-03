@@ -444,6 +444,15 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
     df["llm_continuation"] = ups
     df["llm_rationale"] = rats
     df["llm_risks"] = risks
+    # research-driven hard exclusion (e.g. rule violations the quant gates
+    # can't see, like a global mandate slipping the keyword filter)
+    exc, exc_r = [], []
+    for _, r in df.iterrows():
+        s = stocks.get(r["ticker"], {})
+        exc.append(bool(s.get("exclude", False)))
+        exc_r.append(str(s.get("exclude_reason", "")))
+    df["llm_excluded"] = exc
+    df["llm_exclude_reason"] = exc_r
     confs = []
     for _, r in df.iterrows():
         s = stocks.get(r["ticker"], {})
