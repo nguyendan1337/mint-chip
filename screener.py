@@ -1449,18 +1449,11 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   background: rgba(255,255,255,0.025);
   -webkit-backdrop-filter: blur(8px) saturate(1.5);
   backdrop-filter: blur(8px) saturate(1.5);
-  border: 1px solid rgba(255,213,79,0.24); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 28px rgba(0,0,0,0.38),
-    0 0 34px rgba(255,213,79,0.10); }}
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px rgba(0,0,0,0.38); }}
 .note::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
-  background:
-    linear-gradient(115deg, rgba(255,213,79,0.24) 0%, rgba(255,213,79,0.08) 38%,
-      transparent 62%),
-    linear-gradient(295deg, rgba(255,213,79,0.12) 0%, transparent 46%); }}
-.note::after {{ content: ""; position: absolute; inset: 0; pointer-events: none;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,0.22) 0%,
-    rgba(255,255,255,0.05) 16%, transparent 34%); }}
+  background: linear-gradient(115deg, rgba(255,213,79,0.16) 0%,
+    rgba(255,213,79,0.05) 30%, transparent 58%); }}
 .note b {{ color: var(--gold); }}
 .note p {{ margin: 0 0 13px; }}
 .note p:last-child {{ margin-bottom: 0; }}
