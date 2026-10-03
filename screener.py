@@ -1557,30 +1557,36 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 {thesis_html}
 {hm_html}
 <div class="note">
-<b>How to read this.</b> We look at the strongest American stocks and ETFs of
-the past year &mdash; the ones that beat the market &mdash; and ask which are most
-likely to <i>keep</i> doing well without dropping right after you buy.
-Avoiding losses comes first. Every name here earned its place; we would rather
-leave a slot empty than fill it with something we don&apos;t believe in.
+<b>About Mint.</b> Mint looks for American stocks and ETFs that have already
+proven themselves &mdash; names that beat their benchmark over the past year &mdash;
+then asks the harder question: which are most likely to keep winning without
+stumbling right after you buy?
+{ "Watchlist mode: every ticker you supplied is researched and scored, sorted by expected value &mdash; no benchmark, no picking." if meta.get("mode") == "watchlist" else "" }
 
-"1y" is how much it gained over the past year
-(stocks vs { _html.escape(bench) }, ETFs vs { _html.escape(etf_bench) }).
-"Expected value" is our honest estimate of what could come next &mdash; think of
-it as a weather forecast, not a promise. It starts with the recent run, then
-asks the hard questions: how often does this name stumble, and how bad are the
-stumbles? Is the story built on real business strength, or on hype, headlines,
-and one-time events? The shakier the answers, the more we shrink the estimate
-toward zero.
+The philosophy is simple: avoid losses first. We look past recent gains to the
+business behind each name, the risks that could derail it, and whether its
+success looks durable or depends on hype, headlines, or a one-time event.
+Strong recent performance gets a name noticed. Strong evidence earns it a spot.
+If nothing clears the bar, we leave the slot empty &mdash; every pick earns its
+place.
 
-Confidence is how much we trust our research on the name. Stability
-(A is the calmest) is about how bumpy the ride has been. { "All tickers you supplied are shown, sorted by expected value &mdash; red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Anything below +3% expected value does not make the list." }
+How it works, in three stages:
 
-The bars use fixed scales &mdash; a full bar always means +150% past-year gain or
-+20% expected value &mdash; so you can compare one day against the next, honestly.
-Thesis watch keeps score on every pick we have published; expand it to see how
-they are doing. Honorable mentions are strong names that just missed the cut,
-with the reason why. You can re-sort any table by past-year gain or expected
-value.
+<b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
+over the past year, then scored on the quality of the business, the timing of
+entry, and the steadiness of the ride.
+
+<b>Question the story.</b> Hard risk gates throw out anything too volatile or
+too deeply scarred. Survivors get researched: how much does the story depend on
+events outside the company&apos;s control? How likely is the strength to
+continue? How much do we trust our own read?
+
+<b>Respect the downside.</b> Those judgments become one number &mdash; expected
+value: the likely gains, minus the likely pain, marked down for anything shaky
+or hype-driven.
+
+Mint is built around a simple idea: find strength, question the story, respect
+the downside, and only make room for what earns it.
 
 Not financial advice. Past performance doesn&apos;t
 predict future returns.
