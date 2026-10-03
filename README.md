@@ -129,7 +129,7 @@ weights are never auto-tuned.
 
 - `chart_<ts>_<BENCH>_llm.html` / `watchlist_chart_<ts>.html` — the final
   chart. Columns: 1-year return, sector, expected value, confidence,
-  stability grade. Readable in light and dark mode.
+  stability grade. Dark theme, identical on every device.
 - `screener_results_<date>_<BENCH>_llm.csv` / `watchlist_results_<date>.csv`
 - `run_summary_<ts>_<BENCH>_llm.json` / `watchlist_summary_<ts>.json` —
   picks, scores, self-checks, and the investor philosophy.

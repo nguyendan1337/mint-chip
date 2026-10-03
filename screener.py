@@ -1177,13 +1177,13 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None, thesis=None):
             '</details>\n')
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="dark">
 <title>Screener results vs { _html.escape(bench_label) } — { _html.escape(now) }</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root {{ color-scheme: dark light;
+:root {{ color-scheme: dark;
   --green: #4ade80; --green-deep: #22c55e; --gold: #ffd54f; --gold-deep: #f59e0b;
   --red: #f87171; }}
 body {{ font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -1281,54 +1281,6 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: #93a093; margin-bottom: 3px; }}
   .cf, .stab {{ text-align: left; font-size: 14px; }}
-}}
-@media (prefers-color-scheme: light) {{
-  body {{ color: #1c241c;
-    background:
-      radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.12), transparent 60%),
-      radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.14), transparent 60%),
-      #f4f7f2; }}
-  h1 {{ color: #15803d; text-shadow: none; }}
-  h1 span {{ -webkit-text-fill-color: #6b756b; color: #6b756b; }}
-  h1 span.chip {{ -webkit-text-fill-color: #b45309; color: #b45309; }}
-  h2 {{ color: #15803d; text-shadow: none; }}
-  .row {{ background: rgba(255,255,255,0.55); border-color: rgba(20,40,20,0.10);
-    box-shadow: 0 6px 20px rgba(20,40,20,0.10), inset 0 1px 0 rgba(255,255,255,0.7); }}
-  .row.head {{ background: none; border: none; box-shadow: none; color: #6b756b; }}
-  .id .rank {{ color: #b45309; }}
-  .id .tick {{ color: #101510; }}
-  .id .nm, .sec, .stab {{ color: #5a665a; }}
-  .lbl {{ color: #5a665a; }}
-  .lbl.r1y {{ color: #15803d; font-weight: 600; }}
-  .lbl.est {{ color: #b45309; font-weight: 700; }}
-  .lbl.neg {{ color: #b91c1c !important; }}
-  .cf {{ color: #b45309; }}
-  .track {{ background: rgba(20,40,20,0.10); box-shadow: inset 0 1px 3px rgba(20,40,20,0.12); }}
-  .note {{ color: #5a665a; background: rgba(255,255,255,0.5);
-    border-color: rgba(20,40,20,0.10); }}
-  .note b {{ color: #b45309; }}
-  .nonus {{ color: #92400e; background: rgba(245,158,11,0.18);
-    border-color: rgba(180,83,9,0.4); }}
-  .cell::before, .cf::before, .stab::before {{ color: #6b756b; }}
-  .tagline {{ color: #b45309; text-shadow: none; }}
-  .subhead {{ color: #6b756b; }}
-  .twatch-det {{ background: rgba(255,255,255,0.55);
-    border-color: rgba(20,40,20,0.10); }}
-  .twatch-det > summary {{ color: #5a665a; }}
-  .twatch-det > summary::before {{ color: #b45309; }}
-  .twatch-det > summary b {{ color: #b45309; }}
-  .tlist {{ color: #5a665a; }}
-  .titem {{ color: #5a665a; border-top-color: rgba(20,40,20,0.08); }}
-  .titem b {{ color: #101510; }}
-  .tnote {{ color: #6b756b; }}
-  .tstat.intact {{ color: #15803d; }}
-  .tstat.watch {{ color: #b45309; }}
-  .tstat.broken {{ color: #b91c1c; }}
-  .tbadge.watch {{ color: #92400e; background: rgba(245,158,11,0.18);
-    border-color: rgba(180,83,9,0.4); }}
-  .tbadge.broken {{ color: #b91c1c; background: rgba(248,113,113,0.14);
-    border-color: rgba(185,28,28,0.4); }}
-  .tledger a {{ color: #5a665a; }}
 }}
 </style></head>
 <body>
