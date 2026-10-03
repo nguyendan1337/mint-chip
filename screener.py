@@ -1321,30 +1321,25 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 {rows_html}
 {thesis_html}
 <div class="note">
-<b>How to read this.</b> "1y" is the trailing one-year return
+<b>How to read this.</b> The goal is simple: the strongest names of the past
+year most likely to <i>keep</i> doing well &mdash; downside protection first.
+Every name here earned its place; we would rather show empty slots than
+filler.
+
+"1y" is the trailing one-year return
 (stocks vs { _html.escape(bench) }, ETFs vs { _html.escape(etf_bench) }).
-"Expected value" is a heuristic expected value, not a prediction:
-continuation-likelihood × (last-6-month run with a mean-reversion dampener —
-the first 25% counts in full, beyond that at half weight, capped at 50%,
-since monster half-years fade) minus
-break-risk × (half the historical max-drawdown magnitude, scaled up when the
-name dips 10%+ often) minus an event-unwind
-haircut (event_dependence × 20%), all adjusted by the name's character
-(quality, entry timing, structure — steady compounders get lifted, fragile
-spikes get cut) and scaled by the researcher's confidence in
-the assessment (thin/contradictory headlines → estimate shrinks toward zero).
-Strong, stable continuation → clearly positive;
-unstable → near zero; obvious decliners → negative. { "All tickers you supplied are shown, sorted by expected value — red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Picks with negative expected value are excluded from the final list." } Green = positive estimate,
-red = negative. Confidence = how much the researcher trusts the assessment
-given headline quality. Stability grades blend volatility, drawdown and event
-dependence (A = calmest). A "non-US" tag marks names domiciled outside the
-United States. Bars use fixed reference scales — a full bar is +150%
-1-year return or +20% expected value — so full means exceptional in
-absolute terms, never just best-of-today's-list, and bars stay comparable
-day to day. The Thesis watch strip summarizes every pick the system has
-published; expand it for the per-ticker list. A watch or broken badge also
-appears on that pick's row, and the full record is linked as the ledger.
-Not financial advice. Past performance doesn't
+"Expected value" is our honest estimate of the next year&apos;s worth &mdash; not a
+prediction. It balances the recent run (humbled, because hot streaks fade)
+against the historical pain (how deep <i>and</i> how often it dips), haircuts
+event-driven hype, rewards steady compounders over fragile spikes, and
+shrinks toward zero when the evidence is thin.
+
+Confidence is how much we trust the research; Stability (A = calmest) blends
+volatility, drawdown, and event risk. { "All tickers you supplied are shown, sorted by expected value &mdash; red estimates are the warning, not a recommendation." if meta.get("mode") == "watchlist" else "Anything below +3% expected value does not make the list." } Bars use fixed
+scales &mdash; a full bar is +150% or +20% EV &mdash; so they stay comparable day to
+day. Thesis watch tracks every published pick; expand it for the list.
+
+Not financial advice. Past performance doesn&apos;t
 predict future returns.
 </div>
 </body></html>
