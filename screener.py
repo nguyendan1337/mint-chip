@@ -649,6 +649,9 @@ def log_levers(args):
     log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
         f"--max-per-etf-category={args.max_per_etf_category} (ETFs); hard across both "
         "pick passes; cap ties broken by EV (highest-EV names survive)")
+    log(f"--max-etf-overlap={args.max_etf_overlap:.0%}: pairwise top-10 holdings "
+        f"overlap cap for ETFs; lower-EV member of over-threshold pairs is "
+        f"excluded (redundancy is not diversification)")
     log(f"score floor --min-score={args.min_score}")
     log(f"final slots: --n-stocks={args.n_stocks} + --n-etfs={args.n_etfs}")
     log("--- end levers ---")
@@ -1544,6 +1547,27 @@ def discover_risk_themes(cache=None):
     return themes
 
 
+# Foreign exchange tags used to spot ticker collisions across markets.
+# IEX = IDEX Corp (NYSE) AND Indian Energy Exchange (NSEI) — headlines about
+# the wrong company used to pollute the research evidence.
+_FOREIGN_XTAGS = ("NSEI", "NSE", "BSE", "SGX", "HKEX", "LSE", "TSE", "ASX")
+
+
+def _entity_mismatch(headline, ticker):
+    """True if the headline's ticker tag points at a foreign listing.
+
+    Tickers collide across exchanges, so a headline like 'Indian Energy
+    Exchange (NSEI:IEX)' is evidence about a different company than the US
+    stock with the same ticker. Only fires when the foreign tag actually
+    references our ticker, so US headlines are never dropped.
+    """
+    if not headline or not ticker:
+        return False
+    hl = str(headline).upper()
+    t = str(ticker).upper()
+    return any(f"{x}:{t}" in hl for x in _FOREIGN_XTAGS)
+
+
 def fetch_stock_headlines(ticker, name):
     headlines = []
     # yfinance news (free)
@@ -1555,13 +1579,20 @@ def fetch_stock_headlines(ticker, name):
                 headlines.append(t)
     except Exception:
         pass
-    # Google News RSS for the ticker
-    q = f"{ticker} stock"
-    headlines += fetch_rss_headlines(q, 15)
-    # dedupe, keep order
+    # Google News RSS: ticker query AND company-name query. The name query was
+    # added because ticker-only search conflates same-ticker foreign companies
+    # (e.g. IEX -> Indian Energy Exchange headlines).
+    headlines += fetch_rss_headlines(f"{ticker} stock", 12)
+    if name:
+        headlines += fetch_rss_headlines(f'"{name}" stock', 12)
+    # drop foreign-entity mismatches, then dedupe, keep order
+    dropped = [h for h in headlines if _entity_mismatch(h, ticker)]
+    if dropped:
+        log(f"news: entity filter dropped {len(dropped)} foreign-ticker "
+            f"headlines for {ticker}")
     seen, out = set(), []
     for h in headlines:
-        if h not in seen:
+        if h not in seen and h not in dropped:
             seen.add(h)
             out.append(h)
     return out[:20]
@@ -1623,6 +1654,114 @@ def _ev_of(r):
         return v if v == v else float("-inf")
     except Exception:
         return float("-inf")
+
+
+# ---------------- ETF holdings-overlap dedupe ----------------
+# A second wrapper on the same theme is redundancy, not diversification.
+# The category cap can't see this (CIBR and BUG are both "Technology" but the
+# real issue is they hold the same stocks). Pairwise top-10 holdings overlap
+# above --max-etf-overlap keeps only the higher-EV fund.
+_ETF_HOLDINGS_CACHE = "etf_holdings_cache.json"
+_ETF_HOLDINGS_TTL_DAYS = 7
+
+
+def _etf_holdings_cache_load():
+    import json as _json
+    try:
+        return _json.load(open(_ETF_HOLDINGS_CACHE))
+    except Exception:
+        return {}
+
+
+def etf_top_holdings(ticker):
+    """Top-10 holdings {symbol: weight} for an ETF, 7-day file-cached."""
+    import json as _json
+    cache = _etf_holdings_cache_load()
+    today = datetime.now().date().isoformat()
+    hit = cache.get(ticker)
+    if hit:
+        try:
+            age = (datetime.now().date() -
+                   datetime.fromisoformat(hit["date"]).date()).days
+            if age <= _ETF_HOLDINGS_TTL_DAYS:
+                return {k: float(v) for k, v in hit["holdings"].items()}
+        except Exception:
+            pass
+    try:
+        th = yf.Ticker(ticker).funds_data.top_holdings
+        if th is None or not len(th):
+            log(f"etf overlap: holdings unavailable for {ticker} "
+                f"(no data) — pair skipped")
+            return {}
+        col = ("Holding Percent" if "Holding Percent" in th.columns
+               else th.columns[-1])
+        holds = {str(s).upper(): float(w)
+                 for s, w in zip(th.index, th[col])}
+    except Exception as e:
+        log(f"etf overlap: holdings unavailable for {ticker} ({e}) — "
+            f"pair skipped")
+        return {}
+    cache[ticker] = {"date": today, "holdings": holds}
+    try:
+        _json.dump(cache, open(_ETF_HOLDINGS_CACHE, "w"))
+    except Exception:
+        pass
+    return holds
+
+
+def holdings_overlap(h1, h2):
+    """Sum of min weights over common holdings (0..~1)."""
+    return sum(min(h1[s], h2[s]) for s in set(h1) & set(h2))
+
+
+def apply_etf_overlap_cap(edf, max_overlap=0.30):
+    """Drop the lower-EV member of ETF pairs whose top-10 holdings overlap
+    exceeds max_overlap. Runs on the EV-floor passers, before selection."""
+    df = edf.sort_values("est_next_1y", ascending=False).copy()
+    tickers = list(df["ticker"])
+    if len(tickers) < 2:
+        return df
+    log(f"etf overlap: checking {len(tickers)} floor-passing ETFs "
+        f"(max overlap {max_overlap:.0%}, top-10 holdings)")
+    holds = {t: etf_top_holdings(t) for t in tickers}
+    ev = {t: float(df.loc[df["ticker"] == t, "est_next_1y"].iloc[0])
+          for t in tickers}
+    pairs = []
+    for i in range(len(tickers)):
+        for j in range(i + 1, len(tickers)):
+            a, b = tickers[i], tickers[j]
+            if not holds[a] or not holds[b]:
+                continue
+            pairs.append((holdings_overlap(holds[a], holds[b]), a, b))
+    pairs.sort(reverse=True)
+    alive, dropped = set(tickers), []
+    for ov, a, b in pairs:
+        if ov <= max_overlap or a not in alive or b not in alive:
+            continue
+        loser = a if ev[a] < ev[b] else b
+        winner = b if loser == a else a
+        alive.discard(loser)
+        dropped.append(loser)
+        log(f"etf overlap: {loser} overlaps {winner} {ov:.0%} "
+            f"(top-10 holdings) > {max_overlap:.0%} — lower EV "
+            f"({ev[loser]:+.1%} vs {ev[winner]:+.1%}) excluded")
+        ledger_append(REJECTED_LEDGER, {
+            "event": "rejected", "ticker": loser, "kind": "etf",
+            "name": str(df.loc[df['ticker'] == loser, 'name'].iloc[0]),
+            "price": None,
+            "reason": (f"etf holdings overlap {ov:.0%} with {winner} "
+                       f"> {max_overlap:.0%} (lower EV)"),
+            "est_next_1y": round(ev[loser], 4),
+            "dep": _safe(df.loc[df['ticker'] == loser,
+                                'llm_event_dependence'].iloc[0]),
+            "cont": _safe(df.loc[df['ticker'] == loser,
+                                 'llm_continuation'].iloc[0]),
+            "conf": _safe(df.loc[df['ticker'] == loser,
+                                 'llm_confidence'].iloc[0]),
+        })
+    if dropped:
+        log(f"etf overlap: excluded {len(dropped)} redundant ETFs: {dropped}")
+    return df[df["ticker"].isin(alive)]
 
 
 def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
@@ -1988,6 +2127,10 @@ def pick_final(adj, args, llm_path):
             log(f"est floor ({args.min_est:+.1%}): {len(cut)} {label} excluded: "
                 f"{cut['ticker'].tolist()}")
         est_ok = ranked[ranked["est_next_1y"] >= args.min_est]
+        if label == "ETFs":
+            # redundancy is not diversification: one wrapper per theme cluster
+            est_ok = apply_etf_overlap_cap(est_ok,
+                                           max_overlap=args.max_etf_overlap)
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
                                          min_score=args.min_score, veto_dep=veto)
         first = first.copy()
@@ -2037,6 +2180,32 @@ def pick_final(adj, args, llm_path):
                 "high-EV unpicked: %s; picked outside EV-top-%d: %s"
                 % (label, n, n - len(hi_unpicked), n,
                    hi_unpicked or ["none"], n, lo_picked or ["none"]))
+            # opportunity cost of each constraint-driven exclusion: state the
+            # binding constraint and the EV gap to the lowest-EV pick — the
+            # honest margin for "include X within N slots" is displacing the
+            # weakest pick. Feeds the monthly audit's cap-vs-return question.
+            if hi_unpicked and sel:
+                sec_of, ev_of = {}, {}
+                for t in set(ev_top) | set(sel):
+                    r_ = ev_rank.loc[ev_rank["ticker"] == t].iloc[0]
+                    ev_of[t] = float(r_["est_next_1y"])
+                    sec_of[t] = str(r_.get("sector", ""))
+                sec_counts = {}
+                for t in sel:
+                    sec_counts[sec_of[t]] = sec_counts.get(sec_of[t], 0) + 1
+                min_pick = min(sel, key=lambda t: ev_of[t])
+                for t in ev_top:
+                    if t in sel:
+                        continue
+                    why = ("%s cap full" % sec_of[t]
+                           if sec_counts.get(sec_of[t], 0) >= cap
+                           else "final_score order")
+                    gap = 100 * (ev_of[t] - ev_of[min_pick])
+                    log("  opportunity cost (%s): %s(%+.1f%%) unpicked [%s]; "
+                        "including it within %d slots displaces lowest-EV "
+                        "pick %s(%+.1f%%) — EV gap %+.1fpp"
+                        % (label, t, 100 * ev_of[t], why, n,
+                           min_pick, 100 * ev_of[min_pick], gap))
         except Exception as e:
             log("selection/divergence check (%s): skipped (%s)" % (label, e))
         return first
@@ -2313,11 +2482,18 @@ def _ledger_seen_today(path, event="picked"):
     return seen
 
 
-def record_picks_ledger(final, ranked, args):
-    """Append pick events for today's finals + rejected events for the
-    audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
-    import json as _json  # noqa: F401 (kept local like the rest of this file)
-    tickers = list(final["ticker"])
+_LAST_DATA_COMPLETENESS = {}
+
+
+def fetch_pick_prices(tickers):
+    """Robust pick-price fetch: batch attempts, then per-ticker fallback.
+
+    Returns (prices, completeness dict). A run with missing prices is
+    INCOMPLETE_DATA — the structural self-checks can pass while price data
+    is absent, so completeness gets its own explicit status, recorded in the
+    log and the run summary.
+    """
+    tickers = list(dict.fromkeys(tickers))
     prices = {}
     for attempt in (1, 2):
         try:
@@ -2333,9 +2509,81 @@ def record_picks_ledger(final, ranked, args):
         except Exception as e:
             log(f"ledger: pick-price fetch failed (attempt {attempt}): {e}")
         time.sleep(10)
-    if len(prices) < len(tickers):
-        log(f"ledger: recording {len(tickers) - len(prices)} picks without prices; "
-            f"backfill before thesis_check")
+    missing = [t for t in tickers if t not in prices]
+    if missing:
+        # per-ticker fallback: single-ticker downloads often succeed when the
+        # batched call is rate-limited into returning nothing
+        log(f"ledger: per-ticker fallback for {missing}")
+        for t in missing:
+            try:
+                d = yf.download(t, period="5d", auto_adjust=True,
+                                progress=False, threads=False)
+                s = d["Close"].dropna() if "Close" in d else pd.Series(dtype=float)
+                if isinstance(s, pd.DataFrame):
+                    s = s.iloc[:, 0].dropna()
+                if len(s):
+                    prices[t] = float(s.iloc[-1])
+                    log(f"ledger: fallback got {t}={prices[t]:.2f}")
+            except Exception as e:
+                log(f"ledger: fallback failed for {t} ({e})")
+            time.sleep(1)
+    missing = [t for t in tickers if t not in prices]
+    status = "COMPLETE" if not missing else "INCOMPLETE_DATA"
+    log(f"data_completeness: {status} ({len(prices)}/{len(tickers)} pick prices)"
+        + (f" — missing: {missing}; ledger entries lack pick_price; "
+           "backfill before thesis_check" if missing else ""))
+    return prices, {"status": status, "got": len(prices),
+                    "total": len(tickers), "missing": missing}
+
+
+def backfill_ledger_prices():
+    """Fill pick_price=None on today's picked events (completeness recovery).
+
+    The cron's thesis step can call this when a run was marked INCOMPLETE_DATA.
+    Returns the number of entries fixed.
+    """
+    import json as _json
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        lines = open(THESIS_LEDGER).read().splitlines()
+    except FileNotFoundError:
+        return 0
+    need = []
+    for line in lines:
+        try:
+            d = _json.loads(line)
+        except Exception:
+            continue
+        if (d.get("date") == today and d.get("event") == "picked"
+                and d.get("pick_price") is None and d.get("ticker")):
+            need.append(d["ticker"])
+    need = list(dict.fromkeys(need))
+    if not need:
+        return 0
+    prices, _ = fetch_pick_prices(need)
+    fixed, out = 0, []
+    for line in lines:
+        d = _json.loads(line)
+        if (d.get("date") == today and d.get("event") == "picked"
+                and d.get("pick_price") is None and d.get("ticker") in prices):
+            d["pick_price"] = prices[d["ticker"]]
+            fixed += 1
+        out.append(_json.dumps(d, default=str))
+    open(THESIS_LEDGER, "w").write("\n".join(out) + "\n")
+    log(f"ledger: backfilled {fixed} pick prices")
+    return fixed
+
+
+def record_picks_ledger(final, ranked, args):
+    """Append pick events for today's finals + rejected events for the
+    audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
+    import json as _json  # noqa: F401 (kept local like the rest of this file)
+    global _LAST_DATA_COMPLETENESS
+    tickers = list(final["ticker"])
+    prices, _LAST_DATA_COMPLETENESS = fetch_pick_prices(tickers)
+    if _LAST_DATA_COMPLETENESS["missing"]:
+        log(f"ledger: recording {len(_LAST_DATA_COMPLETENESS['missing'])} picks "
+            f"without prices; backfill before thesis_check")
     already = _ledger_seen_today(THESIS_LEDGER, "picked")
     npick = 0
     for _, r in final.iterrows():
@@ -2542,6 +2790,8 @@ def main():
                     help="disable the US-only filter")
     ap.add_argument("--n-etf-research", type=int, default=30,
                     help="top ETF quant candidates entering research (default 30)")
+    ap.add_argument("--max-etf-overlap", type=float, default=0.30,
+                    help="max pairwise top-10 holdings overlap between picked ETFs (default 0.30; lower-EV member of over-threshold pairs is excluded)")
     ap.add_argument("--max-per-etf-category", type=int, default=2,
                     help="max final ETFs per fund category (default 4)")
     ap.add_argument("--no-cache", action="store_true",
@@ -2622,6 +2872,7 @@ def main():
                         "final_etfs": len(final_etfs)},
              "gate_report": gate_report,
              "self_check": checks,
+             "data_completeness": _LAST_DATA_COMPLETENESS or {},
              "final_picks": [
                  {"ticker": r["ticker"], "kind": r.get("kind"),
                   "sector": r["sector"],
