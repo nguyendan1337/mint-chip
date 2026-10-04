@@ -167,7 +167,13 @@ def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
         from yfinance.screener.query import EquityQuery as EqyQy
         q = EqyQy('and', [
             EqyQy('eq', ['region', 'us']),
-            EqyQy('is-in', ['exchange', 'NMS', 'NYQ', 'ASE']),  # +NYSE American 2026-10-03 (was silently cut)
+            EqyQy('is-in', ['exchange', 'NMS', 'NYQ', 'ASE', 'NGM', 'NCM', 'BTS']),
+            # NMS/NYQ/ASE + NGM (Nasdaq Global Market) + NCM (Nasdaq Capital
+            # Market) + BTS (CBOE BZX). 2026-10-03 audit: NGM/NCM/BTS were
+            # missing, silently dropping ~105 US-listed stocks >=$2B including
+            # AAOI (+242% 52w%), SITM (+126%), PTGX (+118%) — same bug class as
+            # the ETF PCX/BTS fixes. OTC (PNK/OQX/OQB) stays excluded by design
+            # (not exchange-listed).
             EqyQy('gte', ['intradaymarketcap', min_mcap]),
             EqyQy('gte', ['intradayprice', min_price]),
         ])
@@ -185,17 +191,21 @@ def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
             offset += 250
             time.sleep(0.4)
         out, seen = [], set()
+        _exchanges = {}
         for x in quotes:
             sym = x.get('symbol')
             pct = x.get('fiftyTwoWeekChangePercent')
             if sym and pct is not None and sym not in seen:
                 seen.add(sym)
+                _exchanges[x.get('exchange')] = \
+                    _exchanges.get(x.get('exchange'), 0) + 1
                 out.append({
                     "ticker": sym,
                     "name": x.get('longName') or x.get('shortName') or sym,
                     "pct_52w": float(pct),
                 })
         log(f"Universe: {len(out)} stocks from yfinance screener")
+        log(f"Universe exchanges: {dict(sorted(_exchanges.items(), key=lambda kv: -kv[1]))}")
         return out
     except Exception as e:
         log(f"yfinance screener failed ({e})")
@@ -1087,11 +1097,15 @@ def compute_rating(ev, dep, conf, vol, maxdd):
 # ETFs have no ROE/margins/P-E; score on momentum + risk + structure/cost.
 # Same goal: likely to continue, minimize going negative after buying.
 
-US_ETF_EXCHANGES = {"NMS", "NYQ", "ASE", "ARC", "BAT", "NGM", "PCX"}
+US_ETF_EXCHANGES = {"NMS", "NYQ", "ASE", "ARC", "BAT", "NGM", "PCX", "BTS"}
 # NOTE 2026-10-03: "PCX" is how Yahoo's ETF screener labels NYSE Arca (it never
 # emits "ARC" there). It was missing, silently excluding every Arca-listed ETF
 # — including SPMO — from the candidate universe. Arca is a US exchange, so
 # this is a bug fix, not a methodology change.
+# 2026-10-03, same bug class again: "BTS" is Yahoo's code for CBOE BZX (BATS),
+# also a US exchange. It was missing too, silently dropping ~90 hot-band ETFs
+# including VLUE (+57% 52w%) and DIVB. Exchange skips are now counted+logged
+# below so a missing code can never go silent again.
 LEVERAGE_PAT = None  # compiled lazily (re module import at top)
 
 
@@ -1123,6 +1137,7 @@ def get_etf_universe(target=500, min_price=5.0, min_52w=None):
              (25, 35), (15, 25), (8, 15), (0, 8)]
     pat = _leverage_pat()
     seen, out = set(), []
+    _ex_skipped = {}
     for lo, hi in bands:
         if min_52w is not None and hi is not None and hi <= min_52w:
             break  # band entirely below the bar; lower bands are too
@@ -1148,6 +1163,8 @@ def get_etf_universe(target=500, min_price=5.0, min_52w=None):
                     continue
                 seen.add(sym)
                 if x.get("exchange") not in US_ETF_EXCHANGES:
+                    _ex_skipped[x.get("exchange")] = \
+                        _ex_skipped.get(x.get("exchange"), 0) + 1
                     continue
                 name = str(x.get("shortName") or x.get("longName") or "")
                 if pat.search(name) or pat.search(sym):
@@ -1169,6 +1186,9 @@ def get_etf_universe(target=500, min_price=5.0, min_52w=None):
             break
     log(f"ETF universe final: {len(out)} US unleveraged ETFs"
         + (f" (52w% > {min_52w:.0f}%)" if min_52w is not None else ""))
+    if _ex_skipped:
+        log(f"ETF universe: skipped exchanges (not in allow-list): "
+            f"{dict(sorted(_ex_skipped.items(), key=lambda kv: -kv[1]))}")
     return out
 
 
@@ -2537,13 +2557,13 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     Returns a scored, gated, winsorized DataFrame (may be empty).
     """
     from cache import StepCache
-    etf_universe = cache.get("etf_universe_v3")
+    etf_universe = cache.get("etf_universe_v4")
     if etf_universe is None:
         # benchmark-relative universe: everything the bench-5 filter below
         # would consider; 500 is only a work bound, not a cutoff
         etf_universe = get_etf_universe(target=500, min_price=args.min_price,
                                         min_52w=bench_ret * 100 - 5)
-        cache.put("etf_universe_v3", etf_universe)
+        cache.put("etf_universe_v4", etf_universe)
     if not etf_universe:
         log("ETF universe empty; skipping ETF leg")
         return pd.DataFrame()
@@ -3550,10 +3570,10 @@ def main():
 
     # 2) Universe: FULL yfinance screener pull (paged), then outperformers only.
     # No top-N cap: every stock beating the benchmark goes through fundamentals.
-    universe = cache.get("universe_v2")
+    universe = cache.get("universe_v3")
     if universe is None:
         universe = get_all_screener_stocks(min_mcap=args.min_mcap, min_price=args.min_price)
-        cache.put("universe_v2", universe)
+        cache.put("universe_v3", universe)
     if not universe:
         print("Could not fetch screener universe. Try again later.")
         sys.exit(1)
