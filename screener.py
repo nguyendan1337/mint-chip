@@ -671,7 +671,7 @@ def log_levers(args):
         "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
     log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
         f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
-    log(f"research pool: top 50 stocks + top {args.n_etf_research} ETFs by base_score")
+    log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score")
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
@@ -2178,20 +2178,61 @@ def news_risk_penalty(headlines, risk_themes):
     return float(0.5 * theme_score + 0.5 * min(neg_ratio * 2, 1.0))
 
 
+def fetch_headlines_threaded(tickers_names, cache=None, workers=6,
+                             label="headlines"):
+    """Fetch headlines for (ticker, name) pairs concurrently.
+
+    Cache hits skip the network entirely. 6 workers keeps us friendly to
+    Yahoo/RSS (each RSS call has its own 15s timeout; a hung feed can't
+    stall the pool). Cache puts are atomic per-key, so concurrent writes
+    are safe. Returns dict ticker -> headlines list.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    out, todo = {}, []
+    for t, name in tickers_names:
+        h = cache.get(f"news_{t}") if cache is not None else None
+        if h is not None:
+            out[t] = h
+        else:
+            todo.append((t, name))
+    if not todo:
+        return out
+    log(f"Fetching {label} for {len(todo)} tickers "
+        f"({workers} threads, {len(tickers_names) - len(todo)} cached)...")
+
+    def _fetch(tn):
+        t, name = tn
+        try:
+            h = fetch_stock_headlines(t, name)
+        except Exception as e:
+            log(f"headlines: {t} fetch failed ({e})")
+            h = []
+        if cache is not None:
+            try:
+                cache.put(f"news_{t}", h)
+            except Exception as e:
+                log(f"headlines: cache put {t} failed ({e})")
+        return t, h
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for t, h in ex.map(_fetch, todo):
+            done += 1
+            if done % 25 == 0:
+                log(f"  {label} {done}/{len(todo)}...")
+            out[t] = h
+    return out
+
+
 def apply_news_adjustment(df, risk_themes, top_k=50, cache=None, w_outlier=1.0):
     log(f"Fetching stock news for top {min(top_k, len(df))} scorers...")
-    penalties, news_counts, samples = [], [], []
     candidates = df.head(top_k)
-    for i, (_, r) in enumerate(candidates.iterrows()):
-        t = r["ticker"]
-        if i % 10 == 0:
-            log(f"  news {i}/{len(candidates)}...")
-        headlines = cache.get(f"news_{t}") if cache is not None else None
-        if headlines is None:
-            headlines = fetch_stock_headlines(t, r["name"])
-            if cache is not None:
-                cache.put(f"news_{t}", headlines)
-            time.sleep(0.4)
+    _hl = fetch_headlines_threaded(
+        [(r["ticker"], r["name"]) for _, r in candidates.iterrows()],
+        cache=cache, label="news")
+    penalties, news_counts, samples = [], [], []
+    for _, r in candidates.iterrows():
+        headlines = _hl.get(r["ticker"], [])
         pen = news_risk_penalty(headlines, risk_themes)
         penalties.append(pen)
         news_counts.append(len(headlines))
@@ -3105,13 +3146,12 @@ def run_watchlist(args, tickers):
         market_headlines = fetch_market_headlines()
         cache.put("market_headlines", market_headlines)
     cands = []
+    _hl = fetch_headlines_threaded(
+        [(r["ticker"], r["name"]) for _, r in df.iterrows()],
+        cache=cache, label="watchlist news")
     for _, r in df.iterrows():
         t = r["ticker"]
-        headlines = cache.get(f"news_{t}")
-        if headlines is None:
-            headlines = fetch_stock_headlines(t, r["name"])
-            cache.put(f"news_{t}", headlines)
-            time.sleep(0.3)
+        headlines = _hl.get(t, [])
         cands.append(_watchlist_cand(r, headlines))
 
     bundle = build_research_bundle(
@@ -3713,8 +3753,10 @@ def main():
                     help="US-domiciled stocks and US-focused ETFs only (default on)")
     ap.add_argument("--no-us-only", dest="us_only", action="store_false",
                     help="disable the US-only filter")
-    ap.add_argument("--n-etf-research", type=int, default=50,
-                    help="top ETF quant candidates entering research (default 50)")
+    ap.add_argument("--n-etf-research", type=int, default=100,
+                    help="top ETF quant candidates entering research (default 100)")
+    ap.add_argument("--n-stock-research", type=int, default=100,
+                    help="top stock quant candidates entering research (default 100)")
     ap.add_argument("--max-etf-overlap", type=float, default=0.30,
                     help="max pairwise top-10 holdings overlap between picked ETFs (default 0.30; lower-EV member of over-threshold pairs is excluded)")
     ap.add_argument("--max-per-etf-category", type=int, default=2,
@@ -4030,9 +4072,9 @@ def main():
     for _, r in df.head(5).iterrows():
         print(f"  {r['ticker']:8s} {r['sector'][:22]:22s} base={r['base_score']:+.2f} 1y={r['ret_1y']:+.0%}")
     log(f"base_score stats: {df['base_score'].describe().to_dict()}")
-    log_score_breakdown(df.head(50), "stocks (research pool: top 50)",
+    log_score_breakdown(df.head(args.n_stock_research), f"stocks (research pool: top {args.n_stock_research})",
                         _STOCK_SCORE_GROUPS)
-    log_character_breakdown(df.head(50), "stocks (research pool: top 50)",
+    log_character_breakdown(df.head(args.n_stock_research), f"stocks (research pool: top {args.n_stock_research})",
                             _CHAR_PARTS_STOCK)
 
     # 6b) Enrich top 100 with insider + earnings signals, adjust scores
@@ -4082,10 +4124,11 @@ def main():
     # 6d) ETF leg: separate universe + scorer (different fundamentals)
     edf = run_etf_pipeline(args, cache, etf_bench_ret, _eb)
 
-    # research pool: top 50 stocks + top N ETFs
+    # research pool: top N stocks + top N ETFs
+    _pool_stocks = df.head(args.n_stock_research).copy()
     _pool_etfs = edf.head(args.n_etf_research).copy() if not edf.empty else edf
-    pool = pd.concat([df.head(50).copy(), _pool_etfs], ignore_index=True)
-    log(f"research pool: {len(df.head(50))} stocks + {len(_pool_etfs)} ETFs")
+    pool = pd.concat([_pool_stocks, _pool_etfs], ignore_index=True)
+    log(f"research pool: {len(_pool_stocks)} stocks + {len(_pool_etfs)} ETFs")
 
     # 7) News/research layer on top scorers (stocks + ETFs)
     if args.with_llm:
@@ -4100,15 +4143,12 @@ def main():
             market_headlines = fetch_market_headlines()
             cache.put("market_headlines", market_headlines)
         cands = []
-        for i, (_, r) in enumerate(top.iterrows()):
-            if i % 10 == 0:
-                log(f"  headlines {i}/{len(top)}...")
+        _hl = fetch_headlines_threaded(
+            [(r["ticker"], r["name"]) for _, r in top.iterrows()],
+            cache=cache, label="research headlines")
+        for _, r in top.iterrows():
             t = r["ticker"]
-            headlines = cache.get(f"news_{t}")
-            if headlines is None:
-                headlines = fetch_stock_headlines(t, r["name"])
-                cache.put(f"news_{t}", headlines)
-                time.sleep(0.3)
+            headlines = _hl.get(t, [])
             cand = {
                 "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
                 "kind": r.get("kind", "stock"),
