@@ -162,6 +162,15 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   border: 1px solid; vertical-align: 2px; margin-right: 7px; }
 .rchip.buy { color: #4ade80; border-color: rgba(74,222,128,0.40);
   background: rgba(74,222,128,0.10); }
+.row.has-blurb { cursor: pointer; }
+.row .blurb { display: none; grid-column: 1 / -1;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 8px; padding: 8px 4px 6px 34px; }
+.row.open .blurb { display: block; }
+.row .blurb .mc-what { margin-bottom: 5px; }
+.chev { display: inline-block; font-size: 10px; color: #8a938a;
+  margin-left: 7px; transition: transform 0.18s ease; }
+.row.open .chev { transform: rotate(90deg); }
 .rchip.hold { color: #ffd54f; border-color: rgba(255,213,79,0.40);
   background: rgba(255,213,79,0.10); }
 .rchip.sell { color: #f87171; border-color: rgba(248,113,113,0.40);
@@ -212,70 +221,76 @@ a.navbtn:hover { background:
 </div>
 <div class="picklist" id="pl0">
 
-<div class="row k-stock" data-ev="0.11422500785695622" data-r1y="0.9042697684838032">
+<div class="row k-stock has-blurb" data-ev="0.11422500785695622" data-r1y="0.9042697684838032">
   <div class="id"><span class="rank">1</span>
     <span class="tick">HNGE</span>
-    <span class="nm">Hinge Health, Inc.</span><span class="rchip hold" title="clears the bar, but too deeply scarred for a buy">HOLD</span></div>
+    <span class="nm">Hinge Health, Inc.</span><span class="chev">▸</span></div>
   <div class="sec">Healthcare</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+90.4%</div><div class="track"><div class="bar pos" style="width:60.3%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.4%</div><div class="track"><div class="bar est" style="width:57.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">C</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">Hinge Health sells app-based physical therapy to employers and is 3-4x its nearest rival. Revenue grew 53% last quarter with 29% operating margins and $100M in free cash flow. Held back from a buy only by its history: a -42% maximum drawdown since its 2025 IPO.</span><br><span class="wl-rate-why">Hold: clears the bar, but too deeply scarred for a buy</span></div>
 </div>
 
-<div class="row k-stock" data-ev="0.062296024719859275" data-r1y="0.900880753399498">
+<div class="row k-stock has-blurb" data-ev="0.062296024719859275" data-r1y="0.900880753399498">
   <div class="id"><span class="rank">2</span>
     <span class="tick">DAC</span>
-    <span class="nm">Danaos Corporation <span class="nonus" title="Domiciled in Greece">non-US</span></span><span class="rchip hold" title="earns its place, but not with conviction">HOLD</span></div>
+    <span class="nm">Danaos Corporation <span class="nonus" title="Domiciled in Greece">non-US</span></span><span class="chev">▸</span></div>
   <div class="sec">Industrials</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+90.1%</div><div class="track"><div class="bar pos" style="width:60.1%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.2%</div><div class="track"><div class="bar est" style="width:31.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">B</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">Danaos owns 75 containerships leased to Maersk and COSCO, with a record $4.6B order backlog and a 6.3x forward earnings multiple. The catch: today&#x27;s charter rates are propped up by war disruptions in the Gulf and Red Sea — peace would soften them.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
 </div>
 
-<div class="row k-stock" data-ev="0.05396654870597715" data-r1y="3.4206717169760754">
+<div class="row k-stock has-blurb" data-ev="0.05396654870597715" data-r1y="3.4206717169760754">
   <div class="id"><span class="rank">3</span>
     <span class="tick">CDNA</span>
-    <span class="nm">CareDx, Inc.</span><span class="rchip hold" title="clears the bar, but too volatile for a buy">HOLD</span></div>
+    <span class="nm">CareDx, Inc.</span><span class="chev">▸</span></div>
   <div class="sec">Healthcare</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+342.1%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:27.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="stab" data-cap="Stability">D</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">CareDx makes transplant rejection tests. Medicare finalized coverage in July, the company is profitable again, and guidance was raised. But it&#x27;s up 342% on 91% annualized volatility — too wild for a buy.</span><br><span class="wl-rate-why">Hold: clears the bar, but too volatile for a buy</span></div>
 </div>
 
-<div class="row k-stock" data-ev="0.0057741557531998085" data-r1y="1.2487562102502272">
+<div class="row k-stock has-blurb" data-ev="0.0057741557531998085" data-r1y="1.2487562102502272">
   <div class="id"><span class="rank">4</span>
     <span class="tick">AYA</span>
-    <span class="nm">Aya Gold &amp; Silver Inc. <span class="nonus" title="Domiciled in Canada">non-US</span></span><span class="rchip sell" title="expected value below the +3% bar — doesn&#x27;t earn its place">SELL</span></div>
+    <span class="nm">Aya Gold &amp; Silver Inc. <span class="nonus" title="Domiciled in Canada">non-US</span></span><span class="chev">▸</span></div>
   <div class="sec">Basic Materials</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+124.9%</div><div class="track"><div class="bar pos" style="width:83.3%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+0.6%</div><div class="track"><div class="bar est" style="width:2.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">55%</div>
   <div class="stab" data-cap="Stability">C</div>
+  <div class="blurb"><span class="rchip sell">SELL</span><span class="mc-why">Aya Gold &amp; Silver mines precious metals in Morocco, up 125% on the metals rally. Below the +3% bar — this is a bet on silver prices, not a business compounding.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
 </div>
 
-<div class="row k-stock" data-ev="-0.08806587155292239" data-r1y="-0.21324898521470192">
+<div class="row k-stock has-blurb" data-ev="-0.08806587155292239" data-r1y="-0.21324898521470192">
   <div class="id"><span class="rank">5</span>
     <span class="tick">TTWO</span>
-    <span class="nm">Take-Two Interactive Software, Inc.</span><span class="rchip sell" title="expected value below the +3% bar — doesn&#x27;t earn its place">SELL</span></div>
+    <span class="nm">Take-Two Interactive Software, Inc.</span><span class="chev">▸</span></div>
   <div class="sec">Communication Services</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y neg">-21.3%</div><div class="track"><div class="bar neg" style="width:14.2%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est neg">-8.8%</div><div class="track"><div class="bar neg" style="width:44.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">B</div>
+  <div class="blurb"><span class="rchip sell">SELL</span><span class="mc-why">Take-Two makes Grand Theft Auto; GTA VI is dated November 19, 2026 at $79.99. The only name here with a deeply negative expected value — the thesis is essentially one launch date, already delayed twice.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
 </div>
 
-<div class="row k-stock" data-ev="-0.16130886850312995" data-r1y="-0.012364027785691345">
+<div class="row k-stock has-blurb" data-ev="-0.16130886850312995" data-r1y="-0.012364027785691345">
   <div class="id"><span class="rank">6</span>
     <span class="tick">SPCX</span>
-    <span class="nm">Space Exploration Technologies Corp.</span><span class="rchip sell" title="expected value below the +3% bar — doesn&#x27;t earn its place">SELL</span></div>
+    <span class="nm">Space Exploration Technologies Corp.</span><span class="chev">▸</span></div>
   <div class="sec">Industrials</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y neg">-1.2%</div><div class="track"><div class="bar neg" style="width:2.0%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est neg">-16.1%</div><div class="track"><div class="bar neg" style="width:80.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">55%</div>
   <div class="stab" data-cap="Stability">D</div>
+  <div class="blurb"><span class="rchip sell">SELL</span><span class="mc-why">SpaceX, public since June in the largest IPO ever. Starlink prints cash, but the AI division burns $15.8B a quarter and the $2T valuation demands perfection. Down 30% from September with the highest event dependence in the set.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
 </div>
 </div>
 <h2>ETFs — by est. next 1y</h2>
@@ -288,75 +303,68 @@ a.navbtn:hover { background:
 </div>
 <div class="picklist" id="pl1">
 
-<div class="row k-etf" data-ev="0.1344946791998395" data-r1y="0.36447609451537577">
+<div class="row k-etf has-blurb" data-ev="0.1344946791998395" data-r1y="0.36447609451537577">
   <div class="id"><span class="rank">1</span>
     <span class="tick">VGT</span>
-    <span class="nm">Vanguard Information Technology Index </span><span class="rchip buy" title="clears the bar with margin — durable thesis, trusted read">BUY</span></div>
+    <span class="nm">Vanguard Information Technology Index </span><span class="chev">▸</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+36.4%</div><div class="track"><div class="bar pos" style="width:24.3%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+13.4%</div><div class="track"><div class="bar est" style="width:67.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">80%</div>
   <div class="stab" data-cap="Stability">A</div>
+  <div class="blurb"><span class="rchip buy">BUY</span><span class="mc-why">Vanguard&#x27;s technology ETF — hundreds of US tech stocks for a 0.10% fee. The calmest name here: +36% over the past year with the shallowest drawdowns. The bet is simply that big tech keeps spending and earning.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
 </div>
 
-<div class="row k-etf" data-ev="0.08671464080901821" data-r1y="0.2867563002274742">
+<div class="row k-etf has-blurb" data-ev="0.08671464080901821" data-r1y="0.2867563002274742">
   <div class="id"><span class="rank">2</span>
     <span class="tick">SPMO</span>
-    <span class="nm">Invesco S&amp;P 500 Momentum ETF</span><span class="rchip buy" title="clears the bar with margin — durable thesis, trusted read">BUY</span></div>
+    <span class="nm">Invesco S&amp;P 500 Momentum ETF</span><span class="chev">▸</span></div>
   <div class="sec">Large Blend</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+28.7%</div><div class="track"><div class="bar pos" style="width:19.1%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.7%</div><div class="track"><div class="bar est" style="width:43.4%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">A</div>
+  <div class="blurb"><span class="rchip buy">BUY</span><span class="mc-why">Invesco&#x27;s S&amp;P 500 momentum ETF — the 100 hottest S&amp;P stocks, rebalanced twice a year, 0.13% fee. Momentum is working right now. The known failure mode: when market leadership rotates, momentum crashes are violent.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
 </div>
 
-<div class="row k-etf" data-ev="0.042878170362143385" data-r1y="0.2719209016134856">
+<div class="row k-etf has-blurb" data-ev="0.042878170362143385" data-r1y="0.2719209016134856">
   <div class="id"><span class="rank">3</span>
     <span class="tick">DIVB</span>
-    <span class="nm">iShares Core Dividend ETF</span><span class="rchip hold" title="earns its place, but not with conviction">HOLD</span></div>
+    <span class="nm">iShares Core Dividend ETF</span><span class="chev">▸</span></div>
   <div class="sec">Large Value</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+27.2%</div><div class="track"><div class="bar pos" style="width:18.1%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.3%</div><div class="track"><div class="bar est" style="width:21.4%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">iShares&#x27; dividend-and-buyback ETF — 381 profitable US companies that return cash to shareholders, 0.05% fee. Boring in a good way: earns its place without strong conviction either way.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
 </div>
 
-<div class="row k-etf" data-ev="0.0363395235822533" data-r1y="0.43137911173178844">
+<div class="row k-etf has-blurb" data-ev="0.0363395235822533" data-r1y="0.43137911173178844">
   <div class="id"><span class="rank">4</span>
     <span class="tick">QTUM</span>
-    <span class="nm">Defiance Quantum ETF</span><span class="rchip hold" title="earns its place, but not with conviction">HOLD</span></div>
+    <span class="nm">Defiance Quantum ETF</span><span class="chev">▸</span></div>
   <div class="sec">Technology</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.1%</div><div class="track"><div class="bar pos" style="width:28.8%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.6%</div><div class="track"><div class="bar est" style="width:18.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="stab" data-cap="Stability">B</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">Defiance&#x27;s quantum computing ETF — IonQ, Rigetti, D-Wave plus chip enablers. The theme is genuinely hot, but commercial quantum computing is years away and most pure-play holdings aren&#x27;t profitable yet.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
 </div>
 
-<div class="row k-etf" data-ev="0.031926103574306336" data-r1y="0.49703668586888106">
+<div class="row k-etf has-blurb" data-ev="0.031926103574306336" data-r1y="0.49703668586888106">
   <div class="id"><span class="rank">5</span>
     <span class="tick">XBI</span>
-    <span class="nm">State Street SPDR S&amp;P Biotech ETF</span><span class="rchip hold" title="earns its place, but not with conviction">HOLD</span></div>
+    <span class="nm">State Street SPDR S&amp;P Biotech ETF</span><span class="chev">▸</span></div>
   <div class="sec">Health</div>
   <div class="cell" data-cap="1-year return"><div class="lbl r1y">+49.7%</div><div class="track"><div class="bar pos" style="width:33.1%"></div></div></div>
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.2%</div><div class="track"><div class="bar est" style="width:16.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
+  <div class="blurb"><span class="rchip hold">HOLD</span><span class="mc-why">SPDR&#x27;s equal-weight biotech ETF. Up twelve of the last thirteen months on an M&amp;A wave and a friendlier FDA, with healthcare at its deepest valuation discount in 35 years. A real reset, not just a bounce.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
 </div>
 </div>
 
-<h2>About these names</h2>
-<p class="note wl-summary">A mixed list — 2 buys, 6 holds, 3 sells, averaging +2.9% expected value; the sells pull the average below the +3% bar.</p>
-<div class="mc-item wl-blurb"><span class="rchip buy">BUY</span><span class="mc-tick etf">VGT</span> <span class="mc-nm">Vanguard Information Technology ETF</span><br><span class="mc-why">Vanguard&#x27;s technology ETF — hundreds of US tech stocks for a 0.10% fee. The calmest name here: +36% over the past year with the shallowest drawdowns. The bet is simply that big tech keeps spending and earning.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">HNGE</span> <span class="mc-nm">Hinge Health, Inc.</span><br><span class="mc-why">Hinge Health sells app-based physical therapy to employers and is 3-4x its nearest rival. Revenue grew 53% last quarter with 29% operating margins and $100M in free cash flow. Held back from a buy only by its history: a -42% maximum drawdown since its 2025 IPO.</span><br><span class="wl-rate-why">Hold: clears the bar, but too deeply scarred for a buy</span></div>
-<div class="mc-item wl-blurb"><span class="rchip buy">BUY</span><span class="mc-tick etf">SPMO</span> <span class="mc-nm">Invesco S&amp;P 500 Momentum ETF</span><br><span class="mc-why">Invesco&#x27;s S&amp;P 500 momentum ETF — the 100 hottest S&amp;P stocks, rebalanced twice a year, 0.13% fee. Momentum is working right now. The known failure mode: when market leadership rotates, momentum crashes are violent.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">DAC</span> <span class="mc-nm">Danaos Corporation</span><br><span class="mc-why">Danaos owns 75 containerships leased to Maersk and COSCO, with a record $4.6B order backlog and a 6.3x forward earnings multiple. The catch: today&#x27;s charter rates are propped up by war disruptions in the Gulf and Red Sea — peace would soften them.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">CDNA</span> <span class="mc-nm">CareDx, Inc.</span><br><span class="mc-why">CareDx makes transplant rejection tests. Medicare finalized coverage in July, the company is profitable again, and guidance was raised. But it&#x27;s up 342% on 91% annualized volatility — too wild for a buy.</span><br><span class="wl-rate-why">Hold: clears the bar, but too volatile for a buy</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">DIVB</span> <span class="mc-nm">iShares Core Dividend ETF</span><br><span class="mc-why">iShares&#x27; dividend-and-buyback ETF — 381 profitable US companies that return cash to shareholders, 0.05% fee. Boring in a good way: earns its place without strong conviction either way.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">QTUM</span> <span class="mc-nm">Defiance Quantum ETF</span><br><span class="mc-why">Defiance&#x27;s quantum computing ETF — IonQ, Rigetti, D-Wave plus chip enablers. The theme is genuinely hot, but commercial quantum computing is years away and most pure-play holdings aren&#x27;t profitable yet.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
-<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">XBI</span> <span class="mc-nm">SPDR S&amp;P Biotech ETF</span><br><span class="mc-why">SPDR&#x27;s equal-weight biotech ETF. Up twelve of the last thirteen months on an M&amp;A wave and a friendlier FDA, with healthcare at its deepest valuation discount in 35 years. A real reset, not just a bounce.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
-<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">AYA</span> <span class="mc-nm">Aya Gold &amp; Silver Inc.</span><br><span class="mc-why">Aya Gold &amp; Silver mines precious metals in Morocco, up 125% on the metals rally. Below the +3% bar — this is a bet on silver prices, not a business compounding.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
-<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">TTWO</span> <span class="mc-nm">Take-Two Interactive Software, Inc.</span><br><span class="mc-why">Take-Two makes Grand Theft Auto; GTA VI is dated November 19, 2026 at $79.99. The only name here with a deeply negative expected value — the thesis is essentially one launch date, already delayed twice.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
-<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">SPCX</span> <span class="mc-nm">Space Exploration Technologies Corp.</span><br><span class="mc-why">SpaceX, public since June in the largest IPO ever. Starlink prints cash, but the AI division burns $15.8B a quarter and the $2T valuation demands perfection. Down 30% from September with the highest event dependence in the set.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
+<p class="note wl-summary">A mixed list — 2 buys, 6 holds, 3 sells, averaging +2.9% expected value; the sells pull the average below the +3% bar. VGT and SPMO are doing all the heavy lifting while SpaceX lights $15.8B a quarter on fire, Take-Two bets the farm on a single video game, and Aya Gold &amp; Silver is just here because shiny things are fun.</p>
 
 
 <div class="note">
@@ -439,5 +447,14 @@ if(hmt){
       : 'Show all ' + hmt.getAttribute('data-n') + ' ↓';
   });
 }
+// Expandable pick rows: tap a row to reveal its blurb (delegated, so it
+// survives re-sorting). Only rows with a story get the affordance.
+document.querySelectorAll('.picklist').forEach(function(pl){
+  pl.addEventListener('click', function(e){
+    var row = e.target.closest ? e.target.closest('.row.has-blurb') : null;
+    if(!row || !pl.contains(row)) return;
+    row.classList.toggle('open');
+  });
+});
 </script>
 </body></html>
