@@ -157,6 +157,20 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .mc-tick.stock { color: #7dd3fc; }
 .mc-tick.etf { color: #c4b5fd; }
 .note.mc-overview { font-size: 13px; margin-bottom: 14px; }
+.rchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid; vertical-align: 2px; margin-right: 7px; }
+.rchip.buy { color: #4ade80; border-color: rgba(74,222,128,0.40);
+  background: rgba(74,222,128,0.10); }
+.rchip.hold { color: #ffd54f; border-color: rgba(255,213,79,0.40);
+  background: rgba(255,213,79,0.10); }
+.rchip.sell { color: #f87171; border-color: rgba(248,113,113,0.40);
+  background: rgba(248,113,113,0.10); }
+.wl-blurb { margin: 14px 0; }
+.wl-rate-why { color: #8a938a; font-style: italic; }
+.wl-link { text-align: center; margin: 2px 0 14px; font-size: 12px; }
+.wl-link a { color: #ffd54f; text-decoration: none; opacity: 0.85; }
+.wl-link a:hover { opacity: 1; text-decoration: underline; }
 .mc-nm { color: #cfd6cf; font-weight: 600; }
 .mc-what { color: #8a938a; }
 .mc-why { color: #a8b3a8; }
@@ -176,6 +190,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
 <div class="subhead">Top picks vs VGT (stocks) / VOO (ETFs) — 2026-10-03</div>
+<div class="wl-link"><a href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>
 <h2>Top 10 stocks — most confident</h2>
 <div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
 
@@ -350,6 +365,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   <div class="stab" data-cap="Stability">A</div>
 </div>
 </div>
+
 
 <h2>Market chat</h2>
 <div class="note mc-overview"><p>The market is up — the Nasdaq hit a record Friday after a weak jobs report made investors bet the Fed will leave rates alone, keeping borrowing cheap, while AI spending keeps powering big tech. The shadow over the rally is the seven-month US-Iran war: fighting near the Strait of Hormuz keeps oil around $100, raising costs for everyone and feeding inflation — just as borrowing costs sit at 24-year highs.</p><p class="fineprint">As of 2026-10-03.</p></div>

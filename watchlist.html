@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Screener results vs  — 2026-10-03</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root { color-scheme: dark;
+  --green: #4ade80; --green-deep: #22c55e; --gold: #ffd54f; --gold-deep: #f59e0b;
+  --red: #f87171; }
+body { font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  max-width: 980px; margin: 24px auto; padding: 0 16px 40px; color: #f2f5f1;
+  background:
+    radial-gradient(1000px 420px at 50% -8%, rgba(125,211,252,0.10), transparent 60%),
+    radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.14), transparent 60%),
+    radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.12), transparent 60%),
+    radial-gradient(600px 400px at 55% 45%, rgba(74,222,128,0.05), transparent 65%),
+    #070b09; background-attachment: fixed; }
+h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
+  color: #a7f3c7;
+  text-shadow: 0 2px 24px rgba(74,222,128,0.25); margin-bottom: 4px; }
+h1 span.chip { -webkit-text-fill-color: var(--gold); color: var(--gold); }
+.tagline { font-size: 15px; font-style: italic; letter-spacing: 0.06em;
+  color: var(--gold); margin: 2px 0 2px; text-shadow: 0 0 14px rgba(255,213,79,0.3); }
+.subhead { font-size: 13px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }
+h1 span { -webkit-text-fill-color: #8a938a; color: #8a938a; }
+h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; margin: 30px 0 12px; color: var(--green);
+  text-shadow: 0 0 18px rgba(74,222,128,0.35); }
+.row { display: grid; grid-template-columns: 290px 160px 1fr 1fr 80px 70px;
+  gap: 10px; align-items: center; padding: 12px 16px; margin-bottom: 10px;
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }
+.row::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
+    var(--sheen2, rgba(255,255,255,0.03)) 30%, transparent 58%); }
+.row.head::before { display: none; }
+.row.k-stock { --sheen: rgba(125,211,252,0.22); --sheen2: rgba(125,211,252,0.07); }
+.row.k-etf { --sheen: rgba(196,181,253,0.22); --sheen2: rgba(196,181,253,0.07); }
+.row.head { background: none; border: none; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
+  color: #93a093; padding: 4px 16px 8px; margin-bottom: 2px; }
+.row > div { min-width: 0; overflow: hidden; }
+.row.head > div { overflow: visible; }
+@media (hover: hover) {
+  .row { transition: border-color 0.25s ease, box-shadow 0.25s ease; }
+  .row:hover { border-color: rgba(255,255,255,0.22);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }
+}
+.id { white-space: nowrap; text-overflow: ellipsis; }
+.id .nm { overflow: hidden; text-overflow: ellipsis; }
+.sec { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.id .rank { display:inline-block; width:22px; color: var(--gold); font-weight: 600; }
+.id .tick { font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }
+.id .nm { color:#a8b3a8; font-size: 12px; }
+.sec { font-size: 12px; color:#a8b3a8; }
+.lbl { font-size: 12px; margin-bottom: 4px; color: #93a093; }
+.lbl.r1y { color: var(--green); font-weight: 600; }
+.lbl.est { color: var(--gold); font-weight: 700; }
+.lbl.neg { color: var(--red) !important; }
+.track { background: rgba(255,255,255,0.07); height: 10px; border-radius: 6px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); overflow: hidden; }
+.bar { height: 10px; border-radius: 6px; position: relative; overflow: hidden; }
+.bar::after { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.14) 42%, rgba(255,255,255,0) 62%);
+  pointer-events: none; }
+.bar.pos { background: linear-gradient(90deg, var(--green-deep), var(--green));
+  box-shadow: 0 0 12px rgba(74,222,128,0.55); }
+.bar.est { background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  box-shadow: 0 0 12px rgba(255,213,79,0.55); }
+.bar.neg { background: linear-gradient(90deg, #dc2626, var(--red));
+  box-shadow: 0 0 12px rgba(248,113,113,0.5); }
+.stab { font-size: 12px; color:#a8b3a8; text-align: right; }
+.cf { font-size: 13px; font-weight: 600; text-align: right; color: var(--gold); }
+.nonus { display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
+  background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
+  border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+.note { position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
+  color: #9aa79a; line-height: 1.6; padding: 16px 20px;
+  background: rgba(255,255,255,0.025);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px rgba(0,0,0,0.38); }
+.note::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,213,79,0.16) 0%,
+    rgba(255,213,79,0.05) 30%, transparent 58%); }
+.note b { color: var(--gold); }
+.note p { margin: 0 0 13px; }
+.note p:last-child { margin-bottom: 0; }
+.note .stages-head { font-weight: 700; color: #cfd6cf;
+  margin-top: 18px; }
+.note .fineprint { font-size: 11px; color: #7d887d; }
+
+.tledger a { color: #9aa79a; font-size: 12px;
+  text-decoration: underline; text-underline-offset: 2px; }
+.sortctl { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+  font-size: 12px; color: #93a093; letter-spacing: 0.06em; }
+.sbtn { font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
+  color: #cfd6cf;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 999px;
+  padding: 4px 14px; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }
+.sbtn.on { color: #0a0f0c; font-weight: 700;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(0,0,0,0.14) 100%),
+    linear-gradient(90deg, var(--gold-deep), var(--gold));
+  border-color: rgba(255,213,79,0.8);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }
+.why { font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }
+.row.hm { opacity: 0.88; }
+.hm-extra { display: none; }
+#pl2.showall .hm-extra { display: grid; }
+.hm-more { margin: 4px 0 6px; }
+.row.k-stock .tick { color: #7dd3fc; }
+.row.k-etf .tick { color: #c4b5fd; }
+.kchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.kchip.stock { color: #7dd3fc; background: rgba(125,211,252,0.12);
+  border: 1px solid rgba(125,211,252,0.35); }
+.kchip.etf { color: #c4b5fd; background: rgba(196,181,253,0.12);
+  border: 1px solid rgba(196,181,253,0.35); }
+.mc-sec { position: relative; overflow: hidden; margin-bottom: 10px;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }
+.mc-sec::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.07) 0%, transparent 48%); }
+.mc-sec > summary { position: relative; cursor: pointer; padding: 13px 18px;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #cfd6cf;
+  list-style: none; }
+.mc-sec > summary::-webkit-details-marker { display: none; }
+.mc-sec > summary::before { content: "▸  "; color: var(--gold); }
+.mc-sec[open] > summary::before { content: "▾  "; }
+.mc-body { position: relative; padding: 0 18px 14px; font-size: 13px;
+  color: #a8b3a8; line-height: 1.65; }
+.mc-body p { margin: 0 0 12px; }
+.mc-item { margin: 12px 0; }
+.mc-tick { font-weight: 700; letter-spacing: 0.03em; }
+.mc-tick.stock { color: #7dd3fc; }
+.mc-tick.etf { color: #c4b5fd; }
+.note.mc-overview { font-size: 13px; margin-bottom: 14px; }
+.rchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid; vertical-align: 2px; margin-right: 7px; }
+.rchip.buy { color: #4ade80; border-color: rgba(74,222,128,0.40);
+  background: rgba(74,222,128,0.10); }
+.rchip.hold { color: #ffd54f; border-color: rgba(255,213,79,0.40);
+  background: rgba(255,213,79,0.10); }
+.rchip.sell { color: #f87171; border-color: rgba(248,113,113,0.40);
+  background: rgba(248,113,113,0.10); }
+.wl-blurb { margin: 14px 0; }
+.wl-rate-why { color: #8a938a; font-style: italic; }
+.wl-link { text-align: center; margin: 2px 0 14px; font-size: 12px; }
+.wl-link a { color: #ffd54f; text-decoration: none; opacity: 0.85; }
+.wl-link a:hover { opacity: 1; text-decoration: underline; }
+.mc-nm { color: #cfd6cf; font-weight: 600; }
+.mc-what { color: #8a938a; }
+.mc-why { color: #a8b3a8; }
+@media (max-width: 700px) {
+  h1 { font-size: 20px; }
+  .row { grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }
+  .row.head { display: none; }
+  .id, .sec { grid-column: 1 / -1; }
+  .cell::before, .cf::before, .stab::before {
+    content: attr(data-cap); display: block;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #93a093; margin-bottom: 3px; }
+  .cf, .stab { text-align: left; font-size: 14px; }
+}
+</style></head>
+<body>
+<h1>Mint <span class="chip">(Chip)</span></h1>
+<div class="tagline">Straight from the Mint.</div>
+<div class="subhead">Watchlist — by est. next 1y — 2026-10-03</div>
+
+<h2>Stocks — by est. next 1y</h2>
+<div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
+
+<div class="row head">
+  <div># / Ticker / Name</div><div>Sector / Category</div>
+  <div>1-year return</div><div>Expected value</div>
+  <div>Confidence</div><div>Stability</div>
+</div>
+<div class="picklist" id="pl0">
+
+<div class="row k-stock" data-ev="0.11422500785695622" data-r1y="0.9042697684838032">
+  <div class="id"><span class="rank">1</span>
+    <span class="tick">HNGE</span>
+    <span class="nm">Hinge Health, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+90.4%</div><div class="track"><div class="bar pos" style="width:60.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.4%</div><div class="track"><div class="bar est" style="width:57.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">C</div>
+</div>
+
+<div class="row k-stock" data-ev="0.062296024719859275" data-r1y="0.900880753399498">
+  <div class="id"><span class="rank">2</span>
+    <span class="tick">DAC</span>
+    <span class="nm">Danaos Corporation <span class="nonus" title="Domiciled in Greece">non-US</span></span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+90.1%</div><div class="track"><div class="bar pos" style="width:60.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.2%</div><div class="track"><div class="bar est" style="width:31.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">B</div>
+</div>
+
+<div class="row k-stock" data-ev="0.05396654870597715" data-r1y="3.4206717169760754">
+  <div class="id"><span class="rank">3</span>
+    <span class="tick">CDNA</span>
+    <span class="nm">CareDx, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+342.1%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.4%</div><div class="track"><div class="bar est" style="width:27.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">60%</div>
+  <div class="stab" data-cap="Stability">D</div>
+</div>
+
+<div class="row k-stock" data-ev="0.0057741557531998085" data-r1y="1.2487562102502272">
+  <div class="id"><span class="rank">4</span>
+    <span class="tick">AYA</span>
+    <span class="nm">Aya Gold &amp; Silver Inc. <span class="nonus" title="Domiciled in Canada">non-US</span></span></div>
+  <div class="sec">Basic Materials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+124.9%</div><div class="track"><div class="bar pos" style="width:83.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+0.6%</div><div class="track"><div class="bar est" style="width:2.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">55%</div>
+  <div class="stab" data-cap="Stability">C</div>
+</div>
+
+<div class="row k-stock" data-ev="-0.08806587155292239" data-r1y="-0.21324898521470192">
+  <div class="id"><span class="rank">5</span>
+    <span class="tick">TTWO</span>
+    <span class="nm">Take-Two Interactive Software, Inc.</span></div>
+  <div class="sec">Communication Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y neg">-21.3%</div><div class="track"><div class="bar neg" style="width:14.2%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est neg">-8.8%</div><div class="track"><div class="bar neg" style="width:44.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">B</div>
+</div>
+
+<div class="row k-stock" data-ev="-0.16130886850312995" data-r1y="-0.012364027785691345">
+  <div class="id"><span class="rank">6</span>
+    <span class="tick">SPCX</span>
+    <span class="nm">Space Exploration Technologies Corp.</span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y neg">-1.2%</div><div class="track"><div class="bar neg" style="width:2.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est neg">-16.1%</div><div class="track"><div class="bar neg" style="width:80.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">55%</div>
+  <div class="stab" data-cap="Stability">D</div>
+</div>
+</div>
+<h2>ETFs — by est. next 1y</h2>
+<div class="sortctl" data-pl="pl1"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
+
+<div class="row head">
+  <div># / Ticker / Name</div><div>Sector / Category</div>
+  <div>1-year return</div><div>Expected value</div>
+  <div>Confidence</div><div>Stability</div>
+</div>
+<div class="picklist" id="pl1">
+
+<div class="row k-etf" data-ev="0.1344946791998395" data-r1y="0.36447609451537577">
+  <div class="id"><span class="rank">1</span>
+    <span class="tick">VGT</span>
+    <span class="nm">Vanguard Information Technology Index </span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+36.4%</div><div class="track"><div class="bar pos" style="width:24.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+13.4%</div><div class="track"><div class="bar est" style="width:67.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">80%</div>
+  <div class="stab" data-cap="Stability">A</div>
+</div>
+
+<div class="row k-etf" data-ev="0.08671464080901821" data-r1y="0.2867563002274742">
+  <div class="id"><span class="rank">2</span>
+    <span class="tick">SPMO</span>
+    <span class="nm">Invesco S&amp;P 500 Momentum ETF</span></div>
+  <div class="sec">Large Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+28.7%</div><div class="track"><div class="bar pos" style="width:19.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.7%</div><div class="track"><div class="bar est" style="width:43.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+</div>
+
+<div class="row k-etf" data-ev="0.042878170362143385" data-r1y="0.2719209016134856">
+  <div class="id"><span class="rank">3</span>
+    <span class="tick">DIVB</span>
+    <span class="nm">iShares Core Dividend ETF</span></div>
+  <div class="sec">Large Value</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+27.2%</div><div class="track"><div class="bar pos" style="width:18.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.3%</div><div class="track"><div class="bar est" style="width:21.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+</div>
+
+<div class="row k-etf" data-ev="0.0363395235822533" data-r1y="0.43137911173178844">
+  <div class="id"><span class="rank">4</span>
+    <span class="tick">QTUM</span>
+    <span class="nm">Defiance Quantum ETF</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.1%</div><div class="track"><div class="bar pos" style="width:28.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+3.6%</div><div class="track"><div class="bar est" style="width:18.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">60%</div>
+  <div class="stab" data-cap="Stability">B</div>
+</div>
+
+<div class="row k-etf" data-ev="0.031926103574306336" data-r1y="0.49703668586888106">
+  <div class="id"><span class="rank">5</span>
+    <span class="tick">XBI</span>
+    <span class="nm">State Street SPDR S&amp;P Biotech ETF</span></div>
+  <div class="sec">Health</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+49.7%</div><div class="track"><div class="bar pos" style="width:33.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+3.2%</div><div class="track"><div class="bar est" style="width:16.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+</div>
+</div>
+
+<h2>About these names</h2>
+<div class="mc-item wl-blurb"><span class="rchip buy">BUY</span><span class="mc-tick etf">VGT</span> <span class="mc-nm">Vanguard Information Technology ETF</span><br><span class="mc-why">Vanguard&#x27;s technology ETF — hundreds of US tech stocks for a 0.10% fee. The calmest name here: +36% over the past year with the shallowest drawdowns. The bet is simply that big tech keeps spending and earning.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">HNGE</span> <span class="mc-nm">Hinge Health, Inc.</span><br><span class="mc-why">Hinge Health sells app-based physical therapy to employers and is 3-4x its nearest rival. Revenue grew 53% last quarter with 29% operating margins and $100M in free cash flow. Held back from a buy only by its history: a -42% maximum drawdown since its 2025 IPO.</span><br><span class="wl-rate-why">Hold: clears the bar, but too deeply scarred for a buy</span></div>
+<div class="mc-item wl-blurb"><span class="rchip buy">BUY</span><span class="mc-tick etf">SPMO</span> <span class="mc-nm">Invesco S&amp;P 500 Momentum ETF</span><br><span class="mc-why">Invesco&#x27;s S&amp;P 500 momentum ETF — the 100 hottest S&amp;P stocks, rebalanced twice a year, 0.13% fee. Momentum is working right now. The known failure mode: when market leadership rotates, momentum crashes are violent.</span><br><span class="wl-rate-why">Buy: clears the bar with margin — durable thesis, trusted read</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">DAC</span> <span class="mc-nm">Danaos Corporation</span><br><span class="mc-why">Danaos owns 75 containerships leased to Maersk and COSCO, with a record $4.6B order backlog and a 6.3x forward earnings multiple. The catch: today&#x27;s charter rates are propped up by war disruptions in the Gulf and Red Sea — peace would soften them.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick stock">CDNA</span> <span class="mc-nm">CareDx, Inc.</span><br><span class="mc-why">CareDx makes transplant rejection tests. Medicare finalized coverage in July, the company is profitable again, and guidance was raised. But it&#x27;s up 342% on 91% annualized volatility — too wild for a buy.</span><br><span class="wl-rate-why">Hold: clears the bar, but too volatile for a buy</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">DIVB</span> <span class="mc-nm">iShares Core Dividend ETF</span><br><span class="mc-why">iShares&#x27; dividend-and-buyback ETF — 381 profitable US companies that return cash to shareholders, 0.05% fee. Boring in a good way: earns its place without strong conviction either way.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">QTUM</span> <span class="mc-nm">Defiance Quantum ETF</span><br><span class="mc-why">Defiance&#x27;s quantum computing ETF — IonQ, Rigetti, D-Wave plus chip enablers. The theme is genuinely hot, but commercial quantum computing is years away and most pure-play holdings aren&#x27;t profitable yet.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
+<div class="mc-item wl-blurb"><span class="rchip hold">HOLD</span><span class="mc-tick etf">XBI</span> <span class="mc-nm">SPDR S&amp;P Biotech ETF</span><br><span class="mc-why">SPDR&#x27;s equal-weight biotech ETF. Up twelve of the last thirteen months on an M&amp;A wave and a friendlier FDA, with healthcare at its deepest valuation discount in 35 years. A real reset, not just a bounce.</span><br><span class="wl-rate-why">Hold: earns its place, but not with conviction</span></div>
+<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">AYA</span> <span class="mc-nm">Aya Gold &amp; Silver Inc.</span><br><span class="mc-why">Aya Gold &amp; Silver mines precious metals in Morocco, up 125% on the metals rally. Below the +3% bar — this is a bet on silver prices, not a business compounding.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
+<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">TTWO</span> <span class="mc-nm">Take-Two Interactive Software, Inc.</span><br><span class="mc-why">Take-Two makes Grand Theft Auto; GTA VI is dated November 19, 2026 at $79.99. The only name here with a deeply negative expected value — the thesis is essentially one launch date, already delayed twice.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
+<div class="mc-item wl-blurb"><span class="rchip sell">SELL</span><span class="mc-tick stock">SPCX</span> <span class="mc-nm">Space Exploration Technologies Corp.</span><br><span class="mc-why">SpaceX, public since June in the largest IPO ever. Starlink prints cash, but the AI division burns $15.8B a quarter and the $2T valuation demands perfection. Down 30% from September with the highest event dependence in the set.</span><br><span class="wl-rate-why">Sell: expected value below the +3% bar — doesn&#x27;t earn its place</span></div>
+
+
+<div class="note">
+<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
+proven themselves &mdash; names that beat their benchmark over the past year.
+For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,
+which tracks the S&amp;P 500. Then Mint asks the harder question: which are most
+likely to keep winning without stumbling right after you buy?</p>
+<p>Watchlist mode: every ticker you supplied is researched and scored, sorted by expected value &mdash; no benchmark, no picking.</p>
+<p>The philosophy is simple: avoid losses first. We look past recent gains to the
+business behind each name, the risks that could derail it, and whether its
+success looks durable or depends on hype, headlines, or a one-time event.
+Strong recent performance gets a name noticed. Strong evidence earns it a spot.
+If nothing clears the bar, we leave the slot empty &mdash; every pick earns its
+place.</p>
+<p class="stages-head">How it works, in three stages:</p>
+<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
+over the past year, then scored on the quality of the business, the timing of
+entry, and the steadiness of the ride. Hard risk gates throw out anything too
+volatile or too deeply scarred.</p>
+<p><b>Question the story.</b> Survivors get researched &mdash; we read the news
+behind each name, not just the numbers. How much does the story depend on things
+outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and
+it&apos;s out on the spot. For the rest: how likely is the strength to continue,
+and how much do we trust our own read?</p>
+<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those
+judgments become one number &mdash; expected value: the likely gains if it holds,
+minus the likely pain if it turns, adjusted for how much we trust our own
+read.</p>
+<p>Mint is built around a simple idea: find strength, question the story, weigh
+the odds, and only make room for what earns it.</p>
+<p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
+future returns. Also: there are gremlins that have control over the markets,
+they hate you personally,
+and they will do the exact opposite of your buys and sells out of pure
+spite.</p>
+</div>
+<script>
+document.querySelectorAll('.sortctl').forEach(function(ctl){
+  var pl = document.getElementById(ctl.getAttribute('data-pl'));
+  if(!pl) return;
+  ctl.querySelectorAll('.sbtn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      ctl.querySelectorAll('.sbtn').forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      var k = btn.getAttribute('data-k');
+      var rows = Array.prototype.slice.call(pl.querySelectorAll('.row'));
+      rows.sort(function(a, b){
+        var va = parseFloat(a.getAttribute('data-' + k));
+        var vb = parseFloat(b.getAttribute('data-' + k));
+        va = isNaN(va) ? -Infinity : va;
+        vb = isNaN(vb) ? -Infinity : vb;
+        return vb - va;
+      });
+      rows.forEach(function(r, i){
+        pl.appendChild(r);
+        var rk = r.querySelector('.rank');
+        if(rk) rk.textContent = i + 1;
+      });
+      if(pl.id === 'pl2'){ applyHmLimit(); }
+    });
+  });
+});
+function applyHmLimit(){
+  var pl2 = document.getElementById('pl2');
+  if(!pl2) return;
+  var open = pl2.classList.contains('showall');
+  Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){
+    r.classList.toggle('hm-extra', !open && i >= 5);
+  });
+}
+applyHmLimit();
+var hmt = document.getElementById('hm-toggle');
+if(hmt){
+  hmt.addEventListener('click', function(){
+    var pl2 = document.getElementById('pl2');
+    var open = pl2.classList.toggle('showall');
+    applyHmLimit();
+    hmt.textContent = open ? 'Show fewer ↑'
+      : 'Show all ' + hmt.getAttribute('data-n') + ' ↓';
+  });
+}
+</script>
+</body></html>
