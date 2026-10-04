@@ -3785,9 +3785,9 @@ def main():
                     help="top ETF quant candidates entering research (default 100)")
     ap.add_argument("--n-stock-research", type=int, default=100,
                     help="top stock quant candidates entering research (default 100)")
-    ap.add_argument("--news-invalidate-threshold", type=float, default=0.5,
+    ap.add_argument("--news-invalidate-threshold", type=float, default=0.65,
                     help="news score (bad or good) at/above which a carried assessment "
-                         "is invalidated, forcing fresh research (default 0.5)")
+                         "is invalidated, forcing fresh research (default 0.65)")
     ap.add_argument("--n-surge", type=int, default=10,
                     help="max fast-movers (10d return >= 10%%) outside the research pool "
                          "pulled in for fresh assessment (default 10)")
@@ -4230,7 +4230,8 @@ def main():
                 _trig = f"good:{_good:.2f}"
             if _trig:
                 log(f"NEWS INVALIDATION: {t} ({_trig}) — forcing fresh assessment")
-            _is_surge = bool(r.get("_surge", False))
+            _sv = r.get("_surge")
+            _is_surge = bool(_sv) and not (isinstance(_sv, float) and _sv != _sv)  # not NaN
             cand = {
                 "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
                 "kind": r.get("kind", "stock"),
