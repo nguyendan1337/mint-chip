@@ -4206,6 +4206,8 @@ def main():
         if market_headlines is None:
             market_headlines = fetch_market_headlines()
             cache.put("market_headlines", market_headlines)
+        # risk themes needed for news-triggered invalidation scoring
+        risk_themes = discover_risk_themes(cache)
         cands = []
         _hl = fetch_headlines_threaded(
             [(r["ticker"], r["name"]) for _, r in top.iterrows()],
