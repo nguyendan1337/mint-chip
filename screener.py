@@ -1328,7 +1328,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         _ov = str(market_chat.get("overview") or "").strip()
         if _ov:
             _parts.append(
-                '<div class="note"><p>' + _html.escape(_ov) + '</p>'
+                '<div class="note mc-overview"><p>' + _html.escape(_ov) + '</p>'
                 '<p class="fineprint">As of ' +
                 _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
         for _sec in market_chat["sectors"]:
@@ -1551,6 +1551,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .mc-tick {{ font-weight: 700; letter-spacing: 0.03em; }}
 .mc-tick.stock {{ color: #7dd3fc; }}
 .mc-tick.etf {{ color: #c4b5fd; }}
+.note.mc-overview {{ font-size: 13px; margin-bottom: 14px; }}
 .mc-nm {{ color: #cfd6cf; font-weight: 600; }}
 .mc-what {{ color: #8a938a; }}
 .mc-why {{ color: #a8b3a8; }}
