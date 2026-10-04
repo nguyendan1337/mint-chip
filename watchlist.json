@@ -1,1 +1,24 @@
-{"tickers":["SPMO","DIVB","VGT","QTUM","DAC","HNGE","CDNA","AYA","XBI","SPCX","TTWO"],"updated":"2026-10-03"}
+{
+  "tickers": [
+    "SPMO",
+    "DIVB",
+    "VGT",
+    "QTUM",
+    "DAC",
+    "HNGE",
+    "CDNA",
+    "AYA",
+    "XBI",
+    "SPCX",
+    "TTWO",
+    "STX",
+    "WDC",
+    "HWM",
+    "MU",
+    "SNDK",
+    "NVDA",
+    "FTXL",
+    "TSLA"
+  ],
+  "updated": "2026-10-03"
+}
