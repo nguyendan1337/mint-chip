@@ -1188,7 +1188,7 @@ def _leverage_pat():
     return LEVERAGE_PAT
 
 
-def get_etf_universe(target=500, min_price=5.0, min_52w=None):
+def get_etf_universe(target=2000, min_price=5.0, min_52w=None):
     """Top 52-week gaining US-listed, unleveraged ETFs via yfinance ETF screener.
 
     Tiles 52w% bands top-down (API caps page size). Leveraged/inverse and
@@ -1198,8 +1198,10 @@ def get_etf_universe(target=500, min_price=5.0, min_52w=None):
     When min_52w is given (benchmark-relative mode), bands are tiled until
     the band range sits entirely below min_52w — the cutoff is 'better than
     the benchmark', not an arbitrary headcount. `target` remains only as a
-    hard work bound. (2026-10-03: the old fixed 200 truncated mid-band in
-    hot years, cutting names like SPMO; the stock leg never had such a cap.)
+    hard work bound (raised 2026-10-04: 500 silently truncated the universe
+    mid-band in hot years, dropping 57 eligible ETFs — the same bug class as
+    the old fixed-200 cap). If the bound ever binds before the bar is
+    reached, it logs a WARNING so the truncation is visible, not silent.
     """
     from yfinance import ETFQuery, screen
     bands = [(150, None), (100, 150), (70, 100), (50, 70), (35, 50),
@@ -1255,6 +1257,10 @@ def get_etf_universe(target=500, min_price=5.0, min_52w=None):
             break
     log(f"ETF universe final: {len(out)} US unleveraged ETFs"
         + (f" (52w% > {min_52w:.0f}%)" if min_52w is not None else ""))
+    if len(out) >= target and min_52w is not None:
+        log(f"WARNING: ETF work bound ({target}) hit before reaching the "
+            f"{min_52w:.0f}% bar — universe is TRUNCATED, not complete. "
+            f"Raise target.")
     if _ex_skipped:
         log(f"ETF universe: skipped exchanges (not in allow-list): "
             f"{dict(sorted(_ex_skipped.items(), key=lambda kv: -kv[1]))}")
@@ -2700,14 +2706,14 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     Returns a scored, gated, winsorized DataFrame (may be empty).
     """
     from cache import StepCache
-    etf_universe = cache.get("etf_universe_v4")
+    etf_universe = cache.get("etf_universe_v5")
     if etf_universe is None:
         # benchmark-relative universe: everything the bench-5 filter below
-        # would consider; 500 is only a work bound, not a cutoff
-        etf_universe = get_etf_universe(target=500, min_price=args.min_price,
+        # would consider; 2000 is only a work bound, not a cutoff
+        etf_universe = get_etf_universe(target=2000, min_price=args.min_price,
                                         min_52w=bench_ret * 100 - 5)
         if etf_universe:
-            cache.put("etf_universe_v4", etf_universe)
+            cache.put("etf_universe_v5", etf_universe)
         # Never cache an empty universe (outage would poison same-day retries).
     if not etf_universe:
         log("ETF universe empty; skipping ETF leg")
