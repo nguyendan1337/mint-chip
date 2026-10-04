@@ -84,6 +84,18 @@ NEGATIVE_WORDS = {
     "slump", "weak", "disappoint", "scandal", "resign"
 }
 
+# Fundamental good-news words only: earnings/contract/approval milestones.
+# Deliberately EXCLUDES analyst upgrades, price targets, and social-media
+# chatter — those are noise, not thesis-changing developments.
+POSITIVE_WORDS = {
+    "raised guidance", "raises guidance", "beat estimates", "beats estimates",
+    "topped estimates", "record revenue", "record earnings", "record profit",
+    "contract win", "contract awarded", "wins contract", "deal signed",
+    "fda approval", "approved by fda", "regulatory approval",
+    "dividend increase", "raises dividend", "dividend raised",
+    "buyback", "share repurchase",
+}
+
 STOPWORDS = set("""
 a an the and or but if then else when at by for with about into through during
 before after above below to from up down in out on off over under again further
@@ -2178,6 +2190,22 @@ def news_risk_penalty(headlines, risk_themes):
     return float(0.5 * theme_score + 0.5 * min(neg_ratio * 2, 1.0))
 
 
+def positive_news_score(headlines):
+    """0..1 score: higher = more fundamental good-news in today's headlines.
+
+    Mirrors news_risk_penalty but for upgrades: only counts POSITIVE_WORDS
+    (earnings beats, raised guidance, contract wins, approvals) — not
+    analyst chatter. Used to invalidate a stale carried assessment when
+    real good news breaks, so the researcher re-evaluates promptly.
+    """
+    if not headlines:
+        return 0.0
+    pos_hits = sum(1 for h in headlines
+                   if any(w in h.lower() for w in POSITIVE_WORDS))
+    pos_ratio = pos_hits / max(len(headlines), 1)
+    return float(min(pos_ratio * 2, 1.0))
+
+
 def fetch_headlines_threaded(tickers_names, cache=None, workers=6,
                              label="headlines"):
     """Fetch headlines for (ticker, name) pairs concurrently.
@@ -3757,6 +3785,14 @@ def main():
                     help="top ETF quant candidates entering research (default 100)")
     ap.add_argument("--n-stock-research", type=int, default=100,
                     help="top stock quant candidates entering research (default 100)")
+    ap.add_argument("--news-invalidate-threshold", type=float, default=0.5,
+                    help="news score (bad or good) at/above which a carried assessment "
+                         "is invalidated, forcing fresh research (default 0.5)")
+    ap.add_argument("--n-surge", type=int, default=10,
+                    help="max fast-movers (10d return >= 10%%) outside the research pool "
+                         "pulled in for fresh assessment (default 10)")
+    ap.add_argument("--surge-min-10d", type=float, default=0.10,
+                    help="min 10-day return for a surge candidate (default 0.10)")
     ap.add_argument("--max-etf-overlap", type=float, default=0.30,
                     help="max pairwise top-10 holdings overlap between picked ETFs (default 0.30; lower-EV member of over-threshold pairs is excluded)")
     ap.add_argument("--max-per-etf-category", type=int, default=2,
@@ -4130,6 +4166,34 @@ def main():
     pool = pd.concat([_pool_stocks, _pool_etfs], ignore_index=True)
     log(f"research pool: {len(_pool_stocks)} stocks + {len(_pool_etfs)} ETFs")
 
+    # Surge candidates: fast movers (10d return >= threshold) outside the
+    # quant pool get pulled in for fresh assessment. This is the "good news,
+    # buy quickly" path — the surge only buys an EVALUATION. Risk gates
+    # already applied above; the dep>=0.7 event veto and EV floor still
+    # decide. A meme spike gets researched and vetoed; a genuine repricing
+    # gets a fair EV within 24h instead of waiting for its base_score rank
+    # to climb.
+    if args.n_surge > 0:
+        _pool_tickers = set(pool["ticker"])
+        _surge_frames = []
+        for _sdf in (df, edf):
+            if _sdf is not None and not _sdf.empty and "ret_2w" in _sdf.columns:
+                _surge_frames.append(_sdf)
+        if _surge_frames:
+            _sall = pd.concat(_surge_frames, ignore_index=True)
+            _surg = _sall[(_sall["ret_2w"].fillna(0) >= args.surge_min_10d) &
+                          (~_sall["ticker"].isin(_pool_tickers))] \
+                .sort_values("ret_2w", ascending=False).head(args.n_surge)
+            if len(_surg):
+                for _, _r in _surg.iterrows():
+                    log(f"SURGE: {_r['ticker']} (+{_r['ret_2w']:.1%} 10d) — "
+                        f"added to research pool for fresh assessment")
+                _surg = _surg.copy()
+                _surg["_surge"] = True
+                pool = pd.concat([pool, _surg], ignore_index=True)
+                log(f"research pool after surge: {len(pool)} "
+                    f"({len(_surg)} surge added)")
+
     # 7) News/research layer on top scorers (stocks + ETFs)
     if args.with_llm:
         # ---- LLM research stack (replaces the rules-based news layer) ----
@@ -4149,11 +4213,27 @@ def main():
         for _, r in top.iterrows():
             t = r["ticker"]
             headlines = _hl.get(t, [])
+            # News-triggered invalidation: if today's headlines carry
+            # significant bad news OR significant fundamental good news,
+            # any carried assessment is stale — flag it so the researcher
+            # does fresh research instead of carrying forward. The 7-day
+            # rule assumes "no significant news"; a score spike violates
+            # that assumption in either direction.
+            _bad = news_risk_penalty(headlines, risk_themes)
+            _good = positive_news_score(headlines)
+            _trig = None
+            if _bad >= args.news_invalidate_threshold:
+                _trig = f"bad:{_bad:.2f}"
+            elif _good >= args.news_invalidate_threshold:
+                _trig = f"good:{_good:.2f}"
+            if _trig:
+                log(f"NEWS INVALIDATION: {t} ({_trig}) — forcing fresh assessment")
+            _is_surge = bool(r.get("_surge", False))
             cand = {
                 "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
                 "kind": r.get("kind", "stock"),
                 "ret_1y": float(r["ret_1y"]), "ret_6m": _safe(r.get("ret_6m")),
-                "ret_3m": _safe(r.get("ret_3m")),
+                "ret_3m": _safe(r.get("ret_3m")), "ret_2w": _safe(r.get("ret_2w")),
                 "vol60": float(r["vol60"]),
                 "maxdd": float(r["maxdd"]),
                 "dd_freq": _safe(r.get("dd_freq")),
@@ -4167,6 +4247,8 @@ def main():
                 "earn_soon": bool(r.get("earn_soon", 0.0)),
                 "insider_ratio": _safe(r.get("insider_ratio")),
                 "headlines": headlines[:12],
+                "news_trigger": _trig,
+                "surge": _is_surge,
             }
             if r.get("kind") == "etf":
                 cand["expense_ratio"] = _safe(r.get("expense_ratio"))
