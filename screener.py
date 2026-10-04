@@ -167,7 +167,7 @@ def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
         from yfinance.screener.query import EquityQuery as EqyQy
         q = EqyQy('and', [
             EqyQy('eq', ['region', 'us']),
-            EqyQy('is-in', ['exchange', 'NMS', 'NYQ']),
+            EqyQy('is-in', ['exchange', 'NMS', 'NYQ', 'ASE']),  # +NYSE American 2026-10-03 (was silently cut)
             EqyQy('gte', ['intradaymarketcap', min_mcap]),
             EqyQy('gte', ['intradayprice', min_price]),
         ])
@@ -436,16 +436,19 @@ def zscore(series):
     return ((s - mu) / sd).fillna(0)
 
 
-def build_scores(closes, infos):
+def build_scores(closes, infos, min_rows=120):
     """Score for: continue to do well + minimize chance of going negative after buying.
 
     Heavily weights: persistent momentum + trend + quality + LOW risk
     (low vol, shallow drawdown, low leverage, reasonable valuation).
+
+    min_rows: benchmark mode needs 120d+ of history; watchlist mode passes 60
+    so short-history names (recent IPOs) are scored, not silently dropped.
     """
     rows = []
     for t, info in infos.items():
         px = closes.get(t)
-        if px is None or len(px) < 120:
+        if px is None or len(px) < min_rows:
             continue
         daily_ret = px.pct_change().dropna()
         row = {"ticker": t}
@@ -962,11 +965,133 @@ def estimate_next_year(row, dep, cont, conf=1.0):
     return conf * raw
 
 
+def watchlist_quality_summary(ratings, evs, tickers=None):
+    """One-sentence verdict on the watchlist as a whole — computed, not
+    written. Keys the quality word off the average expected value, names the
+    drag when sells pull it below the +3% bar, and calls out the leader and
+    the biggest drag by name."""
+    n = len(ratings)
+    if not n:
+        return ""
+    b = sum(1 for x in ratings if x == "BUY")
+    h = sum(1 for x in ratings if x == "HOLD")
+    s = n - b - h
+    try:
+        evf = [float(e) for e in evs]
+        avg = sum(evf) / n
+    except Exception:
+        evf, avg = [], 0.0
+    if avg >= 0.08:
+        q = "strong"
+    elif avg >= 0.05:
+        q = "solid"
+    elif avg >= 0.03:
+        q = "decent"
+    elif avg >= 0.0:
+        q = "mixed"
+    else:
+        q = "weak"
+
+    def _pl(k, w):
+        return f"{k} {w}" if k == 1 else f"{k} {w}s"
+    out = (f"A {q} list — {_pl(b, 'buy')}, {_pl(h, 'hold')}, {_pl(s, 'sell')}, "
+           f"averaging {avg:+.1%} expected value")
+    if s and avg < 0.03:
+        out += ("; the sell pulls the average below the +3% bar" if s == 1
+                else "; the sells pull the average below the +3% bar")
+    if tickers and evf and n > 1:
+        try:
+            order = sorted(range(n), key=lambda i: evf[i], reverse=True)
+            lead, drag = order[0], order[-1]
+            out += (f"; {tickers[lead]} ({evf[lead]:+.1%}) leads, "
+                    f"{tickers[drag]} ({evf[drag]:+.1%}) drags")
+        except Exception:
+            pass
+    return out + "."
+
+
+def add_ratings(df):
+    """Attach deterministic Buy/Hold/Sell columns ('what Mint would do').
+
+    Uses compute_rating() on the pipeline outputs already present
+    (est_next_1y, llm_event_dependence, llm_confidence, vol60, maxdd).
+    Logs each rating for the audit trail.
+    """
+    sub = df.copy()
+    _rats = [compute_rating(r.get("est_next_1y"), r.get("llm_event_dependence"),
+                            r.get("llm_confidence"), r.get("vol60"),
+                            r.get("maxdd")) for _, r in sub.iterrows()]
+    sub["rating"] = [x[0] for x in _rats]
+    sub["rating_reason"] = [x[1] for x in _rats]
+    for _, r in sub.iterrows():
+        log(f"  rating {r['ticker']:6s}: {r['rating']} — {r['rating_reason']}")
+    return sub
+
+
+def compute_rating(ev, dep, conf, vol, maxdd):
+    """Buy/Hold/Sell from pipeline outputs — 'what Mint would do'.
+
+    Deterministic and auditable (no LLM vibes). Philosophy mapping:
+    - SELL: doesn't earn its place (EV below the +3% floor) or fails the
+      event-driven veto (dep >= 0.7) — the two ways the main pipeline
+      rejects a name outright.
+    - HOLD: earns its place (EV >= +3%) but Mint wouldn't buy it as-is:
+      fails a risk gate (too volatile / too deeply scarred — downside
+      protection first), leans on outside events (dep >= 0.5), or the
+      read isn't trusted (conf < 0.6).
+    - BUY: clears the bar with margin (EV >= +8%), durable thesis
+      (dep < 0.5), trusted read (conf >= 0.6), passes the risk gates.
+    Returns (rating, reason) with the reason in plain words.
+    """
+    import math
+    try:
+        ev = float(ev)
+    except Exception:
+        return ("HOLD", "no estimate available")
+    try:
+        dep = float(dep)
+    except Exception:
+        dep = 0.3
+    try:
+        conf = float(conf)
+    except Exception:
+        conf = 0.7
+    if math.isnan(ev):
+        return ("HOLD", "no estimate available")
+    if ev < 0.03:
+        return ("SELL", "expected value below the +3% bar — doesn't earn its place")
+    if dep >= 0.7:
+        return ("SELL", "event-driven — the thesis depends on things outside its control")
+    if vol is not None and not (isinstance(vol, float) and math.isnan(vol)):
+        try:
+            if float(vol) > 0.80:
+                return ("HOLD", "clears the bar, but too volatile for a buy")
+        except Exception:
+            pass
+    if maxdd is not None and not (isinstance(maxdd, float) and math.isnan(maxdd)):
+        try:
+            if float(maxdd) < -0.40:
+                return ("HOLD", "clears the bar, but too deeply scarred for a buy")
+        except Exception:
+            pass
+    if dep >= 0.5:
+        return ("HOLD", "clears the bar, but the thesis leans on outside events")
+    if conf < 0.6:
+        return ("HOLD", "clears the bar, but confidence in the read is low")
+    if ev >= 0.08:
+        return ("BUY", "clears the bar with margin — durable thesis, trusted read")
+    return ("HOLD", "earns its place, but not with conviction")
+
+
 # ---------------- ETF pipeline ----------------
 # ETFs have no ROE/margins/P-E; score on momentum + risk + structure/cost.
 # Same goal: likely to continue, minimize going negative after buying.
 
-US_ETF_EXCHANGES = {"NMS", "NYQ", "ASE", "ARC", "BAT", "NGM"}
+US_ETF_EXCHANGES = {"NMS", "NYQ", "ASE", "ARC", "BAT", "NGM", "PCX"}
+# NOTE 2026-10-03: "PCX" is how Yahoo's ETF screener labels NYSE Arca (it never
+# emits "ARC" there). It was missing, silently excluding every Arca-listed ETF
+# — including SPMO — from the candidate universe. Arca is a US exchange, so
+# this is a bug fix, not a methodology change.
 LEVERAGE_PAT = None  # compiled lazily (re module import at top)
 
 
@@ -980,12 +1105,18 @@ def _leverage_pat():
     return LEVERAGE_PAT
 
 
-def get_etf_universe(target=120, min_price=5.0):
+def get_etf_universe(target=500, min_price=5.0, min_52w=None):
     """Top 52-week gaining US-listed, unleveraged ETFs via yfinance ETF screener.
 
     Tiles 52w% bands top-down (API caps page size). Leveraged/inverse and
     non-US listings are excluded up front — structural decay and closure
     risk are the opposite of 'don't go negative'.
+
+    When min_52w is given (benchmark-relative mode), bands are tiled until
+    the band range sits entirely below min_52w — the cutoff is 'better than
+    the benchmark', not an arbitrary headcount. `target` remains only as a
+    hard work bound. (2026-10-03: the old fixed 200 truncated mid-band in
+    hot years, cutting names like SPMO; the stock leg never had such a cap.)
     """
     from yfinance import ETFQuery, screen
     bands = [(150, None), (100, 150), (70, 100), (50, 70), (35, 50),
@@ -993,6 +1124,8 @@ def get_etf_universe(target=120, min_price=5.0):
     pat = _leverage_pat()
     seen, out = set(), []
     for lo, hi in bands:
+        if min_52w is not None and hi is not None and hi <= min_52w:
+            break  # band entirely below the bar; lower bands are too
         ops = [ETFQuery("gt", ["fiftytwowkpercentchange", lo]),
                ETFQuery("gt", ["intradayprice", min_price])]
         if hi is not None:
@@ -1034,8 +1167,8 @@ def get_etf_universe(target=120, min_price=5.0):
         log(f"ETF universe: {len(out)} so far (band {lo}-{hi})")
         if len(out) >= target:
             break
-        time.sleep(0.3)
-    log(f"ETF universe final: {len(out)} US unleveraged ETFs")
+    log(f"ETF universe final: {len(out)} US unleveraged ETFs"
+        + (f" (52w% > {min_52w:.0f}%)" if min_52w is not None else ""))
     return out
 
 
@@ -1212,7 +1345,7 @@ def build_etf_scores(closes, infos):
 
 
 def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
-                  honorable=None, market_chat=None):
+                  honorable=None, market_chat=None, watchlist_chat=None):
     """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
 
     Columns: 1-year performance %, sector, and expected value %
@@ -1266,6 +1399,24 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             neg = False
         return f"lbl {base} neg" if neg else f"lbl {base}"
 
+    # --- Blurb maps: ticker -> story, rendered INSIDE the pick row and
+    # revealed by clicking it (expand, not flip — a flip would hide the
+    # stats the row exists to show). Main page: market_chat sector tickers
+    # (what/why). Watchlist: blurb + rating chip. The market-chat section
+    # below keeps only the sector paragraphs; the watchlist's "About these
+    # names" section is gone (its summary stays).
+    _bmap = {}
+    if market_chat and market_chat.get("sectors"):
+        for _sec in market_chat["sectors"]:
+            for _t in _sec.get("tickers", []):
+                _bmap[str(_t.get("ticker", "")).upper()] = (
+                    "mc", str(_t.get("what", "")), str(_t.get("why", "")))
+    if watchlist_chat and watchlist_chat.get("tickers"):
+        for _t in watchlist_chat["tickers"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "wl", str(_t.get("blurb", "")),
+                str(_t.get("rating", "HOLD")).upper(),
+                str(_t.get("rating_reason", "")))
     header = """
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
@@ -1297,16 +1448,39 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             _kk = str(r.get("kind", "")).strip().lower()
             if _kk not in ("stock", "etf"):
                 _kk = "stock" if si == 0 else "etf"
+            _b = _bmap.get(str(r["ticker"]).upper())
+            _blurb_html, _chev, _hasb, _wchip = "", "", "", ""
+            if _b:
+                _hasb = " has-blurb"
+                _chev = '<span class="chev" title="Tap to expand">▸</span>'
+                if _b[0] == "mc":
+                    _blurb_html = (
+                        f'<div class="blurb"><div class="mc-what">'
+                        f'{_html.escape(_b[1])}</div>'
+                        f'<div class="mc-why">{_html.escape(_b[2])}</div></div>')
+                else:
+                    # watchlist: the rating chip lives on the row itself, not
+                    # hidden in the expansion — the call should be visible
+                    _rcls = {"BUY": "buy", "HOLD": "hold",
+                             "SELL": "sell"}.get(_b[2], "hold")
+                    _wchip = f' <span class="rchip {_rcls}">{_b[2]}</span>'
+                    _blurb_html = (
+                        f'<div class="blurb">'
+                        f'<span class="mc-why">{_html.escape(_b[1])}</span>'
+                        + (f'<br><span class="wl-rate-why">{_b[2].title()}: '
+                           f'{_html.escape(_b[3])}</span>' if _b[3] else '')
+                        + '</div>')
             rows_html += f"""
-<div class="row k-{_kk}" data-ev="{_evf}" data-r1y="{_r1yf}">
+<div class="row k-{_kk}{_hasb}" data-ev="{_evf}" data-r1y="{_r1yf}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(r['ticker']))}</span>
-    <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span></div>
+    <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
   <div class="cell" data-cap="Expected value"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
+  {_blurb_html}
 </div>
 """
         rows_html += '</div>\n'  # close .picklist
@@ -1332,27 +1506,25 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 '<p class="fineprint">As of ' +
                 _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
         for _sec in market_chat["sectors"]:
-            _items = []
-            for _t in _sec.get("tickers", []):
-                _kk = str(_t.get("kind", "")).strip().lower()
-                if _kk not in ("stock", "etf"):
-                    _kk = "stock"
-                _items.append(
-                    f'<div class="mc-item">'
-                    f'<span class="mc-tick {_kk}">'
-                    f'{_html.escape(str(_t.get("ticker", "")))}</span>'
-                    f' <span class="mc-nm">{_html.escape(str(_t.get("name", "")))}</span>'
-                    f' <span class="kchip {_kk}">{_kk.upper()}</span><br>'
-                    f'<span class="mc-what">{_html.escape(str(_t.get("what", "")))}</span><br>'
-                    f'<span class="mc-why">{_html.escape(str(_t.get("why", "")))}</span>'
-                    f'</div>')
+            # per-ticker what/why now lives inside the pick rows (click to
+            # expand); the sector block keeps only its "why it's doing well"
             _parts.append(
                 f'<details class="mc-sec"><summary>'
                 f'{_html.escape(str(_sec.get("name", "")))}</summary>'
                 f'<div class="mc-body"><p>'
                 f'{_html.escape(str(_sec.get("blurb", "")))}</p>'
-                + "".join(_items) + '</div></details>')
+                f'</div></details>')
         mc_html = "\n".join(_parts)
+    # --- Watchlist verdict: the computed one-liner plus the researcher's
+    # daily roast (summary_color). Ticker blurbs now live inside the pick
+    # rows (click to expand) — this paragraph is all that stays below.
+    wl_html = ""
+    if watchlist_chat:
+        _wsum = str(watchlist_chat.get("summary") or "").strip()
+        _wcolor = str(watchlist_chat.get("summary_color") or "").strip()
+        if _wsum or _wcolor:
+            _wtxt = _wsum + (" " + _wcolor if _wcolor else "")
+            wl_html = (f'<p class="note wl-summary">{_html.escape(_wtxt)}</p>')
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
@@ -1552,6 +1724,44 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .mc-tick.stock {{ color: #7dd3fc; }}
 .mc-tick.etf {{ color: #c4b5fd; }}
 .note.mc-overview {{ font-size: 13px; margin-bottom: 14px; }}
+.rchip {{ display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid; vertical-align: 2px; margin-right: 7px; }}
+.rchip.buy {{ color: #4ade80; border-color: rgba(74,222,128,0.40);
+  background: rgba(74,222,128,0.10); }}
+.row.has-blurb {{ cursor: pointer; }}
+.row .blurb {{ display: none; grid-column: 1 / -1;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 8px; padding: 8px 4px 6px 34px; }}
+.row.open .blurb {{ display: block; }}
+.row .blurb .mc-what {{ margin-bottom: 5px; }}
+.chev {{ display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
+  border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
+  margin-left: 9px; vertical-align: 1px;
+  transition: transform 0.18s ease, background 0.18s ease; }}
+.row.open .chev {{ transform: rotate(90deg);
+  background: rgba(255,255,255,0.09); }}
+.rchip.hold {{ color: #ffd54f; border-color: rgba(255,213,79,0.40);
+  background: rgba(255,213,79,0.10); }}
+.rchip.sell {{ color: #f87171; border-color: rgba(248,113,113,0.40);
+  background: rgba(248,113,113,0.10); }}
+.wl-blurb {{ margin: 14px 0; }}
+.wl-rate-why {{ color: #8a938a; font-style: italic; }}
+.navwrap {{ text-align: center; margin: 2px 0 14px; }}
+a.navbtn {{ display: inline-block; font-size: 12px; letter-spacing: 0.05em;
+  font-weight: 600; color: #ffd54f; text-decoration: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.08);
+  border: 1px solid rgba(255,213,79,0.35); border-radius: 999px;
+  padding: 6px 18px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }}
+a.navbtn:hover {{ background:
+    linear-gradient(180deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.14); }}
 .mc-nm {{ color: #cfd6cf; font-weight: 600; }}
 .mc-what {{ color: #8a938a; }}
 .mc-why {{ color: #a8b3a8; }}
@@ -1571,7 +1781,9 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
 <div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
+{ '<div class="navwrap"><a class="navbtn" href="index.html">&larr; Mint picks</a></div>' if meta.get("mode") == "watchlist" else '<div class="navwrap"><a class="navbtn" href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>' }
 {rows_html}
+{wl_html}
 {mc_html}
 {hm_html}
 <div class="note">
@@ -1604,10 +1816,9 @@ read.</p>
 <p>Mint is built around a simple idea: find strength, question the story, weigh
 the odds, and only make room for what earns it.</p>
 <p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
-future returns. Also: there are gremlins that have control over the markets,
-they hate you personally,
-and they will do the exact opposite of your buys and sells out of pure
-spite.</p>
+future returns. Also: there are gremlins that have control over the markets &mdash;
+they hate you personally, and they do the exact opposite of your buys and sells
+purely to spite you. Invest accordingly.</p>
 </div>
 <script>
 document.querySelectorAll('.sortctl').forEach(function(ctl){{
@@ -1654,6 +1865,15 @@ if(hmt){{
       : 'Show all ' + hmt.getAttribute('data-n') + ' \u2193';
   }});
 }}
+// Expandable pick rows: tap a row to reveal its blurb (delegated, so it
+// survives re-sorting). Only rows with a story get the affordance.
+document.querySelectorAll('.picklist').forEach(function(pl){{
+  pl.addEventListener('click', function(e){{
+    var row = e.target.closest ? e.target.closest('.row.has-blurb') : null;
+    if(!row || !pl.contains(row)) return;
+    row.classList.toggle('open');
+  }});
+}});
 </script>
 </body></html>
 """
@@ -2317,10 +2537,13 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     Returns a scored, gated, winsorized DataFrame (may be empty).
     """
     from cache import StepCache
-    etf_universe = cache.get("etf_universe_v2")
+    etf_universe = cache.get("etf_universe_v3")
     if etf_universe is None:
-        etf_universe = get_etf_universe(target=200, min_price=args.min_price)
-        cache.put("etf_universe_v2", etf_universe)
+        # benchmark-relative universe: everything the bench-5 filter below
+        # would consider; 500 is only a work bound, not a cutoff
+        etf_universe = get_etf_universe(target=500, min_price=args.min_price,
+                                        min_52w=bench_ret * 100 - 5)
+        cache.put("etf_universe_v3", etf_universe)
     if not etf_universe:
         log("ETF universe empty; skipping ETF leg")
         return pd.DataFrame()
@@ -2663,7 +2886,12 @@ def run_watchlist(args, tickers):
         kt = [r["ticker"] for r in srows]
         log(f"watchlist stocks: {len(kt)} (no trash filters)")
         sdf = build_scores({t: scloses[t] for t in kt},
-                           {t: sinfos[t] for t in kt if t in sinfos})
+                           {t: sinfos[t] for t in kt if t in sinfos},
+                           min_rows=60)
+        _dropped = [t for t in kt if t not in set(sdf["ticker"])] if not sdf.empty else list(kt)
+        for t in _dropped:
+            log(f"watchlist: {t} dropped by scorer (<60 trading days of history)")
+            print(f"  {t}: insufficient history for scoring (<60 trading days), skipped")
         if not sdf.empty:
             sdf["kind"] = "stock"
             log_score_breakdown(sdf, "watchlist stocks", _STOCK_SCORE_GROUPS)
@@ -2773,9 +3001,38 @@ def run_watchlist_apply(args):
     print("\nNote: past performance doesn't predict future returns. This is a")
     print("screening tool, not financial advice.")
 
+    # Buy/Hold/Sell: what Mint would do, from pipeline outputs (auditable)
+    final = add_ratings(final)
     out = f"watchlist_results_{datetime.now().strftime('%Y%m%d')}.csv"
     final.to_csv(out, index=False)
     print(f"Saved: {out}")
+    # business summaries for blurb grounding + researcher-written blurbs
+    try:
+        _picks = list(final["ticker"])
+        if _picks:
+            fetch_pick_summaries(_picks)
+    except Exception as e:
+        log(f"pick summaries: skipped ({e})")
+    wl_chat = None
+    try:
+        import json as _json2
+        with open("watchlist_chat.json") as _f:
+            wl_chat = _json2.load(_f)
+    except Exception:
+        wl_chat = None
+    if wl_chat and wl_chat.get("tickers"):
+        _rmap = {str(r["ticker"]): (r["rating"], r["rating_reason"])
+                 for _, r in final.iterrows()}
+        for _t in wl_chat["tickers"]:
+            _rt, _rr = _rmap.get(str(_t.get("ticker")), ("HOLD", ""))
+            _t["rating"] = _t.get("rating") or _rt
+            _t["rating_reason"] = _t.get("rating_reason") or _rr
+    if wl_chat is not None:
+        # overall quality verdict — computed from the ratings, stays honest
+        wl_chat["summary"] = watchlist_quality_summary(
+            list(final["rating"]), list(final["est_next_1y"]),
+            list(final["ticker"]))
+        log(f"  watchlist summary: {wl_chat['summary']}")
     sfinal = final[final["kind"] == "stock"]
     efinal = final[final["kind"] == "etf"]
     chart_path = f"watchlist_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
@@ -2783,7 +3040,8 @@ def run_watchlist_apply(args):
                     {"benchmark": "", "mode": "watchlist",
                      "heading": "Watchlist — by est. next 1y",
                      "asof": datetime.now().strftime("%Y-%m-%d")},
-                    titles=("Stocks — by est. next 1y", "ETFs — by est. next 1y"))
+                    titles=("Stocks — by est. next 1y", "ETFs — by est. next 1y"),
+                    watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
     checks = []
     checks.append(("no_nan_est", not final["est_next_1y"].isna().any()))
@@ -3292,10 +3550,10 @@ def main():
 
     # 2) Universe: FULL yfinance screener pull (paged), then outperformers only.
     # No top-N cap: every stock beating the benchmark goes through fundamentals.
-    universe = cache.get("universe")
+    universe = cache.get("universe_v2")
     if universe is None:
         universe = get_all_screener_stocks(min_mcap=args.min_mcap, min_price=args.min_price)
-        cache.put("universe", universe)
+        cache.put("universe_v2", universe)
     if not universe:
         print("Could not fetch screener universe. Try again later.")
         sys.exit(1)
