@@ -3713,8 +3713,8 @@ def main():
                     help="US-domiciled stocks and US-focused ETFs only (default on)")
     ap.add_argument("--no-us-only", dest="us_only", action="store_false",
                     help="disable the US-only filter")
-    ap.add_argument("--n-etf-research", type=int, default=30,
-                    help="top ETF quant candidates entering research (default 30)")
+    ap.add_argument("--n-etf-research", type=int, default=50,
+                    help="top ETF quant candidates entering research (default 50)")
     ap.add_argument("--max-etf-overlap", type=float, default=0.30,
                     help="max pairwise top-10 holdings overlap between picked ETFs (default 0.30; lower-EV member of over-threshold pairs is excluded)")
     ap.add_argument("--max-per-etf-category", type=int, default=2,
