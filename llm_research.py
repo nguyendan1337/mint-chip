@@ -33,6 +33,12 @@ import json
 import os
 import re
 import time
+
+# Match the pipeline's timezone pin (see screener.py): all pipeline dates are
+# user-local (America/Los_Angeles), never ambient-TZ dependent.
+if not os.environ.get("TZ"):
+    os.environ["TZ"] = "America/Los_Angeles"
+    time.tzset()
 import urllib.request
 
 CACHE_DIR = "research_cache"
@@ -452,7 +458,13 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
         ups.append(up)
         rats.append(s.get("rationale", ""))
         _rk = s.get("risks", [])
-        risks.append(_rk if isinstance(_rk, str) else "; ".join(_rk))
+        # risks=null would crash "; ".join — coerce defensively
+        if isinstance(_rk, str):
+            risks.append(_rk)
+        elif isinstance(_rk, (list, tuple)):
+            risks.append("; ".join(str(x) for x in _rk))
+        else:
+            risks.append("")
         # provenance: when was this ticker actually researched? Lets later
         # runs (and auditors) tell fresh assessments from carried-over ones.
         adates.append(str(s.get("assessed_date", "") or ""))
@@ -466,7 +478,9 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
     exc, exc_r = [], []
     for _, r in df.iterrows():
         s = stocks.get(r["ticker"], {})
-        exc.append(bool(s.get("exclude", False)))
+        # Strict True only: bool("false") is True in Python, so a worker
+        # writing "exclude": "false" (string) would silently drop the ticker.
+        exc.append(s.get("exclude") is True)
         exc_r.append(str(s.get("exclude_reason", "")))
     df["llm_excluded"] = exc
     df["llm_exclude_reason"] = exc_r

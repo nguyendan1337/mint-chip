@@ -26,8 +26,31 @@ import re
 import sys
 import time
 import warnings
+# Pin the process timezone to the user's timezone (America/Los_Angeles).
+# datetime.now() follows the ambient TZ, which varies between execution
+# contexts (interactive shells, cron workers, subagents) — without this pin,
+# evening runs produced UTC-dated cache partitions, log files, and bundle
+# names (e.g. cache/20261004 for an Oct 3 run), splitting the warm cache
+# and mislabeling research provenance. All pipeline dates are user-local.
+os.environ["TZ"] = "America/Los_Angeles"
+time.tzset()
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+
+
+def pipeline_today():
+    """Cache-partition date: user-local, rewound to Friday on weekends.
+
+    Markets are closed Sat/Sun, so a weekend run would refetch Friday's
+    closes into a new partition. Rewinding to Friday lets weekend runs reuse
+    the warm partition instead. Log/bundle/chart filenames keep the true
+    date — only the cache partition rewinds."""
+    d = datetime.now().date()
+    if d.weekday() == 5:      # Saturday -> Friday
+        d -= timedelta(days=1)
+    elif d.weekday() == 6:    # Sunday -> Friday
+        d -= timedelta(days=2)
+    return d.strftime("%Y%m%d")
 
 warnings.filterwarnings("ignore")
 
@@ -180,13 +203,28 @@ def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
         quotes = []
         offset = 0
         while True:
-            res = yf.screen(q, size=250, offset=offset,
-                            sortField='intradaymarketcap', sortAsc=False)
-            batch = res.get('quotes', []) or []
+            # Per-page retry: a 429 on page 6 must not discard pages 1-5.
+            # 3 attempts with backoff; accumulated quotes are kept either way.
+            batch, total = None, 0
+            for attempt in (1, 2, 3):
+                try:
+                    res = yf.screen(q, size=250, offset=offset,
+                                    sortField='intradaymarketcap', sortAsc=False)
+                    batch = res.get('quotes', []) or []
+                    total = res.get('total', 0)
+                    break
+                except Exception as e:
+                    log(f"  screener page offset {offset}: attempt {attempt} "
+                        f"failed ({e})")
+                    time.sleep(2 * attempt)
+            if batch is None:
+                log(f"  screener page offset {offset}: giving up after 3 "
+                    f"attempts — keeping {len(quotes)} quotes fetched so far")
+                break
             quotes.extend(batch)
-            total = res.get('total', 0)
+            total = total or 0
             log(f"  page offset {offset}: {len(quotes)}/{total} fetched")
-            if len(batch) < 250 or len(quotes) >= total:
+            if len(batch) < 250 or (total and len(quotes) >= total):
                 break
             offset += 250
             time.sleep(0.4)
@@ -681,9 +719,13 @@ def apply_risk_gates(df, max_vol=0.80, min_dd=-0.40):
 
     Relative z-scores can't do this: in a parabolic universe, -40% DD can
     look 'average'. Gate absolutely before research/final selection.
+
+    Fail-closed on missing data: a ticker whose volatility or drawdown can't
+    be measured doesn't get the benefit of the doubt (NaN comparisons are
+    False in pandas, which would otherwise let unmeasurable names through).
     """
-    gated_vol = df["vol60"] > max_vol
-    gated_dd = df["maxdd"] < min_dd
+    gated_vol = df["vol60"].fillna(float("inf")) > max_vol
+    gated_dd = df["maxdd"].fillna(float("-inf")) < min_dd
     gated = df[gated_vol | gated_dd]
     kept = df[~(gated_vol | gated_dd)].copy()
     report = {"gated_vol_gt": f"{max_vol:.0%}", "n_gated_vol": int(gated_vol.sum()),
@@ -811,7 +853,7 @@ def log_research_assessments(ranked):
     """
     log("--- research assessments ---")
     today = __import__("datetime").date.today().isoformat()
-    n_fresh, n_carried, n_unknown = 0, 0, 0
+    n_fresh, n_carried, n_unknown, n_stale, n_missing = 0, 0, 0, 0, 0
     for _, r in ranked.iterrows():
         try:
             dep = float(r.get("llm_event_dependence", float("nan")))
@@ -822,14 +864,29 @@ def log_research_assessments(ranked):
             dep_s = cont_s = conf_s = "n/a"
         # provenance: fresh research vs carried-over from an earlier run
         ad = str(r.get("llm_assessed_date", "") or "")
+        why = str(r.get("llm_rationale", "") or "").replace("\n", " ").strip()
         if ad == today:
             prov, n_fresh = "fresh", n_fresh + 1
         elif ad:
-            prov, n_carried = f"carried({ad})", n_carried + 1
-        else:
+            n_carried += 1
+            try:
+                age = (__import__("datetime").date.today() -
+                       __import__("datetime").date.fromisoformat(ad)).days
+            except Exception:
+                age = -1
+            if age > 7:
+                # stale: the 7-day refresh rule says this should have been
+                # re-researched — flag it loudly rather than silently carrying
+                prov, n_stale = f"carried({ad}) STALE>{age}d", n_stale + 1
+            else:
+                prov = f"carried({ad})"
+        elif why:
             prov, n_unknown = "carried(?)", n_unknown + 1
+        else:
+            # no assessment at all: neutral defaults (dep 0.3/cont 0.5/conf
+            # 0.7) were used silently by apply_llm_outputs — make it visible
+            prov, n_missing = "NO-ASSESSMENT (neutral defaults)", n_missing + 1
         log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} [{prov}]")
-        why = str(r.get("llm_rationale", "") or "").replace("\n", " ").strip()
         if why:
             log(f"    rationale: {why}")
         risks = str(r.get("llm_risks", "") or "").strip()
@@ -845,7 +902,9 @@ def log_research_assessments(ranked):
             for h in headlines:
                 log(f"      - {h[:220]}")
     log(f"research provenance: {n_fresh} fresh, {n_carried} carried-over, "
-        f"{n_unknown} unknown (pre-dates date stamping)")
+        f"{n_unknown} unknown (pre-dates date stamping), "
+        f"{n_stale} STALE (>7d, should have been re-researched), "
+        f"{n_missing} with NO assessment (neutral defaults used)")
 
 
 def log_world_layer(outputs):
@@ -1072,18 +1131,28 @@ def compute_rating(ev, dep, conf, vol, maxdd):
         return ("SELL", "expected value below the +3% bar — doesn't earn its place")
     if dep >= 0.7:
         return ("SELL", "event-driven — the thesis depends on things outside its control")
-    if vol is not None and not (isinstance(vol, float) and math.isnan(vol)):
+
+    def _missing(x):
+        if x is None:
+            return True
         try:
-            if float(vol) > 0.80:
-                return ("HOLD", "clears the bar, but too volatile for a buy")
+            return math.isnan(float(x))
         except Exception:
-            pass
-    if maxdd is not None and not (isinstance(maxdd, float) and math.isnan(maxdd)):
-        try:
-            if float(maxdd) < -0.40:
-                return ("HOLD", "clears the bar, but too deeply scarred for a buy")
-        except Exception:
-            pass
+            return True
+
+    # Fail-closed on missing risk data: an unverifiable name can't be a BUY.
+    if _missing(vol) or _missing(maxdd):
+        return ("HOLD", "clears the bar, but risk couldn't be verified")
+    try:
+        if float(vol) > 0.80:
+            return ("HOLD", "clears the bar, but too volatile for a buy")
+    except Exception:
+        pass
+    try:
+        if float(maxdd) < -0.40:
+            return ("HOLD", "clears the bar, but too deeply scarred for a buy")
+    except Exception:
+        pass
     if dep >= 0.5:
         return ("HOLD", "clears the bar, but the thesis leans on outside events")
     if conf < 0.6:
@@ -1247,27 +1316,29 @@ def _foreign_focus(info, name):
 
 def etf_trash_filter(rows, closes, infos, us_only=True):
     """Hard filters for ETFs: history, liquidity, scale, no blowups.
-    Returns (kept_rows, report)."""
-    kept, dropped = [], {"short_history": 0, "illiquid": 0, "tiny_aum": 0,
-                         "blown_up": 0, "leveraged_name": 0, "foreign_focus": 0,
-                         "religious_theme": 0}
+    Returns (kept_rows, report) with dropped ticker names per reason (audit:
+    every silent exclusion must be named, same as the stock filter)."""
+    kept = []
+    dropped = {"short_history": [], "illiquid": [], "tiny_aum": [],
+               "blown_up": [], "leveraged_name": [], "foreign_focus": [],
+               "religious_theme": []}
     pat = _leverage_pat()
     for r in rows:
         t = r["ticker"]
         px = closes.get(t)
         if px is None or len(px) < 120:
-            dropped["short_history"] += 1
+            dropped["short_history"].append(t)
             continue
         info = infos.get(t, {})
         name = str(info.get("longName") or r["name"] or "")
         if pat.search(name) or pat.search(t):
-            dropped["leveraged_name"] += 1
+            dropped["leveraged_name"].append(t)
             continue
         if _religious_theme(name, t):
-            dropped["religious_theme"] += 1
+            dropped["religious_theme"].append(t)
             continue
         if us_only and _foreign_focus(info, name):
-            dropped["foreign_focus"] += 1
+            dropped["foreign_focus"].append(t)
             continue
         try:
             adv = (info.get("averageDailyVolume10Day")
@@ -1275,23 +1346,33 @@ def etf_trash_filter(rows, closes, infos, us_only=True):
                    or r.get("screener_vol10") or 0)
             lastpx = info.get("regularMarketPrice") or px.iloc[-1]
             if float(adv) * float(lastpx) < 2_000_000:
-                dropped["illiquid"] += 1
+                dropped["illiquid"].append(t)
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            # Fail-closed: unverifiable liquidity doesn't pass (was: pass).
+            log(f"etf trash: {t} liquidity check failed ({e}) — dropped")
+            dropped["illiquid"].append(t)
+            continue
         aum = (etf_facts(info)["aum"] or r.get("screener_aum") or 0)
         try:
-            if aum and float(aum) < 100_000_000:
-                dropped["tiny_aum"] += 1
-                continue
+            aum_f = float(aum) if aum else 0.0
         except Exception:
-            pass
+            aum_f = 0.0
+        # Fail-closed on unknown AUM: scale can't be verified (was: kept).
+        if aum_f < 100_000_000:
+            dropped["tiny_aum"].append(t)
+            continue
         dd = max_drawdown(px)
         if dd < -0.70:
-            dropped["blown_up"] += 1
+            dropped["blown_up"].append(t)
             continue
         kept.append(r)
-    report = {"kept": len(kept), "dropped_total": sum(dropped.values()), **dropped}
+    report = {"kept": len(kept),
+              "dropped_total": sum(len(v) for v in dropped.values())}
+    for reason, names in dropped.items():
+        report[reason] = len(names)
+        if names:
+            log(f"etf trash[{reason}]: {names}")
     return kept, report
 
 
@@ -1437,6 +1518,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 "wl", str(_t.get("blurb", "")),
                 str(_t.get("rating", "HOLD")).upper(),
                 str(_t.get("rating_reason", "")))
+    if market_chat and market_chat.get("honorable"):
+        for _t in market_chat["honorable"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "hm", str(_t.get("what", "")), str(_t.get("why", "")))
     header = """
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
@@ -1473,7 +1558,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             if _b:
                 _hasb = " has-blurb"
                 _chev = '<span class="chev" title="Tap to expand">▸</span>'
-                if _b[0] == "mc":
+                if _b[0] in ("mc", "hm"):
                     _blurb_html = (
                         f'<div class="blurb"><div class="mc-what">'
                         f'{_html.escape(_b[1])}</div>'
@@ -1560,18 +1645,27 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             except Exception:
                 _hr1y = float("nan")
             _extra = " hm-extra" if i > 5 else ""
+            _hb = _bmap.get(str(h.get("ticker", "")).upper())
+            _hblurb_html, _hchev, _hhasb = "", "", ""
+            if _hb and _hb[0] == "hm" and (_hb[1] or _hb[2]):
+                _hhasb = " has-blurb"
+                _hchev = '<span class="chev" title="Tap to expand">▸</span>'
+                _hblurb_html = (
+                    f'<div class="blurb"><div class="mc-what">'
+                    f'{_html.escape(_hb[1])}</div>'
+                    f'<div class="mc-why">{_html.escape(_hb[2])}</div></div>')
             hm_rows.append(f"""
-<div class="row hm k-{_hk}{_extra}" data-ev="{_hev}" data-r1y="{_hr1y}">
+<div class="row hm k-{_hk}{_extra}{_hhasb}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
     <span class="kchip {_hk}">{_hk.upper()}</span>
-    <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span></div>
+    <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
   <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
   <div class="cell" data-cap="Expected value"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
-</div>""")
+{_hblurb_html}</div>""")
         hm_html = (
             '<h2>Honorable mentions — cleared the bar, didn\u2019t make the cut</h2>\n'
             '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
@@ -1911,7 +2005,12 @@ def fetch_rss_headlines(query, max_items=30, max_age_days=7):
     for the world layer — they read as current context."""
     url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=en-US&gl=US&ceid=US:en"
     try:
-        feed = feedparser.parse(url)
+        # requests with a timeout first: feedparser.parse(url) hangs forever
+        # on a stalled connection (a hang is not an exception), which can
+        # burn the whole cron budget on one query.
+        resp = requests.get(url, timeout=15,
+                            headers={"User-Agent": "Mozilla/5.0"})
+        feed = feedparser.parse(resp.content)
     except Exception:
         return []
     now = datetime.now(timezone.utc)
@@ -1953,11 +2052,16 @@ def fetch_market_headlines():
     return out[:120]
 
 
-def fetch_market_internals():
+def fetch_market_internals(cache=None):
     """Fear/rate gauges for the world layer: VIX and 10Y yield, latest values.
 
     Gives the researcher a numeric read on market fear and borrowing costs
-    every run, independent of what the headlines happen to emphasize."""
+    every run, independent of what the headlines happen to emphasize.
+    Date-partitioned cache: same-day reruns reuse, a new day refetches."""
+    if cache is not None:
+        hit = cache.get("market_internals")
+        if hit:
+            return hit
     out = {}
     try:
         for sym, key in [("^VIX", "vix"), ("^TNX", "tnx_10y")]:
@@ -1968,6 +2072,8 @@ def fetch_market_internals():
             log(f"market internals: {out}")
     except Exception as e:
         log(f"market internals unavailable ({e})")
+    if out and cache is not None:
+        cache.put("market_internals", out)
     return out
 
 
@@ -2224,17 +2330,20 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         log(f"etf overlap repair: {loser} overlaps selected {winner} {ov:.0%} "
             f"(top-10 holdings) > {max_overlap:.0%} — evicting lower EV "
             f"({ev[loser]:+.1%} vs {ev[winner]:+.1%})")
-        ledger_append(REJECTED_LEDGER, {
-            "event": "rejected", "ticker": loser, "kind": "etf",
-            "name": str(lrow.get("name", "")),
-            "price": None,
-            "reason": (f"etf holdings overlap {ov:.0%} with selected {winner} "
-                       f"> {max_overlap:.0%} (lower EV)"),
-            "est_next_1y": round(ev[loser], 4),
-            "dep": _safe(lrow.get("llm_event_dependence")),
-            "cont": _safe(lrow.get("llm_continuation")),
-            "conf": _safe(lrow.get("llm_confidence")),
-        })
+        # idempotent: the two-pass Phase B reruns this repair, so skip
+        # losers already recorded today
+        if loser not in _ledger_seen_today(REJECTED_LEDGER, "rejected"):
+            ledger_append(REJECTED_LEDGER, {
+                "event": "rejected", "ticker": loser, "kind": "etf",
+                "name": str(lrow.get("name", "")),
+                "price": None,
+                "reason": (f"etf holdings overlap {ov:.0%} with selected {winner} "
+                           f"> {max_overlap:.0%} (lower EV)"),
+                "est_next_1y": round(ev[loser], 4),
+                "dep": _safe(lrow.get("llm_event_dependence")),
+                "cont": _safe(lrow.get("llm_continuation")),
+                "conf": _safe(lrow.get("llm_confidence")),
+            })
         evicted.add(loser)
         sel = sel[sel["ticker"] != loser].reset_index(drop=True)
         # refill the freed slot: same hard gates as selection, plus the
@@ -2272,31 +2381,56 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
     return sel
 
 
-def fetch_pick_summaries(tickers, path="business_summaries.json"):
+def fetch_pick_summaries(tickers, path="business_summaries.json", workers=6):
     """One-line business descriptions for picks (market-chat grounding).
 
-    Fetches longBusinessSummary via yfinance; the researcher condenses each
-    to one plain line. Failures leave that ticker blank (never fatal)."""
+    Fetches longBusinessSummary via yfinance (threaded); the researcher
+    condenses each to one plain line. Failures leave that ticker blank
+    (never fatal). Already-cached tickers are skipped, so reruns are free."""
     import json as _json
+    from concurrent.futures import ThreadPoolExecutor
     out = {}
     try:
         out = _json.load(open(path))
     except Exception:
         out = {}
-    for t in tickers:
-        if out.get(t, {}).get("summary"):
-            continue
+    missing = [t for t in tickers if not out.get(t, {}).get("summary")]
+    if not missing:
+        return
+
+    def fetch(t):
         try:
             info = yf.Ticker(str(t)).info or {}
             s = info.get("longBusinessSummary") or ""
-            out[t] = {"name": info.get("longName") or info.get("shortName") or t,
-                      "summary": s[:700]}
+            return t, {"name": info.get("longName") or info.get("shortName") or t,
+                       "summary": s[:700]}
         except Exception as e:
             log(f"pick summaries: {t} unavailable ({e})")
-            out.setdefault(t, {"name": t, "summary": ""})
+            return t, {"name": t, "summary": ""}
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for t, entry in ex.map(fetch, missing):
+            out[t] = entry
+    # Locked read-merge-write with atomic replace: the daily and watchlist
+    # runs can overlap (14:16 vs 14:45 crons) and both update this file —
+    # without a lock the last writer silently drops the other's additions;
+    # without atomic replace a crash mid-write corrupts it for everyone.
     try:
-        _json.dump(out, open(path, "w"), indent=1)
-        log(f"pick summaries: {path} ({len(out)} tickers)")
+        import fcntl
+        lock_path = path + ".lock"
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                with open(path) as f:
+                    current = _json.load(f)
+            except Exception:
+                current = {}
+            current.update(out)
+            tmp = path + f".tmp.{os.getpid()}"
+            with open(tmp, "w") as f:
+                _json.dump(current, f, indent=1)
+            os.replace(tmp, path)
+        log(f"pick summaries: {path} ({len(current)} tickers)")
     except Exception as e:
         log(f"pick summaries: could not write ({e})")
 
@@ -2438,7 +2572,16 @@ def run_self_check(final, args, out_csv):
         log(f"SELF-CHECK {'PASS' if ok else 'FAIL'}: {name} {detail}")
 
     check("csv_written", os.path.exists(out_csv), out_csv)
+    check("nonempty_final", len(final) > 0, f"{len(final)} picks")
     if len(final):
+        check("no_dupes", not final["ticker"].duplicated().any(),
+              f"{final['ticker'].duplicated().sum()} duplicate tickers")
+        # research coverage: every pick must have an actual assessment —
+        # a pick on neutral defaults (no rationale) is a research miss
+        if "llm_rationale" in final.columns:
+            n_cov = int(final["llm_rationale"].astype(str).str.strip().ne("").sum())
+            check("research_coverage", n_cov == len(final),
+                  f"{n_cov}/{len(final)} picks with assessments")
         check("no_nan_final_score", not final["final_score"].isna().any())
         check("no_nan_base_score", not final["base_score"].isna().any())
         check("floor_respected",
@@ -2563,7 +2706,9 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
         # would consider; 500 is only a work bound, not a cutoff
         etf_universe = get_etf_universe(target=500, min_price=args.min_price,
                                         min_52w=bench_ret * 100 - 5)
-        cache.put("etf_universe_v4", etf_universe)
+        if etf_universe:
+            cache.put("etf_universe_v4", etf_universe)
+        # Never cache an empty universe (outage would poison same-day retries).
     if not etf_universe:
         log("ETF universe empty; skipping ETF leg")
         return pd.DataFrame()
@@ -2696,32 +2841,36 @@ def pick_final(adj, args, llm_path):
     # share-class dedupe (safety net for Phase B bundles built before the
     # Phase A dedupe): never hold two listings of the same company
     if not srank.empty and "name" in srank.columns:
-        _n0 = len(srank)
         srank = srank.copy()
         srank["_ckey"] = srank["name"].str.lower().str.replace(
             r"\b(class [a-c]|inc\.?|corp\.?|corporation|company|co\.?|ltd\.?|plc|holdings?|group)\b",
             "", regex=True).str.replace(r"[^a-z0-9]", "", regex=True)
-        srank = srank.sort_values("final_score", ascending=False).drop_duplicates("_ckey")
-        srank = srank.drop(columns=["_ckey"])
-        if len(srank) < _n0:
-            log(f"share-class dedupe: {_n0 - len(srank)} duplicate listings removed")
+        srank = srank.sort_values("final_score", ascending=False)
+        _dup_mask = srank.duplicated("_ckey", keep="first")
+        _dropped_names = list(srank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        srank = srank[~_dup_mask].drop(columns=["_ckey"])
+        if _dropped_names:
+            log(f"share-class dedupe: {len(_dropped_names)} duplicate listings "
+                f"removed: {_dropped_names}")
 
     # ETF portfolio dedupe: never hold two wrappers of the same portfolio
     # (ETF analogue of the GOOG/GOOGL rule, e.g. QQQ vs QQQM). Keyed on a
     # small alias map for known identical-portfolio pairs surfaced by
     # research, falling back to normalized fund name.
     if not erank.empty and "name" in erank.columns:
-        _n0 = len(erank)
         erank = erank.copy()
         _noname = (erank["name"].str.lower()
                    .str.replace(r"\b(etf|trust|fund|index|shares?)\b", "", regex=True)
                    .str.replace(r"[^a-z0-9]", "", regex=True))
         erank["_pkey"] = [_ETF_PORTFOLIO_ALIASES.get(str(t).lower(), n)
                           for t, n in zip(erank["ticker"], _noname)]
-        erank = erank.sort_values("final_score", ascending=False).drop_duplicates("_pkey")
-        erank = erank.drop(columns=["_pkey"])
-        if len(erank) < _n0:
-            log(f"ETF portfolio dedupe: {_n0 - len(erank)} duplicate listings removed")
+        erank = erank.sort_values("final_score", ascending=False)
+        _dup_mask = erank.duplicated("_pkey", keep="first")
+        _dropped_names = list(erank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        erank = erank[~_dup_mask].drop(columns=["_pkey"])
+        if _dropped_names:
+            log(f"ETF portfolio dedupe: {len(_dropped_names)} duplicate "
+                f"wrappers removed: {_dropped_names}")
 
     def pick_group(ranked, n, cap, label):
         # expected-value floor first: never pick a negative-EV name
@@ -2874,12 +3023,18 @@ def run_watchlist(args, tickers):
     from cache import StepCache
     from llm_research import build_research_bundle
     setup_logging()
-    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log)
+    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log,
+                      date_str=pipeline_today())
     tickers = [t.strip().upper() for t in tickers if t.strip()]
     log(f"Watchlist Phase A: {tickers}")
     print(f"Watchlist: {', '.join(tickers)}")
 
-    closes = download_prices(tickers, period="1y")
+    closes = cache.get("watchlist_prices_" + StepCache.tickers_key(tickers))
+    if closes is None:
+        closes = download_prices(tickers, period="1y")
+        cache.put("watchlist_prices_" + StepCache.tickers_key(tickers), closes)
+    else:
+        log(f"watchlist: {len(closes)} tickers' 1y prices from cache")
     ok = [t for t in tickers
           if t in closes and closes[t] is not None and len(closes[t]) >= 60]
     for t in tickers:
@@ -2959,7 +3114,7 @@ def run_watchlist(args, tickers):
          "note": "user-supplied tickers; no benchmark comparison. "
                  "LLM decides event_dependence/continuation/confidence; "
                  "output sorted by est_next_1y, no floors."},
-        fetch_market_internals())
+        fetch_market_internals(cache))
     bp = f"watchlist_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(bp, "w") as f:
         _json.dump(bundle, f, indent=1, default=str)
@@ -2973,6 +3128,64 @@ def run_watchlist(args, tickers):
     print(f"  python3 screener.py --watchlist-apply {bp} watchlist_outputs.json")
 
 
+def load_json_arg(path, what):
+    """Load a worker-written JSON file with a clean error, not a traceback.
+
+    The research/market-chat files are hand-written by an agent; a malformed
+    file should explain itself (which file, what's wrong, how to recover)
+    instead of dumping a json.decoder traceback. Exits nonzero so crons
+    report the failure instead of publishing a half-built page.
+    """
+    import json as _json
+    try:
+        with open(path) as f:
+            return _json.load(f)
+    except FileNotFoundError:
+        log(f"ERROR: {what} file not found: {path}")
+    except _json.JSONDecodeError as e:
+        log(f"ERROR: {what} file is not valid JSON: {path}: {e}. "
+            f"Fix the JSON (common cause: trailing comma, unclosed brace) "
+            f"and re-run.")
+    except OSError as e:
+        log(f"ERROR: cannot read {what} file {path}: {e}")
+    raise SystemExit(f"Phase B aborted: bad {what} file ({path})")
+
+
+def validate_outputs(outputs, what="research outputs"):
+    """Light schema check on the research outputs before merging.
+
+    apply_llm_outputs() is defensive (clamps ranges, fills neutral defaults),
+    so this only verifies the top-level shape and warns on suspicious
+    entries — it never crashes a run that could proceed.
+    """
+    if not isinstance(outputs, dict):
+        log(f"WARNING: {what} is not a JSON object — research merge skipped")
+        return {}
+    stocks = outputs.get("stocks")
+    if not isinstance(stocks, dict):
+        log(f"WARNING: {what} has no 'stocks' object — research merge skipped")
+        return {}
+    n_bad = 0
+    for t, s in stocks.items():
+        if not isinstance(s, dict):
+            log(f"WARNING: {what}['stocks']['{t}'] is not an object — skipped")
+            n_bad += 1
+            continue
+        for f in ("event_dependence", "continuation", "confidence"):
+            try:
+                v = float(s.get(f, 0.5))
+                if not (0.0 <= v <= 1.0):
+                    log(f"WARNING: {t}.{f}={s.get(f)} out of [0,1] — clamped")
+            except (TypeError, ValueError):
+                log(f"WARNING: {t}.{f}={s.get(f)!r} not numeric — default used")
+                n_bad += 1
+        if not s.get("assessed_date"):
+            log(f"WARNING: {t} has no assessed_date — provenance unknown")
+    if n_bad == 0:
+        log(f"{what}: {len(stocks)} assessments, schema OK")
+    return outputs
+
+
 def run_watchlist_apply(args):
     """Phase B for --watchlist-apply: apply research, sort by est, chart.
 
@@ -2983,10 +3196,10 @@ def run_watchlist_apply(args):
     from llm_research import apply_llm_outputs
     setup_logging()
     log("Watchlist Phase B: applying research")
-    with open(args.watchlist_apply[0]) as f:
-        bundle = _json.load(f)
-    with open(args.watchlist_apply[1]) as f:
-        outputs = _json.load(f)
+    bundle = load_json_arg(args.watchlist_apply[0], "watchlist bundle")
+    outputs = validate_outputs(
+        load_json_arg(args.watchlist_apply[1], "watchlist research outputs"),
+        "watchlist research outputs")
     df = pd.DataFrame(bundle["candidates"])
     log(f"Loaded {len(df)} watchlist candidates")
     ranked = apply_llm_outputs(df, outputs,
@@ -3038,6 +3251,11 @@ def run_watchlist_apply(args):
         import json as _json2
         with open("watchlist_chat.json") as _f:
             wl_chat = _json2.load(_f)
+        # valid JSON but wrong type (e.g. a list) would crash .get() later
+        if not isinstance(wl_chat, dict):
+            log(f"WARNING: watchlist_chat.json is {type(wl_chat).__name__}, "
+                f"not an object — blurbs skipped")
+            wl_chat = None
     except Exception:
         wl_chat = None
     if wl_chat and wl_chat.get("tickers"):
@@ -3099,11 +3317,23 @@ THESIS_LEDGER = "thesis_ledger.jsonl"
 REJECTED_LEDGER = "rejected_ledger.jsonl"
 THESIS_TRACK_DAYS = 90  # price-based checks cover picks this fresh or newer
 
+_RUN_DATE = None
+
+
+def run_date():
+    """Process-wide run date, pinned on first call. A run crossing midnight
+    must not split its ledger events across two dates (idempotency keys and
+    the audit both assume one date per run)."""
+    global _RUN_DATE
+    if _RUN_DATE is None:
+        _RUN_DATE = datetime.now().strftime("%Y-%m-%d")
+    return _RUN_DATE
+
 
 def ledger_append(path, event):
     import json as _json
     event = dict(event)
-    event.setdefault("date", datetime.now().strftime("%Y-%m-%d"))
+    event.setdefault("date", run_date())
     event.setdefault("ts", datetime.now().isoformat())
     with open(path, "a") as f:
         f.write(_json.dumps(event, default=str) + "\n")
@@ -3114,7 +3344,7 @@ def _ledger_seen_today(path, event="picked"):
     import json as _json
     seen = set()
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = run_date()
         with open(path) as f:
             for line in f:
                 try:
@@ -3132,15 +3362,26 @@ _LAST_DATA_COMPLETENESS = {}
 _LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
 
 
-def fetch_pick_prices(tickers):
+def fetch_pick_prices(tickers, cache=None):
     """Robust pick-price fetch: batch attempts, then per-ticker fallback.
 
     Returns (prices, completeness dict). A run with missing prices is
     INCOMPLETE_DATA — the structural self-checks can pass while price data
     is absent, so completeness gets its own explicit status, recorded in the
     log and the run summary.
+
+    Date-partitioned cache (keyed by ticker set): same-day reruns — including
+    the two-pass Phase B pattern — reuse prices instead of re-downloading.
     """
+    from cache import StepCache
     tickers = list(dict.fromkeys(tickers))
+    lkey = "ledger_prices_" + StepCache.tickers_key(tickers)
+    if cache is not None:
+        hit = cache.get(lkey)
+        if hit and isinstance(hit, dict) and "prices" in hit:
+            log(f"ledger: pick prices from cache "
+                f"({hit['completeness'].get('got')}/{len(tickers)})")
+            return hit["prices"], hit["completeness"]
     prices = {}
     for attempt in (1, 2):
         try:
@@ -3153,6 +3394,12 @@ def fetch_pick_prices(tickers):
             if not missing:
                 break
             log(f"ledger: price fetch attempt {attempt} missed {missing}")
+            if not prices:
+                # Attempt 1 returned nothing at all — attempt 2 is the same
+                # call and won't help; skip straight to the per-ticker
+                # fallback instead of burning another 10s + full batch.
+                log("ledger: attempt 1 got zero prices — skipping attempt 2")
+                break
         except Exception as e:
             log(f"ledger: pick-price fetch failed (attempt {attempt}): {e}")
         time.sleep(10)
@@ -3179,18 +3426,23 @@ def fetch_pick_prices(tickers):
     log(f"data_completeness: {status} ({len(prices)}/{len(tickers)} pick prices)"
         + (f" — missing: {missing}; ledger entries lack pick_price; "
            "backfill before thesis_check" if missing else ""))
-    return prices, {"status": status, "got": len(prices),
+    completeness = {"status": status, "got": len(prices),
                     "total": len(tickers), "missing": missing}
+    if cache is not None and status == "COMPLETE":
+        # Only complete fetches are cached: an INCOMPLETE result must not
+        # poison later reruns — they should retry Yahoo fresh.
+        cache.put(lkey, {"prices": prices, "completeness": completeness})
+    return prices, completeness
 
 
-def backfill_ledger_prices():
+def backfill_ledger_prices(cache=None):
     """Fill pick_price=None on today's picked events (completeness recovery).
 
     The cron's thesis step can call this when a run was marked INCOMPLETE_DATA.
     Returns the number of entries fixed.
     """
     import json as _json
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = run_date()
     try:
         lines = open(THESIS_LEDGER).read().splitlines()
     except FileNotFoundError:
@@ -3207,27 +3459,37 @@ def backfill_ledger_prices():
     need = list(dict.fromkeys(need))
     if not need:
         return 0
-    prices, _ = fetch_pick_prices(need)
+    prices, _ = fetch_pick_prices(need, cache)
     fixed, out = 0, []
     for line in lines:
-        d = _json.loads(line)
+        try:
+            d = _json.loads(line)
+        except Exception:
+            # torn line (crash mid-append) — keep it verbatim, don't crash
+            out.append(line.rstrip("\n"))
+            continue
         if (d.get("date") == today and d.get("event") == "picked"
                 and d.get("pick_price") is None and d.get("ticker") in prices):
             d["pick_price"] = prices[d["ticker"]]
             fixed += 1
         out.append(_json.dumps(d, default=str))
-    open(THESIS_LEDGER, "w").write("\n".join(out) + "\n")
+    # atomic rewrite: a crash mid-write must never truncate the ledger
+    tmp = THESIS_LEDGER + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, THESIS_LEDGER)
     log(f"ledger: backfilled {fixed} pick prices")
     return fixed
 
 
-def record_picks_ledger(final, ranked, args):
+def record_picks_ledger(final, ranked, args, cache=None):
     """Append pick events for today's finals + rejected events for the
     audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
     import json as _json  # noqa: F401 (kept local like the rest of this file)
     global _LAST_DATA_COMPLETENESS
+    today = run_date()
     tickers = list(final["ticker"])
-    prices, _LAST_DATA_COMPLETENESS = fetch_pick_prices(tickers)
+    prices, _LAST_DATA_COMPLETENESS = fetch_pick_prices(tickers, cache)
     if _LAST_DATA_COMPLETENESS["missing"]:
         log(f"ledger: recording {len(_LAST_DATA_COMPLETENESS['missing'])} picks "
             f"without prices; backfill before thesis_check")
@@ -3290,14 +3552,21 @@ def record_picks_ledger(final, ranked, args):
         f"{recorded} rejected (control group)")
 
 
-def thesis_check(track_days=THESIS_TRACK_DAYS):
+def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
     """Price-based thesis check for picks made within the last `track_days`.
 
     Appends 'check' events (intact/watch/broken) to the ledger and returns
     the status list. The daily agent does the news-based re-verification on
     top and amends reasons; this function only measures price truth.
+
+    The 3mo price fetch is date-partitioned cached (keyed by ticker set), so
+    repeated same-day checks don't re-download.
     """
     import json as _json
+    from cache import StepCache
+    if cache is None:
+        # standalone invocation (e.g. python3 -c): use the default cache dir
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
     picks = {}
     try:
         with open(THESIS_LEDGER) as f:
@@ -3307,25 +3576,52 @@ def thesis_check(track_days=THESIS_TRACK_DAYS):
                 except Exception:
                     continue
                 if e.get("event") == "picked":
-                    picks[e["ticker"]] = e
+                    # Key by (ticker, date): a re-picked ticker's earlier
+                    # prediction must not be shadowed — the audit measures
+                    # every prediction, not just the latest.
+                    picks[(e["ticker"], e.get("date"))] = e
     except FileNotFoundError:
+        log("thesis_check: no ledger yet — 0 tracked")
         return []
     cutoff = (datetime.now() - timedelta(days=track_days)).strftime("%Y-%m-%d")
-    tracked = {t: e for t, e in picks.items()
+    tracked = {k: e for k, e in picks.items()
                if e.get("date", "") >= cutoff and e.get("pick_price")}
     if not tracked:
+        log("thesis_check: 0 tracked (no picks with prices in window) — "
+            "not a fetch failure")
         return []
     out = []
     try:
-        px = download_prices(list(tracked), period="3mo")
+        _track_tickers = sorted({t for t, _d in tracked})
+        tkey = "thesis_prices_" + StepCache.tickers_key(_track_tickers)
+        px = cache.get(tkey)
+        if px is None:
+            px = download_prices(_track_tickers, period="3mo")
+            cache.put(tkey, px)
+        else:
+            log(f"thesis_check: {len(px)} tickers' 3mo prices from cache")
     except Exception as e:
         log(f"thesis_check: price fetch failed ({e})")
         return []
-    today = datetime.now().strftime("%Y-%m-%d")
-    for t, e in tracked.items():
+    today = run_date()
+    # Today's existing check events, so reruns don't duplicate identical
+    # results (a status CHANGE still records — that's the timeline).
+    seen_checks = set()
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if (e.get("event") == "check" and e.get("date") == today):
+                    seen_checks.add((e.get("ticker"), e.get("status"),
+                                     e.get("reason")))
+    except FileNotFoundError:
+        pass
+    for (t, _pick_date), e in tracked.items():
         if t not in px:
             continue
-        s = px[t].dropna()
         s = px[t].dropna()
         # Anchor to the last available bar on or before the pick date, so
         # weekend picks (dated Sat/Sun with no price bars) measure from
@@ -3346,9 +3642,12 @@ def thesis_check(track_days=THESIS_TRACK_DAYS):
             status, reason = "broken", f"price-based: {dd:+.0%} max dip since pick"
         elif dd <= -0.08 or ret <= -0.08:
             status, reason = "watch", f"price-based: {dd:+.0%} dip since pick"
+        if (t, status, reason) in seen_checks:
+            continue  # identical check already recorded today
         rec = {"event": "check", "ticker": t, "date": today, "status": status,
                "days_held": days, "ret_since_pick": round(ret, 4),
-               "dd_since_pick": round(dd, 4), "pick_price": pp, "reason": reason}
+               "dd_since_pick": round(dd, 4), "pick_price": pp, "reason": reason,
+               "pick_date": e["date"]}
         ledger_append(THESIS_LEDGER, rec)
         out.append(rec)
     nb = sum(1 for r in out if r["status"] == "broken")
@@ -3420,6 +3719,14 @@ def main():
                     help="cache directory (default: cache/)")
     args = ap.parse_args()
 
+    # Shared cache, constructed once: every branch (Phase A, Phase B,
+    # watchlist) uses this. Previously Phase B referenced `cache` before it
+    # was bound, raising UnboundLocalError (swallowed) and silently skipping
+    # ledger recording.
+    from cache import StepCache
+    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log,
+                      date_str=pipeline_today())
+
     # ---- Phase B: apply already-done LLM research, no re-fetching ----
     if args.watchlist:
         run_watchlist(args, args.watchlist.split(","))
@@ -3432,8 +3739,7 @@ def main():
     if args.llm_apply:
         import json as _json
         from llm_research import apply_llm_outputs
-        with open(args.llm_apply[0]) as f:
-            bundle = _json.load(f)
+        bundle = load_json_arg(args.llm_apply[0], "research bundle")
         phase_a_log = (bundle.get("meta") or {}).get("phase_a_log")
         if phase_a_log and os.path.exists(phase_a_log):
             continue_logging(phase_a_log)
@@ -3441,8 +3747,8 @@ def main():
         else:
             setup_logging()
             log("Phase B: applying LLM research (no Phase A log found; new file)")
-        with open(args.llm_apply[1]) as f:
-            outputs = _json.load(f)
+        outputs = validate_outputs(
+            load_json_arg(args.llm_apply[1], "research outputs"))
         df = pd.DataFrame(bundle["candidates"])
         log(f"Loaded {len(df)} candidates from bundle")
         kinds = df["kind"].value_counts().to_dict() if "kind" in df.columns else {}
@@ -3458,15 +3764,26 @@ def main():
         final_stocks, final_etfs = pick_final(ranked, args, llm_path=True)
         final = pd.concat([final_stocks, final_etfs], ignore_index=True)
         _print_llm_final(final_stocks, final_etfs, args)
-        # thesis ledger: record picks + rejected control group (audit trail)
-        try:
-            record_picks_ledger(final, ranked, args)
-        except Exception as e:
-            log(f"ledger: record_picks_ledger failed ({e})")
         out = (f"screener_results_{datetime.now().strftime('%Y%m%d')}_"
                f"{args.benchmark}_llm.csv")
         final.to_csv(out, index=False)
         print(f"Saved: {out}")
+        # Self-check gates the run: a failure aborts BEFORE ledger appends
+        # and chart write, so a broken run never records picks or produces
+        # a publishable page.
+        checks, fails = run_self_check(final, args, out)
+        if fails:
+            print("\n!!! SELF-CHECK FAILURES:")
+            for c in fails:
+                print(f"    FAIL: {c['name']} {c['detail']}")
+            log_error(f"SELF-CHECK failed: {[c['name'] for c in fails]} — "
+                      f"aborting before ledger/chart")
+            sys.exit(1)
+        # thesis ledger: record picks + rejected control group (audit trail)
+        try:
+            record_picks_ledger(final, ranked, args, cache)
+        except Exception as e:
+            log(f"ledger: record_picks_ledger failed ({e})")
         chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
                       f"{args.benchmark}_llm.html")
         hm = honorable_mentions(ranked, final, args)
@@ -3477,12 +3794,18 @@ def main():
             import json as _json
             with open("market_chat.json") as _f:
                 mc = _json.load(_f)
+            if not isinstance(mc, dict):
+                log(f"WARNING: market_chat.json is {type(mc).__name__}, "
+                    f"not an object — market chat skipped")
+                mc = None
         except Exception:
             mc = None
         try:
             _picks = list(final["ticker"]) if len(final) else []
-            if _picks:
-                fetch_pick_summaries(_picks)
+            _hm_t = [h.get("ticker") for h in (hm or []) if h.get("ticker")]
+            _all = list(dict.fromkeys(list(_picks) + _hm_t))
+            if _all:
+                fetch_pick_summaries(_all)
         except Exception as e:
             log(f"pick summaries: skipped ({e})")
         make_chart_html(final_stocks, final_etfs, chart_path,
@@ -3491,12 +3814,7 @@ def main():
                          "asof": datetime.now().strftime("%Y-%m-%d")},
                         honorable=hm, market_chat=mc)
         print(f"Chart: {chart_path}")
-        checks, fails = run_self_check(final, args, out)
-        if fails:
-            print("\n!!! SELF-CHECK FAILURES:")
-            for c in fails:
-                print(f"    FAIL: {c['name']} {c['detail']}")
-            log_error(f"SELF-CHECK failed: {[c['name'] for c in fails]}")
+        # (self-check already gated above, before ledger/chart)
         write_run_summary(
             f"run_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}_llm.json",
             {"timestamp": datetime.now().isoformat(),
@@ -3530,8 +3848,8 @@ def main():
     log(f"Logging to {log_path}" if log_path else "File logging unavailable")
     log_levers(args)
 
-    from cache import StepCache
-    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log)
+    # cache was constructed once at the top of main() so Phase B can use it;
+    # just report it here.
     if args.no_cache:
         log("cache disabled (--no-cache): all calls fresh")
     else:
@@ -3573,7 +3891,10 @@ def main():
     universe = cache.get("universe_v3")
     if universe is None:
         universe = get_all_screener_stocks(min_mcap=args.min_mcap, min_price=args.min_price)
-        cache.put("universe_v3", universe)
+        if universe:
+            cache.put("universe_v3", universe)
+        # Never cache an empty universe: a 429/outage would otherwise poison
+        # every same-day retry (COMPLETE-only caching, same as ledger prices).
     if not universe:
         print("Could not fetch screener universe. Try again later.")
         sys.exit(1)
@@ -3610,13 +3931,26 @@ def main():
 
     # Precise 1y return check vs benchmark, same methodology
     outperformers = []
+    n_priced = 0
     for c in cands:
         t = c["ticker"]
         s = closes.get(t)
         r = calc_return(s) if s is not None else np.nan
+        if not pd.isna(r):
+            n_priced += 1
         if not pd.isna(r) and r > bench_ret:
             c["ret_1y"] = r
             outperformers.append(c)
+    # Outage gate: a 429 storm that yields few closes must not degrade into a
+    # false methodological conclusion ("just buy the benchmark"). If we
+    # couldn't price most candidates, the data is broken, not the market.
+    if cands:
+        price_cov = n_priced / len(cands)
+        log(f"price coverage: {price_cov:.0%} ({n_priced}/{len(cands)} candidates priced)")
+        if price_cov < 0.5:
+            print(f"ABORT: only {price_cov:.0%} of candidates priced — likely "
+                  f"a Yahoo outage. Not publishing a false 'buy the benchmark' run.")
+            sys.exit(2)
     outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
     print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
     log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
@@ -3645,6 +3979,18 @@ def main():
     else:
         log(f"fundamentals: all {len(infos)} from cache")
     infos = {t: i for t, i in infos.items() if t in closes}
+
+    # Outage gate: if Yahoo's .info endpoint is down, every candidate looks
+    # like it has $0 volume and gets trash-filtered as "illiquid" — a total
+    # outage masquerading as a clean "no picks" day. Fail loud instead.
+    if out_tickers:
+        cov = len([t for t in out_tickers if infos.get(t)]) / len(out_tickers)
+        log(f"fundamentals coverage: {cov:.0%} ({len([t for t in out_tickers if infos.get(t)])}/{len(out_tickers)})")
+        if cov < 0.5:
+            print(f"ABORT: fundamentals coverage only {cov:.0%} — likely a "
+                  f"Yahoo outage, not an empty market. Not publishing a "
+                  f"false 'no picks' run.")
+            sys.exit(2)
 
     # 5) Hard trash filters (transparent rules, reported below)
     kept, trash_report = apply_trash_filters(outperformers, closes, infos,
@@ -3792,7 +4138,7 @@ def main():
                  "note": "quant base scores included; LLM decides event_dependence/continuation. "
                          "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark. "
                          "phase_a_log: Phase B must append to this file so one run = one log."},
-                fetch_market_internals())
+                fetch_market_internals(cache))
             bp = f"research_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}.json"
             with open(bp, "w") as f:
                 _json.dump(bundle, f, indent=1, default=str)

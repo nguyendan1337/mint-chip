@@ -22,6 +22,12 @@ import os
 import pickle
 import time
 
+# Match the pipeline's timezone pin (see screener.py): cache partitions are
+# user-local dates, so evening runs don't land in a UTC-tomorrow partition.
+if not os.environ.get("TZ"):
+    os.environ["TZ"] = "America/Los_Angeles"
+    time.tzset()
+
 
 class StepCache:
     def __init__(self, root, date_str=None, enabled=True, log=None,
