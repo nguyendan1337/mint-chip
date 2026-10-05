@@ -1651,16 +1651,33 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # The near-miss table Dan asked for — alternatives worth a look, with the
     # reason each missed (cap, overlap, or final-score order).
     hm_html = ""
-    # --- Market today: single reader-facing section (themed blocks with
-    # colored bold leads). Content is written by the researcher into
-    # market_chat.json as "market_today": [{"tone": "good"|"bad"|"verdict",
-    # "lead": "...", "body": "..."}]; the chart only renders it.
+    # --- Market today: single reader-facing section (market pulse line +
+    # themed blocks with colored bold leads). Content is written by the
+    # researcher into market_chat.json as "market_status": {"direction":
+    # "up"|"down"|"mixed", "summary": "..."} and "market_today": [{"tone":
+    # "good"|"bad"|"verdict", "lead": "...", "body": "..."}]; the chart only
+    # renders it.
     _TONE_COLORS = {"good": "#4ade80", "bad": "#f87171",
                     "verdict": "#ffd54f"}
     mc_html = ""
     _mt = market_chat.get("market_today") if market_chat else None
     if _mt:
         _parts = ['<h2>Market today</h2>', '<div class="note mc-today">']
+        # Market pulse: one-line up/down/mixed verdict + single-sentence
+        # summary, written by the researcher as market_status: {"direction":
+        # "up"|"down"|"mixed", "summary": "..."}. Always first.
+        _ms = market_chat.get("market_status") if market_chat else None
+        if isinstance(_ms, dict):
+            _mdir = str(_ms.get("direction", "")).strip().lower()
+            _mcolor = {"up": "#4ade80", "down": "#f87171",
+                       "mixed": "#ffd54f"}.get(_mdir, "#cfd6cf")
+            _mlabel = {"up": "Market's up.", "down": "Market's down.",
+                       "mixed": "Market's mixed."}.get(_mdir, "Market update.")
+            _msum = str(_ms.get("summary", "")).strip()
+            if _msum:
+                _parts.append(
+                    f'<p><b style="color:{_mcolor}">{_mlabel}</b>'
+                    f' {_html.escape(_msum)}</p>')
         for _b in _mt:
             _tone = str(_b.get("tone", "")).strip().lower()
             _color = _TONE_COLORS.get(_tone, "#cfd6cf")
@@ -1725,6 +1742,32 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             if _wsum or _wcolor:
                 _wtxt = _wsum + (" " + _wcolor if _wcolor else "")
                 wl_html = (f'<p class="note wl-summary">{_html.escape(_wtxt)}</p>')
+    # --- Fresh Off the Mint: suggested moves for the watchlist page.
+    # Replaces the About Mint explainer in watchlist mode. Content is written
+    # by the researcher into watchlist_chat.json as "suggested_moves":
+    # [{"tone": "good"|"bad"|"verdict", "lead": "...", "body": "..."}] —
+    # good = moves to consider making (adds), bad = trims/exits,
+    # verdict = bottom line. Same tone/color system as the other sections.
+    sm_html = ""
+    if watchlist_chat:
+        _sm = watchlist_chat.get("suggested_moves")
+        if _sm:
+            _smparts = ['<h2>Fresh Off the Mint</h2>',
+                        '<div class="note sm-moves">']
+            for _b in _sm:
+                _stone = str(_b.get("tone", "")).strip().lower()
+                _scolor = _TONE_COLORS.get(_stone, "#cfd6cf")
+                _slead = str(_b.get("lead", "")).strip()
+                _sbody = str(_b.get("body", "")).strip()
+                if not _slead and not _sbody:
+                    continue
+                _smparts.append(
+                    f'<p><b style="color:{_scolor}">{_html.escape(_slead)}</b>'
+                    + (f' {_html.escape(_sbody)}' if _sbody else '') + '</p>')
+            _smparts.append(
+                '<p class="fineprint">Ideas, not orders &mdash; '
+                'Mint suggests, Dan decides.</p></div>')
+            sm_html = "\n".join(_smparts)
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
@@ -1998,8 +2041,8 @@ a.navbtn:hover {{ background:
 {wl_html}
 {mc_html}
 {hm_html}
-<div class="note">
-<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
+{sm_html if meta.get("mode") == "watchlist" else ""}
+{ '<div class="note">\n<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already' if meta.get("mode") != "watchlist" or not sm_html else '' }
 proven themselves &mdash; names that beat their benchmark over the past year.
 For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,
 which tracks the S&amp;P 500. Then Mint asks the harder question: which are most
@@ -2031,7 +2074,7 @@ the odds, and only make room for what earns it.</p>
 future returns. Also: there are gremlins that have control over the markets &mdash;
 they hate you personally, and they do the exact opposite of your buys and sells
 purely to spite you. Invest accordingly.</p>
-</div>
+{ '</div>' if meta.get("mode") != "watchlist" or not sm_html else '' }
 <script>
 document.querySelectorAll('.sortctl').forEach(function(ctl){{
   var pl = document.getElementById(ctl.getAttribute('data-pl'));
