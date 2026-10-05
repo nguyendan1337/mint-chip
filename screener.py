@@ -1659,16 +1659,37 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 f'{_html.escape(str(_sec.get("blurb", "")))}</p>'
                 f'</div></details>')
         mc_html = "\n".join(_parts)
-    # --- Watchlist verdict: the computed one-liner plus the researcher's
-    # daily roast (summary_color). Ticker blurbs now live inside the pick
-    # rows (click to expand) — this paragraph is all that stays below.
+    # --- Watchlist today: themed blocks with colored bold leads (same
+    # format as Market today). Content is written by the researcher into
+    # watchlist_chat.json as "watchlist_today": [{"tone": "good"|"bad"|
+    # "verdict", "lead": "...", "body": "..."}]; the roast's voice lives
+    # in the bodies. The chart only renders it.
     wl_html = ""
     if watchlist_chat:
-        _wsum = str(watchlist_chat.get("summary") or "").strip()
-        _wcolor = str(watchlist_chat.get("summary_color") or "").strip()
-        if _wsum or _wcolor:
-            _wtxt = _wsum + (" " + _wcolor if _wcolor else "")
-            wl_html = (f'<p class="note wl-summary">{_html.escape(_wtxt)}</p>')
+        _wt = watchlist_chat.get("watchlist_today")
+        if _wt:
+            _wparts = ['<h2>Watchlist today</h2>', '<div class="note wl-today">']
+            for _b in _wt:
+                _wtone = str(_b.get("tone", "")).strip().lower()
+                _wcolor = _TONE_COLORS.get(_wtone, "#cfd6cf")
+                _wlead = str(_b.get("lead", "")).strip()
+                _wbody = str(_b.get("body", "")).strip()
+                if not _wlead and not _wbody:
+                    continue
+                _wparts.append(
+                    f'<p><b style="color:{_wcolor}">{_html.escape(_wlead)}</b>'
+                    + (f' {_html.escape(_wbody)}' if _wbody else '') + '</p>')
+            _wparts.append(
+                '<p class="fineprint">As of ' +
+                _html.escape(str(watchlist_chat.get("asof", ""))) + '.</p></div>')
+            wl_html = "\n".join(_wparts)
+        else:
+            # legacy fallback: summary + roast paragraph
+            _wsum = str(watchlist_chat.get("summary") or "").strip()
+            _wcolor = str(watchlist_chat.get("summary_color") or "").strip()
+            if _wsum or _wcolor:
+                _wtxt = _wsum + (" " + _wcolor if _wcolor else "")
+                wl_html = (f'<p class="note wl-summary">{_html.escape(_wtxt)}</p>')
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
