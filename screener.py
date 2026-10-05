@@ -38,6 +38,11 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 
+def run_stamp():
+    """Human page stamp: '2026-10-05 1:30pm PT' (TZ pinned above)."""
+    return datetime.now().strftime("%Y-%m-%d %-I:%M%p").lower() + " PT"
+
+
 def pipeline_today():
     """Cache-partition date: user-local, rewound to Friday on weekends.
 
@@ -3421,7 +3426,7 @@ def run_watchlist_apply(args):
     make_chart_html(sfinal, efinal, chart_path,
                     {"benchmark": "", "mode": "watchlist",
                      "heading": "Watchlist — by est. next 1y",
-                     "asof": datetime.now().strftime("%Y-%m-%d")},
+                     "asof": run_stamp()},
                     titles=("Stocks — by est. next 1y", "ETFs — by est. next 1y"),
                     watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
@@ -3965,7 +3970,7 @@ def main():
         make_chart_html(final_stocks, final_etfs, chart_path,
                         {"benchmark": args.benchmark,
                          "etf_benchmark": etf_benchmark(args),
-                         "asof": datetime.now().strftime("%Y-%m-%d")},
+                         "asof": run_stamp()},
                         honorable=hm, market_chat=mc)
         print(f"Chart: {chart_path}")
         # (self-check already gated above, before ledger/chart)
@@ -4446,7 +4451,7 @@ def main():
     make_chart_html(final_stocks, final_etfs, chart_path,
                     {"benchmark": args.benchmark,
                      "etf_benchmark": etf_benchmark(args),
-                     "asof": datetime.now().strftime("%Y-%m-%d")})
+                     "asof": run_stamp()})
     print(f"Chart: {chart_path}")
 
     # ---- automatic post-run validation (the "analyze" half of self-correction) ----
