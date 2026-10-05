@@ -1,24 +1,25 @@
 {
-  "tickers": [
-    "SPMO",
-    "DIVB",
-    "VGT",
-    "QTUM",
-    "DAC",
-    "HNGE",
-    "CDNA",
-    "AYA",
-    "XBI",
-    "SPCX",
-    "TTWO",
-    "STX",
-    "WDC",
-    "HWM",
-    "MU",
-    "SNDK",
-    "NVDA",
-    "FTXL",
-    "TSLA"
-  ],
-  "updated": "2026-10-03"
+ "tickers": [
+  "STX",
+  "WDC",
+  "MU",
+  "SNDK",
+  "NVDA",
+  "TSLA",
+  "FTXL",
+  "SPMO",
+  "QTUM",
+  "CDNA",
+  "VGT",
+  "SPCX",
+  "DAC",
+  "FTNT",
+  "HNGE",
+  "AAMI",
+  "DIVB",
+  "VFLO",
+  "XBI",
+  "TTWO"
+ ],
+ "updated": "2026-10-05"
 }
