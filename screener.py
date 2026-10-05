@@ -1768,6 +1768,51 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 '<p class="fineprint">Ideas, not orders &mdash; '
                 'Mint suggests, Dan decides.</p></div>')
             sm_html = "\n".join(_smparts)
+    # --- About Mint explainer. Shown on the main page; on the watchlist
+    # page it is replaced by Fresh Off the Mint (sm_html), falling back to
+    # this only if the researcher didn't write suggested_moves.
+    _wl_para = ("<p>Watchlist mode: every ticker you supplied is researched "
+                "and scored, sorted by expected value &mdash; no benchmark, "
+                "no picking.</p>"
+                if meta.get("mode") == "watchlist" else "")
+    if meta.get("mode") != "watchlist" or not sm_html:
+        about_html = ("<div class=\"note\">\n"
+"<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already\n"
+"proven themselves &mdash; names that beat their benchmark over the past year.\n"
+"For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,\n"
+"which tracks the S&amp;P 500. Then Mint asks the harder question: which are most\n"
+"likely to keep winning without stumbling right after you buy?</p>\n"
++ _wl_para +
+"<p>The philosophy is simple: avoid losses first. We look past recent gains to the\n"
+"business behind each name, the risks that could derail it, and whether its\n"
+"success looks durable or depends on hype, headlines, or a one-time event.\n"
+"Strong recent performance gets a name noticed. Strong evidence earns it a spot.\n"
+"If nothing clears the bar, we leave the slot empty &mdash; every pick earns its\n"
+"place.</p>\n"
+"<p class=\"stages-head\">How it works, in three stages:</p>\n"
+"<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark\n"
+"over the past year, then scored on the quality of the business, the timing of\n"
+"entry, and the steadiness of the ride. Hard risk gates throw out anything too\n"
+"volatile or too deeply scarred.</p>\n"
+"<p><b>Question the story.</b> Survivors get researched &mdash; we read the news\n"
+"behind each name, not just the numbers. How much does the story depend on things\n"
+"outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and\n"
+"it&apos;s out on the spot. For the rest: how likely is the strength to continue,\n"
+"and how much do we trust our own read?</p>\n"
+"<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those\n"
+"judgments become one number &mdash; expected value: the likely gains if it holds,\n"
+"minus the likely pain if it turns, adjusted for how much we trust our own\n"
+"read.</p>\n"
+"<p>Mint is built around a simple idea: find strength, question the story, weigh\n"
+"the odds, and only make room for what earns it.</p>\n"
+"<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t predict\n"
+"future returns. Also: there are gremlins that have control over the markets &mdash;\n"
+"they hate you personally, and they do the exact opposite of your buys and sells\n"
+"purely to spite you. Invest accordingly.</p>\n"
+"</div>")
+    else:
+        about_html = ""
+
     if honorable:
         hm_rows = []
         for i, h in enumerate(honorable, 1):
@@ -2042,39 +2087,7 @@ a.navbtn:hover {{ background:
 {mc_html}
 {hm_html}
 {sm_html if meta.get("mode") == "watchlist" else ""}
-{ '<div class="note">\n<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already' if meta.get("mode") != "watchlist" or not sm_html else '' }
-proven themselves &mdash; names that beat their benchmark over the past year.
-For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,
-which tracks the S&amp;P 500. Then Mint asks the harder question: which are most
-likely to keep winning without stumbling right after you buy?</p>
-{ "<p>Watchlist mode: every ticker you supplied is researched and scored, sorted by expected value &mdash; no benchmark, no picking.</p>" if meta.get("mode") == "watchlist" else "" }
-<p>The philosophy is simple: avoid losses first. We look past recent gains to the
-business behind each name, the risks that could derail it, and whether its
-success looks durable or depends on hype, headlines, or a one-time event.
-Strong recent performance gets a name noticed. Strong evidence earns it a spot.
-If nothing clears the bar, we leave the slot empty &mdash; every pick earns its
-place.</p>
-<p class="stages-head">How it works, in three stages:</p>
-<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
-over the past year, then scored on the quality of the business, the timing of
-entry, and the steadiness of the ride. Hard risk gates throw out anything too
-volatile or too deeply scarred.</p>
-<p><b>Question the story.</b> Survivors get researched &mdash; we read the news
-behind each name, not just the numbers. How much does the story depend on things
-outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and
-it&apos;s out on the spot. For the rest: how likely is the strength to continue,
-and how much do we trust our own read?</p>
-<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those
-judgments become one number &mdash; expected value: the likely gains if it holds,
-minus the likely pain if it turns, adjusted for how much we trust our own
-read.</p>
-<p>Mint is built around a simple idea: find strength, question the story, weigh
-the odds, and only make room for what earns it.</p>
-<p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
-future returns. Also: there are gremlins that have control over the markets &mdash;
-they hate you personally, and they do the exact opposite of your buys and sells
-purely to spite you. Invest accordingly.</p>
-{ '</div>' if meta.get("mode") != "watchlist" or not sm_html else '' }
+{about_html}
 <script>
 document.querySelectorAll('.sortctl').forEach(function(ctl){{
   var pl = document.getElementById(ctl.getAttribute('data-pl'));
