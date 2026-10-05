@@ -1831,8 +1831,10 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   .row:hover {{ border-color: rgba(255,255,255,0.22);
     box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }}
 }}
-.id {{ white-space: nowrap; text-overflow: ellipsis; }}
-.id .nm {{ overflow: hidden; text-overflow: ellipsis; }}
+.id {{ display: flex; align-items: center; min-width: 0; }}
+.id .nm {{ flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }}
+.id .rank, .id .tick, .id .rchip, .id .chev {{ flex: 0 0 auto; }}
 .sec {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 .id .rank {{ display:inline-block; width:22px; color: var(--gold); font-weight: 600; }}
 .id .tick {{ font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }}
