@@ -518,6 +518,12 @@ def build_scores(closes, infos, min_rows=120):
         # --- momentum / trend ---
         row["ret_1y"] = calc_return(px)
         row["ret_6m"] = calc_return(px, 126)
+        # momentum skip: 6m run EXCLUDING the most recent month (21 trading
+        # days) — standard academic treatment for short-term reversal.
+        # The upside component of EV uses this, not ret_6m.
+        row["ret_6m_skip1m"] = (calc_return(px.iloc[:-21], 126)
+                               if px is not None and len(px.dropna()) > 21
+                               else np.nan)
         row["ret_3m"] = calc_return(px, 63)
         row["ret_1m"] = calc_return(px, 21)
         row["ret_2w"] = calc_return(px, 10)
@@ -700,7 +706,7 @@ def log_levers(args):
         "z_dvol = liquidity. Higher z = better; bad metrics inverted.")
     log("expected value = conf * (1+0.25*character) * "
         "(cont*upside - (1-cont)*downside - dep*20%)")
-    log("  upside = 6m run: first 25% at full weight, excess at half, input capped at 50%")
+    log("  upside = 6m run SKIPPING the most recent month (short-term reversal): first 25% at full weight, excess at half, input capped at 50%")
     log("  downside = max(|maxDD|*50%, 10%) * (1 + dd_freq); "
         "dd_freq = fraction of rolling 1m windows losing >10%")
     log("  character = Composure z-sum of quality/entry-timing/structure "
@@ -750,8 +756,13 @@ def apply_risk_gates(df, max_vol=0.80, min_dd=-0.40):
     return kept, report
 
 
-def stability_grade(row):
-    """A/B/C/D stability grade from vol, drawdown, event dependence."""
+def stability_grade(row, dep=None):
+    """A/B/C/D stability grade from vol, drawdown, event dependence.
+
+    dep should be the merged research dep (same value the EV uses). A
+    missing dep warns loudly — silently defaulting to 0.3 once printed
+    an 'A' for a name the researcher had flagged at 0.40.
+    """
     try:
         vol = float(row.get("vol60", 1))
     except Exception:
@@ -760,11 +771,14 @@ def stability_grade(row):
         dd = float(row.get("maxdd", -1))
     except Exception:
         dd = -1.0
-    dep = row.get("llm_event_dependence", row.get("news_penalty", 0.3))
+    if dep is None:
+        dep = row.get("llm_event_dependence", row.get("news_penalty", 0.3))
     try:
         dep = float(dep)
-    except Exception:
+    except (TypeError, ValueError):
         dep = 0.3
+        log(f"WARNING: stability_grade dep missing for "
+            f"{row.get('ticker', '?')} — defaulted to 0.3")
     if vol <= 0.35 and dd >= -0.20 and dep <= 0.35:
         return "A"
     if vol <= 0.55 and dd >= -0.30 and dep <= 0.55:
@@ -978,9 +992,15 @@ def est_parts(row, dep, cont, conf=1.0):
     from logged inputs alone.
     """
     try:
-        r6 = float(row.get("ret_6m", 0) or 0)
+        r6 = float(row.get("ret_6m_skip1m", 0) or 0)
     except Exception:
         r6 = 0.0
+    if not r6:
+        # fallback for rows computed before ret_6m_skip1m existed
+        try:
+            r6 = float(row.get("ret_6m", 0) or 0)
+        except Exception:
+            r6 = 0.0
     try:
         dd = float(row.get("maxdd", -0.2) or -0.2)
     except Exception:
@@ -1408,6 +1428,12 @@ def build_etf_scores(closes, infos):
                "expense_ratio": facts["expense_ratio"], "aum": facts["aum"]}
         row["ret_1y"] = calc_return(px)
         row["ret_6m"] = calc_return(px, 126)
+        # momentum skip: 6m run EXCLUDING the most recent month (21 trading
+        # days) — standard academic treatment for short-term reversal.
+        # The upside component of EV uses this, not ret_6m.
+        row["ret_6m_skip1m"] = (calc_return(px.iloc[:-21], 126)
+                               if px is not None and len(px.dropna()) > 21
+                               else np.nan)
         row["ret_3m"] = calc_return(px, 63)
         row["ret_1m"] = calc_return(px, 21)
         row["ret_2w"] = calc_return(px, 10)
@@ -2912,13 +2938,14 @@ def add_research_columns(df, llm_path=True):
     recs = sub.to_dict("records")
     sub["est_next_1y"] = [estimate_next_year(r, d, c, f)
                           for r, d, c, f in zip(recs, dep, cont, conf)]
-    sub["stability"] = sub.apply(stability_grade, axis=1)
+    sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep)]
     # --- est audit trail: formula + per-ticker components, so any reviewer
     # (human or LLM) can re-derive every estimate from the log alone ---
     log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
         "(cont x upside - (1-cont) x downside - dep x 0.20); "
-        "upside = first 25% of 6m run at full weight, beyond at half weight "
-        "(cap 50%); downside = max(|maxDD| x 0.5, 10%) x (1 + drawdown_freq); "
+        "upside = first 25% of 6m run SKIPPING the most recent month at full "
+        "weight, beyond at half weight (cap 50%); downside = max(|maxDD| x 0.5, "
+        "10%) x (1 + drawdown_freq); "
         "character = quality/entry-timing/structure z-sum, clamped [-2, 2]")
     for (_, r), d, c, f in zip(sub.iterrows(), dep, cont, conf):
         p = est_parts(r, d, c, f)
