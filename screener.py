@@ -1888,7 +1888,7 @@ h1 {{ font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
 h1 span.chip {{ -webkit-text-fill-color: var(--gold); color: var(--gold); }}
 .tagline {{ font-size: 15px; font-style: italic; letter-spacing: 0.06em;
   color: var(--gold); margin: 2px 0 2px; text-shadow: 0 0 14px rgba(255,213,79,0.3); }}
-.subhead {{ font-size: 13px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }}
+.subhead {{ font-size: 16px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }}
 h1 span {{ -webkit-text-fill-color: #8a938a; color: #8a938a; }}
 h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   text-transform: uppercase; margin: 30px 0 12px; color: var(--green);
@@ -1926,9 +1926,9 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .sec {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 .id .rank {{ display:inline-block; width:22px; color: var(--gold); font-weight: 600; }}
 .id .tick {{ font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }}
-.id .nm {{ color:#a8b3a8; font-size: 12px; }}
-.sec {{ font-size: 12px; color:#a8b3a8; }}
-.lbl {{ font-size: 12px; margin-bottom: 4px; color: #93a093; }}
+.id .nm {{ color:#a8b3a8; font-size: 16px; }}
+.sec {{ font-size: 16px; color:#a8b3a8; }}
+.lbl {{ font-size: 16px; margin-bottom: 4px; color: #93a093; }}
 .lbl.r1y {{ color: var(--green); font-weight: 600; }}
 .lbl.est {{ color: var(--gold); font-weight: 700; }}
 .lbl.neg {{ color: var(--red) !important; }}
@@ -1945,12 +1945,12 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   box-shadow: 0 0 12px rgba(255,213,79,0.55); }}
 .bar.neg {{ background: linear-gradient(90deg, #dc2626, var(--red));
   box-shadow: 0 0 12px rgba(248,113,113,0.5); }}
-.stab {{ font-size: 12px; color:#a8b3a8; text-align: right; }}
-.cf {{ font-size: 13px; font-weight: 600; text-align: right; color: var(--gold); }}
+.stab {{ font-size: 16px; color:#a8b3a8; text-align: right; }}
+.cf {{ font-size: 16px; font-weight: 600; text-align: right; color: var(--gold); }}
 .nonus {{ display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
   background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
   border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }}
-.note {{ position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
+.note {{ position: relative; overflow: hidden; margin-top: 26px; font-size: 16px;
   color: #9aa79a; line-height: 1.6; padding: 16px 20px;
   background: rgba(255,255,255,0.025);
   -webkit-backdrop-filter: blur(8px) saturate(1.5);
@@ -1967,11 +1967,11 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   margin-top: 18px; }}
 .note .fineprint {{ font-size: 11px; color: #7d887d; }}
 
-.tledger a {{ color: #9aa79a; font-size: 12px;
+.tledger a {{ color: #9aa79a; font-size: 16px;
   text-decoration: underline; text-underline-offset: 2px; }}
 .sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
   font-size: 12px; color: #93a093; letter-spacing: 0.06em; }}
-.sbtn {{ font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
+.sbtn {{ font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
   color: #cfd6cf;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
@@ -1987,7 +1987,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     linear-gradient(90deg, var(--gold-deep), var(--gold));
   border-color: rgba(255,213,79,0.8);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }}
-.why {{ font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
+.why {{ font-size: 16px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
 .row.hm {{ opacity: 0.88; }}
 .hm-extra {{ display: none; }}
 #pl2.showall .hm-extra {{ display: grid; }}
@@ -2016,14 +2016,14 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .mc-sec > summary::-webkit-details-marker {{ display: none; }}
 .mc-sec > summary::before {{ content: "▸  "; color: var(--gold); }}
 .mc-sec[open] > summary::before {{ content: "▾  "; }}
-.mc-body {{ position: relative; padding: 0 18px 14px; font-size: 13px;
+.mc-body {{ position: relative; padding: 0 18px 14px; font-size: 16px;
   color: #a8b3a8; line-height: 1.65; }}
 .mc-body p {{ margin: 0 0 12px; }}
 .mc-item {{ margin: 12px 0; }}
 .mc-tick {{ font-weight: 700; letter-spacing: 0.03em; }}
 .mc-tick.stock {{ color: #7dd3fc; }}
 .mc-tick.etf {{ color: #c4b5fd; }}
-.note.mc-overview {{ font-size: 13px; margin-bottom: 14px; }}
+.note.mc-overview {{ font-size: 16px; margin-bottom: 14px; }}
 .rchip {{ display: inline-block; font-size: 10px; font-weight: 700;
   letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
   border: 1px solid; vertical-align: 2px; margin-right: 7px; }}
@@ -2031,6 +2031,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   background: rgba(74,222,128,0.10); }}
 .row.has-blurb {{ cursor: pointer; }}
 .row .blurb {{ display: none; grid-column: 1 / -1;
+  font-size: 16px;
   border-top: 1px solid rgba(255,255,255,0.07);
   margin-top: 8px; padding: 8px 4px 6px 34px; }}
 .row.open .blurb {{ display: block; }}
@@ -2049,7 +2050,7 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .wl-blurb {{ margin: 14px 0; }}
 .wl-rate-why {{ color: #8a938a; font-style: italic; }}
 .navwrap {{ text-align: center; margin: 2px 0 14px; }}
-a.navbtn {{ display: inline-block; font-size: 12px; letter-spacing: 0.05em;
+a.navbtn {{ display: inline-block; font-size: 16px; letter-spacing: 0.05em;
   font-weight: 600; color: #ffd54f; text-decoration: none;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
@@ -2074,7 +2075,7 @@ a.navbtn:hover {{ background:
     content: attr(data-cap); display: block;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: #93a093; margin-bottom: 3px; }}
-  .cf, .stab {{ text-align: left; font-size: 14px; }}
+  .cf, .stab {{ text-align: left; font-size: 16px; }}
 }}
 </style></head>
 <body>

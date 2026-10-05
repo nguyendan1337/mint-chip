@@ -24,7 +24,7 @@ h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
 h1 span.chip { -webkit-text-fill-color: var(--gold); color: var(--gold); }
 .tagline { font-size: 15px; font-style: italic; letter-spacing: 0.06em;
   color: var(--gold); margin: 2px 0 2px; text-shadow: 0 0 14px rgba(255,213,79,0.3); }
-.subhead { font-size: 13px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }
+.subhead { font-size: 16px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }
 h1 span { -webkit-text-fill-color: #8a938a; color: #8a938a; }
 h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   text-transform: uppercase; margin: 30px 0 12px; color: var(--green);
@@ -62,9 +62,9 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .sec { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .id .rank { display:inline-block; width:22px; color: var(--gold); font-weight: 600; }
 .id .tick { font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }
-.id .nm { color:#a8b3a8; font-size: 12px; }
-.sec { font-size: 12px; color:#a8b3a8; }
-.lbl { font-size: 12px; margin-bottom: 4px; color: #93a093; }
+.id .nm { color:#a8b3a8; font-size: 16px; }
+.sec { font-size: 16px; color:#a8b3a8; }
+.lbl { font-size: 16px; margin-bottom: 4px; color: #93a093; }
 .lbl.r1y { color: var(--green); font-weight: 600; }
 .lbl.est { color: var(--gold); font-weight: 700; }
 .lbl.neg { color: var(--red) !important; }
@@ -81,12 +81,12 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   box-shadow: 0 0 12px rgba(255,213,79,0.55); }
 .bar.neg { background: linear-gradient(90deg, #dc2626, var(--red));
   box-shadow: 0 0 12px rgba(248,113,113,0.5); }
-.stab { font-size: 12px; color:#a8b3a8; text-align: right; }
-.cf { font-size: 13px; font-weight: 600; text-align: right; color: var(--gold); }
+.stab { font-size: 16px; color:#a8b3a8; text-align: right; }
+.cf { font-size: 16px; font-weight: 600; text-align: right; color: var(--gold); }
 .nonus { display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
   background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
   border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
-.note { position: relative; overflow: hidden; margin-top: 26px; font-size: 12px;
+.note { position: relative; overflow: hidden; margin-top: 26px; font-size: 16px;
   color: #9aa79a; line-height: 1.6; padding: 16px 20px;
   background: rgba(255,255,255,0.025);
   -webkit-backdrop-filter: blur(8px) saturate(1.5);
@@ -103,11 +103,11 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   margin-top: 18px; }
 .note .fineprint { font-size: 11px; color: #7d887d; }
 
-.tledger a { color: #9aa79a; font-size: 12px;
+.tledger a { color: #9aa79a; font-size: 16px;
   text-decoration: underline; text-underline-offset: 2px; }
 .sortctl { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
   font-size: 12px; color: #93a093; letter-spacing: 0.06em; }
-.sbtn { font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
+.sbtn { font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
   color: #cfd6cf;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
@@ -123,7 +123,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
     linear-gradient(90deg, var(--gold-deep), var(--gold));
   border-color: rgba(255,213,79,0.8);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }
-.why { font-size: 12px; color: #a8b3a8; text-align: right; line-height: 1.4; }
+.why { font-size: 16px; color: #a8b3a8; text-align: right; line-height: 1.4; }
 .row.hm { opacity: 0.88; }
 .hm-extra { display: none; }
 #pl2.showall .hm-extra { display: grid; }
@@ -152,14 +152,14 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .mc-sec > summary::-webkit-details-marker { display: none; }
 .mc-sec > summary::before { content: "▸  "; color: var(--gold); }
 .mc-sec[open] > summary::before { content: "▾  "; }
-.mc-body { position: relative; padding: 0 18px 14px; font-size: 13px;
+.mc-body { position: relative; padding: 0 18px 14px; font-size: 16px;
   color: #a8b3a8; line-height: 1.65; }
 .mc-body p { margin: 0 0 12px; }
 .mc-item { margin: 12px 0; }
 .mc-tick { font-weight: 700; letter-spacing: 0.03em; }
 .mc-tick.stock { color: #7dd3fc; }
 .mc-tick.etf { color: #c4b5fd; }
-.note.mc-overview { font-size: 13px; margin-bottom: 14px; }
+.note.mc-overview { font-size: 16px; margin-bottom: 14px; }
 .rchip { display: inline-block; font-size: 10px; font-weight: 700;
   letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
   border: 1px solid; vertical-align: 2px; margin-right: 7px; }
@@ -167,6 +167,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   background: rgba(74,222,128,0.10); }
 .row.has-blurb { cursor: pointer; }
 .row .blurb { display: none; grid-column: 1 / -1;
+  font-size: 16px;
   border-top: 1px solid rgba(255,255,255,0.07);
   margin-top: 8px; padding: 8px 4px 6px 34px; }
 .row.open .blurb { display: block; }
@@ -185,7 +186,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .wl-blurb { margin: 14px 0; }
 .wl-rate-why { color: #8a938a; font-style: italic; }
 .navwrap { text-align: center; margin: 2px 0 14px; }
-a.navbtn { display: inline-block; font-size: 12px; letter-spacing: 0.05em;
+a.navbtn { display: inline-block; font-size: 16px; letter-spacing: 0.05em;
   font-weight: 600; color: #ffd54f; text-decoration: none;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
@@ -210,13 +211,13 @@ a.navbtn:hover { background:
     content: attr(data-cap); display: block;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
     color: #93a093; margin-bottom: 3px; }
-  .cf, .stab { text-align: left; font-size: 14px; }
+  .cf, .stab { text-align: left; font-size: 16px; }
 }
 </style></head>
 <body>
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
-<div class="subhead">Top picks vs VGT (stocks) / VOO (ETFs) — 2026-10-05 3:10pm PT</div>
+<div class="subhead">Top picks vs VGT (stocks) / VOO (ETFs) — 2026-10-05 3:19pm PT</div>
 <div class="navwrap"><a class="navbtn" href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>
 <h2>Top 10 stocks — most confident</h2>
 <div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
@@ -237,7 +238,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+15.6%</div><div class="track"><div class="bar est" style="width:78.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Asset management holding company running systematic (quant) investment strategies.</div><div class="mc-why">Q2 EPS beat by 28%, revenue up 45%, record $233B assets with 10 straight quarters of inflows — the run is operational, not event-driven.</div></div>
+  <div class="blurb"><div class="mc-what">Acadian is a publicly owned asset-management holding company running systematic, quantitative investment strategies for individuals and institutions. It manages client portfolios through its subsidiaries and launches equity mutual funds.</div><div class="mc-why">The run is operational, not event-driven: second-quarter EPS of $1.33 beat the $1.03 estimate by 28%, revenue rose 45%, adjusted EBITDA jumped 79%, and assets hit a record $232.7B with $4.3B of net inflows — ten straight quarters of positive flows. The firm is a secular beneficiary of systematic investing and has cut its share count 58% since 2019. Valuation is the only real knock.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.12994306774605055" data-r1y="1.1316278159007078">
@@ -249,7 +250,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+13.0%</div><div class="track"><div class="bar est" style="width:65.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">80%</div>
   <div class="stab" data-cap="Stability">B</div>
-  <div class="blurb"><div class="mc-what">Cybersecurity company selling network security and AI-driven security operations.</div><div class="mc-why">Q2 revenue up 26%, billings up 33%, raised full-year guidance; expanding AI attack surfaces are a durable tailwind for security spending.</div></div>
+  <div class="blurb"><div class="mc-what">Fortinet provides cybersecurity and networking-security solutions worldwide — firewalls, secure networking, and AI-driven security operations for enterprises. It is one of the largest pure-play security vendors.</div><div class="mc-why">The least event-driven name in the group: second-quarter revenue of $2.05B rose 26%, adjusted EPS of $0.90 beat $0.75, billings grew 33% to $2.37B, and full-year revenue guidance was raised to $8.02–8.18B. Operating margin is 38% with $966M of free cash flow, and the stock hit a record $182.09 on October 2. Expanding AI attack surfaces are a durable structural tailwind for security spending. The honest knock is only the multiple.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.12769979967641124" data-r1y="0.4092770657405749">
@@ -261,7 +262,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+12.8%</div><div class="track"><div class="bar est" style="width:63.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">B</div>
-  <div class="blurb"><div class="mc-what">Makes containment and delivery systems for injectable drugs.</div><div class="mc-why">Four straight earnings beats, raised 2026 guidance, Morgan Stanley upgraded to Overweight — a century-old franchise executing, not a headline trade.</div></div>
+  <div class="blurb"><div class="mc-what">West Pharmaceutical designs and manufactures containment and delivery systems for injectable drugs — the vials, stoppers, and syringes pharmaceutical companies rely on. It sells across the Americas, Europe, the Middle East, Africa, and Asia Pacific.</div><div class="mc-why">A genuinely strong business case: second-quarter EPS of $2.37 beat the $2.08 consensus, revenue rose 14%, and full-year guidance was raised to $8.85–9.05 per share. Morgan Stanley upgraded to Overweight with a $400 target. This is a century-old franchise with deep pharma partnerships and four consecutive earnings beats — durable, defensible, and executing.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.12760509396394806" data-r1y="0.7921040337338234">
@@ -273,7 +274,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+12.8%</div><div class="track"><div class="bar est" style="width:63.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Asset manager with $360B in client assets across funds and ETFs.</div><div class="mc-why">Record Q2 with 56% EBITDA margins and steady inflows; growth is broad-based across international, institutional, and ETF channels.</div></div>
+  <div class="blurb"><div class="mc-what">Victory Capital is an asset-management company offering specialized investment strategies to institutions, retirement platforms, and individual investors in the U.S. and internationally. It runs multiple investment franchises plus the VictoryShares ETF lineup.</div><div class="mc-why">The run is built on durable operating results: a record second quarter with $346.1B in client assets, $4.2B of long-term net inflows, a 55.8% adjusted EBITDA margin, and a $0.50 quarterly dividend. August client assets reached $360.2B with 71% of assets beating benchmarks over one year. Growth is broad-based across international, institutional, and ETF channels — about flows persisting, not a catalyst resolving.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.11509863929077306" data-r1y="0.4342971017572399">
@@ -285,7 +286,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.5%</div><div class="track"><div class="bar est" style="width:57.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Diversified industrial conglomerate making pumps, valves, and applied fluidics.</div><div class="mc-why">Q2 beat with raised guidance and a 16th straight annual dividend hike; multiple analysts raised targets on durable industrial demand.</div></div>
+  <div class="blurb"><div class="mc-what">IDEX provides applied engineered solutions through three divisions — health and science technologies, fluid and metering technologies, and fire, safety, and diversified products. It sells in North America, Europe, and Asia.</div><div class="mc-why">Second-quarter EPS of $2.32 beat the $2.11 consensus on revenue of $920.6M, up 6%, and full-year EPS guidance was raised to $8.70–8.85 alongside a 16th consecutive annual dividend increase. Vertical Research initiated at Buy in September and Stifel, Citi, and RBC all raised targets in July. A diversified industrial portfolio with rising estimates and no binary catalyst.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.11323636979307157" data-r1y="0.6558156415016485">
@@ -297,7 +298,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.3%</div><div class="track"><div class="bar est" style="width:56.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Communications and payments company (NRS point-of-sale, fintech, net2phone).</div><div class="mc-why">Record FY2026 results with three growing segments and FY2027 guidance for double-digit profit growth — no single event behind it.</div></div>
+  <div class="blurb"><div class="mc-what">IDT provides communications and payment services through four divisions: National Retail Solutions, fintech, net2phone, and traditional communications. It operates in the U.S., the U.K., and internationally.</div><div class="mc-why">Record fiscal 2026 results — revenue up 5%, operating income up 21% — with fiscal 2027 guidance calling for double-digit gross-profit growth and EBITDA of $176–180M. Three growth engines are all firing: retail solutions up 24%, fintech up 14%, net2phone up 11%, and the price target was raised to $85. Diversified across telecom, payments, and fintech with no event dependence.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.1115524895705961" data-r1y="0.954349412985479">
@@ -309,7 +310,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.2%</div><div class="track"><div class="bar est" style="width:55.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">B</div>
-  <div class="blurb"><div class="mc-what">Global distributor of electronic components and enterprise computing.</div><div class="mc-why">Three straight quarters of triple-digit EPS growth plus new HPE and IBM distribution deals — commercial wins, not binary events.</div></div>
+  <div class="blurb"><div class="mc-what">Arrow Electronics sources and engineers technology components for manufacturers and enterprise-computing customers across the Americas, Europe, the Middle East, Africa, and Asia Pacific. It is one of the world&#x27;s largest electronics distributors.</div><div class="mc-why">Three straight quarters of triple-digit EPS growth, plus full HPE Networking distribution rights won in September and IBM coverage extended to seven more European countries in August. These are commercial wins, not binary events, and the stock broke out to become IBD&#x27;s Stock of the Day on October 2. Third-quarter results are about 25 days out, so no earnings-soon overhang.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.10826503467947733" data-r1y="0.5027631329319533">
@@ -321,7 +322,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+10.8%</div><div class="track"><div class="bar est" style="width:54.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">REIT owning upscale hotels across the US.</div><div class="mc-why">Pays a ~6.2% monthly distribution backed by a Q2 beat; analysts upgraded on a strong fall convention and travel outlook.</div></div>
+  <div class="blurb"><div class="mc-what">Apple Hospitality is a real-estate investment trust owning one of the largest and most diverse portfolios of upscale, rooms-focused hotels in the United States. It is based in Richmond, Virginia.</div><div class="mc-why">It pays a $0.08 monthly distribution — about a 6.2% annualized yield — backed by a second-quarter beat with revenue of $402.55M versus $391.88M consensus. Compass Point upgraded to Buy in August and BofA, JPMorgan, and Barclays all raised targets. The sector backdrop is strong — U.S. hotel revenue per room was up 14% year over year in late September with a strong fall convention season forecast — so this is operating results plus a sector re-rating, not an event.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.10770761234899213" data-r1y="0.7721967444622317">
@@ -333,7 +334,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+10.8%</div><div class="track"><div class="bar est" style="width:53.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Largest US provider of occupational health services.</div><div class="mc-why">Four straight earnings beats in a recession-resilient business, with fresh analyst upgrades across the board.</div></div>
+  <div class="blurb"><div class="mc-what">Concentra provides occupational-health services in the United States — workplace injury care, physical therapy, and employer health services through its clinic network.</div><div class="mc-why">The cleanest quality story in the group: four straight earnings beats, with second-quarter EPS of $0.52 versus $0.42, and a wall of fresh analyst support — JPMorgan Overweight to $43 in September, Zacks Strong Buy in August, plus RBC and Wells Fargo upgrades. Occupational-health demand is durable and recession-resilient; nothing binary or headline-driven explains the move.</div></div>
 </div>
 
 <div class="row k-stock has-blurb" data-ev="0.10236684268755765" data-r1y="0.5194243394980842">
@@ -345,7 +346,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+10.2%</div><div class="track"><div class="bar est" style="width:51.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">REIT owning large hotels including iconic resorts.</div><div class="mc-why">Raised RevPAR guidance, repaid a $1.3B Hawaii loan, reopened Royal Palm — fundamentals, not events, though lodging is cyclical.</div></div>
+  <div class="blurb"><div class="mc-what">Park Hotels &amp; Resorts is one of the largest publicly traded lodging real-estate investment trusts, owning premium hotels and resorts. Its portfolio includes large convention and resort properties.</div><div class="mc-why">Revenue-per-room strength is fundamental: second-quarter beat, full-year RevPAR guidance raised by 2.25 points to 3–4.5%, Raymond James upgraded to Strong Buy in September with a $19 target, a $1.275B Hawaii loan was repaid, and the Royal Palm reopened in July. No wars, commodities, or binary catalysts. The modest haircut is for lodging cyclicality and a strong year-to-date run.</div></div>
 </div>
 </div>
 <h2>Top 10 ETFs — most confident</h2>
@@ -367,7 +368,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.9%</div><div class="track"><div class="bar est" style="width:59.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">S&amp;P 500 technology sector ETF (Apple, Microsoft, Nvidia on top).</div><div class="mc-why">Riding the AI infrastructure buildout — hyperscalers spending ~$700-800B this year; the risk is the ROI debate, not a single catalyst.</div></div>
+  <div class="blurb"><div class="mc-what">State Street&#x27;s Technology Select Sector SPDR holds the S&amp;P 500&#x27;s technology stocks — Apple, Microsoft, and Nvidia at the top — in market-cap weights. With over $90B in assets at a 0.09% fee, it is the definitive tech-sector ETF.</div><div class="mc-why">Up 41% in a year and 46% in six months on the AI infrastructure buildout, with hyperscalers spending an estimated $700–800B in 2026 and forecasts of $3T by 2030. No single-event dependence — the thesis is durable enterprise, cloud, and AI spending. The real risk is the ROI debate on all that capex, not a catalyst.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.09621331559247318" data-r1y="0.3881681359863063">
@@ -379,7 +380,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.6%</div><div class="track"><div class="bar est" style="width:48.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Broad technology sector ETF.</div><div class="mc-why">Tech earnings are delivering on the AI capex cycle; momentum has fundamental backing.</div></div>
+  <div class="blurb"><div class="mc-what">State Street&#x27;s SPDR NYSE Technology ETF holds technology-sector stocks tracking the NYSE technology index, with at least 80% of assets in index constituents. A broad tech-sector vehicle.</div><div class="mc-why">Tech earnings are delivering on the AI capital-expenditure cycle, with hyperscalers guiding roughly $700–800B of 2026 spending. The sector&#x27;s momentum has fundamental backing — real earnings, not multiple expansion alone — supporting continued strength. A straightforward ride on the strongest corporate-spending cycle in tech.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.08579101774333132" data-r1y="0.2830853965340221">
@@ -391,7 +392,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.6%</div><div class="track"><div class="bar est" style="width:42.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">S&amp;P 500 momentum ETF holding the 100 strongest-trend stocks.</div><div class="mc-why">The momentum factor itself is working, beating the S&amp;P in 2024 and 2025 — diversified by construction, though momentum crashes are violent.</div></div>
+  <div class="blurb"><div class="mc-what">Invesco&#x27;s S&amp;P 500 Momentum ETF holds the roughly 100 S&amp;P 500 stocks with the highest momentum scores, reconstituted twice a year. With $23B in assets at a 0.13% fee, it is a rules-based bet on the persistence of trends — currently 53% technology.</div><div class="mc-why">The momentum factor itself is working: up 29% in a year, beating the S&amp;P 500 in both 2024 and 2025, with top holdings like Micron, Apple, and AMD earning their leadership. No single-event dependence — the risk is the factor&#x27;s known failure mode: momentum crashes are violent, and the semiannual rebalance can hold yesterday&#x27;s winners after leadership rotates. Diversified by construction.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.06927937495132071" data-r1y="0.3839381056814941">
@@ -403,7 +404,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.9%</div><div class="track"><div class="bar est" style="width:34.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">ETF screening profitable US large caps for free-cash-flow yield.</div><div class="mc-why">Rules-based quality/value at 0.39% fee with a 5-star rating; the run reflects durable quality, not hype.</div></div>
+  <div class="blurb"><div class="mc-what">VictoryShares&#x27; Free Cash Flow ETF tracks a rules-based index of 50 profitable U.S. large caps selected for projected free-cash-flow yield, with a 4% single-name cap and quarterly rebalancing. About $11B in assets at a 0.39% fee, with a 5-star Morningstar rating.</div><div class="mc-why">The 38.5% one-year run reflects a durable quality factor tailwind: free cash flow is, as one recent analysis put it, harder to manufacture than earnings. The methodology is structurally sound — profitable companies, concentration caps, regular rebalancing — with no event dependence. Free-cash-flow quality is a structural exposure, not a narrative.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.05737008379394363" data-r1y="0.18440520387882953">
@@ -415,7 +416,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+5.7%</div><div class="track"><div class="bar est" style="width:28.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Fidelity&#x27;s actively managed large-cap core equity ETF.</div><div class="mc-why">Quant stock selection with 1.99% annualized alpha and favorable upside/downside capture — cheap at 0.18%.</div></div>
+  <div class="blurb"><div class="mc-what">Fidelity&#x27;s Enhanced Large Cap Core ETF is an actively managed quant fund picking large-cap U.S. stocks from the S&amp;P 500 universe using systematic signals. It holds $8.6B at a 0.18% fee.</div><div class="mc-why">The quant selection has delivered 1.99% annualized alpha with 103% upside capture and only 89% downside capture — a genuinely favorable asymmetry: it participates in rallies while cushioning declines. Strong flows confirm investors notice, and 0.18% is cheap for active management. Systematic stock selection, no story stocks.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.048107556908897245" data-r1y="0.5990767893575633">
@@ -427,7 +428,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.8%</div><div class="track"><div class="bar est" style="width:24.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">iShares US value-factor ETF (large/mid-cap value stocks).</div><div class="mc-why">Value is working as a factor; strictly US-focused and highly rated, though memory-semiconductor exposure adds cyclicality.</div></div>
+  <div class="blurb"><div class="mc-what">iShares&#x27; U.S. Value Factor ETF tracks the MSCI USA Enhanced Value Index — strictly U.S. large- and mid-cap stocks selected for value characteristics. About $9.5–10B in assets at a 0.15% fee.</div><div class="mc-why">Up roughly 48% year-to-date and 65% in a year, carrying a Zacks ETF Rank of 1 (Strong Buy). The strength is not war, commodity, or hype-driven — but be aware of what it is: the value methodology has weighted Micron to about 23% of assets and technology to 43%, making this effectively a value-tilted chip-cycle vehicle. The valuation case for chips plus value persists; the fund lives or dies on the memory cycle.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.04054515204124635" data-r1y="0.21296808893450225">
@@ -439,7 +440,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.1%</div><div class="track"><div class="bar est" style="width:20.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">ESG-screened US large/mid-cap ETF.</div><div class="mc-why">The ESG screen acts as a quality tilt; diversified momentum with strong alpha signals, riding the AI cycle.</div></div>
+  <div class="blurb"><div class="mc-what">iShares&#x27; ESG Advanced MSCI USA ETF holds large- and mid-cap U.S. companies with strong environmental, social, and governance ratings, screening out fossil-fuel exposure. The ESG screen doubles as a quality tilt.</div><div class="mc-why">Up 24.6% in a year with strong alpha signals — top-quintile year-to-date alpha. The ESG screen filters toward profitable, well-governed companies, and the resulting tech-heavy positioning is riding the AI cycle. Momentum is real and diversified enough across large-cap quality names to support continued strength.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.0402826940962897" data-r1y="0.2589307549159152">
@@ -451,7 +452,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+4.0%</div><div class="track"><div class="bar est" style="width:20.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Fidelity&#x27;s actively managed large-cap value ETF.</div><div class="mc-why">Systematic value/profitability signals at 0.18%; value is a durable factor and the quant overlay has beaten its benchmark.</div></div>
+  <div class="blurb"><div class="mc-what">Fidelity&#x27;s Enhanced Large Cap Value ETF is an actively managed quant fund selecting large-cap value stocks from the Russell 1000 Value universe on systematic value, profitability, and growth signals. It holds $3.4B at a 0.18% fee.</div><div class="mc-why">Value is a durable factor, and Fidelity&#x27;s quant overlay has delivered excess returns versus the Russell 1000 Value. Systematic value, profitability, and growth signals at 0.18% — active management at an index-like price. No single-stock or event bets; the process is the edge.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.036794086930022174" data-r1y="0.3843841086308746">
@@ -463,7 +464,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.7%</div><div class="track"><div class="bar est" style="width:18.4%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Biotech ETF with 249+ US holdings (Vertex, Amgen, Gilead, Regeneron on top).</div><div class="mc-why">Dozens of 2026 FDA approvals plus pharma M&amp;A near its strongest since 2019 — a fundamental setup, not an event spike.</div></div>
+  <div class="blurb"><div class="mc-what">iShares&#x27; Biotechnology ETF tracks the ICE Biotechnology Index with 249-plus U.S. holdings, concentrated in large-cap biotech — Vertex, Amgen, Gilead, and Regeneron at the top. About $10.6B in assets at a 0.44% fee.</div><div class="mc-why">The setup is fundamental, not an event spike: 2026 brought dozens of novel FDA approvals, pharma M&amp;A is tracking its strongest year since 2019 ahead of the patent cliff, and pricing uncertainty eased through most-favored-nation agreements. Large-cap concentration damps the binary trial risk that plagues equal-weight biotech funds. Rate hikes and a two-tier market cap the upside, but the drivers — approvals and deals — are durable.</div></div>
 </div>
 
 <div class="row k-etf has-blurb" data-ev="0.03012795095935353" data-r1y="0.3114902205579866">
@@ -475,7 +476,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+3.0%</div><div class="track"><div class="bar est" style="width:15.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="stab" data-cap="Stability">A</div>
-  <div class="blurb"><div class="mc-what">Invesco multi-factor large-cap growth ETF (52 stocks).</div><div class="mc-why">Factor selection has beaten QQQ recently, but it&#x27;s concentrated high-beta AI exposure with a steep fee.</div></div>
+  <div class="blurb"><div class="mc-what">Invesco&#x27;s Dynamic Large Cap Growth ETF holds 50 large-cap U.S. growth stocks selected by a multi-factor Intellidex model. It manages $2.7B in a concentrated 52-stock book.</div><div class="mc-why">The factor selection has beaten QQQ recently — the model is finding better growth names than cap-weighting. That is the bull case in full: systematic growth selection working. The honest caveats travel with it: concentrated high-beta AI exposure and a steep fee, so this one needs the growth trade to keep working.</div></div>
 </div>
 </div>
 
@@ -504,7 +505,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.4%</div><div class="track"><div class="bar est" style="width:56.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">overlaps XLK (55%) — kept the higher-EV fund</div>
-<div class="blurb"><div class="mc-what">The fund employs an indexing investment approach designed to track the performance of the index, an index made up of stocks of large, mid-size, and small U.S. c</div><div class="mc-why">Vanguard Information Technology ETF ($100B+ AUM, 0.10% fee) — ~300 US tech stocks, broader than XLK with mid-cap tech included. 1y +36%, 6m +44% riding the same AI capex cycle. Vanguard scale and low fee make it a durabl</div></div></div>
+<div class="blurb"><div class="mc-what">An index fund that tracks about 300 large, mid-size, and small U.S. technology stocks, weighted by market size. It is the broadest way to own the American tech sector in one ticker.</div><div class="mc-why">Vanguard&#x27;s tech ETF holds over $100B at a 0.10% fee and is up 36% in a year on the AI capital-spending cycle. Unlike narrower tech funds it includes mid-cap tech, so the rally is not just three mega-caps. The run is grounded in cloud and semiconductor earnings, not a one-off headline.</div></div></div>
 
 <div class="row hm k-etf has-blurb" data-ev="0.11179066247572136" data-r1y="0.36287955050416776">
   <div class="id"><span class="rank">2</span>
@@ -516,7 +517,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+11.2%</div><div class="track"><div class="bar est" style="width:55.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund generally will invest at least 80% of its assets in the component securities of its underlying index. The underlying index measures the performance of </div><div class="mc-why">iShares US Technology ($20B+ AUM, 0.40% fee) — Russell 1000 tech/growth-tilted, heavier software/services than XLK. 1y +37%, 6m +45%. Same AI-infrastructure thesis as the other tech ETFs; fee is higher than VGT/XLK for s</div></div></div>
+<div class="blurb"><div class="mc-what">An index fund owning U.S. technology stocks from the Russell 1000, tilted toward software and services. It is BlackRock&#x27;s broad tech-sector vehicle.</div><div class="mc-why">Over $20B in assets, up 37% in a year and 45% in six months on the same AI-infrastructure demand lifting the sector. It leans more toward software and services than its peers, which diversifies the hardware cycle. The 0.40% fee is higher than Vanguard&#x27;s equivalent for similar exposure, but the portfolio is sound and fully U.S.</div></div></div>
 
 <div class="row hm k-etf has-blurb" data-ev="0.10912938794369505" data-r1y="0.3636630290298355">
   <div class="id"><span class="rank">3</span>
@@ -528,7 +529,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+10.9%</div><div class="track"><div class="bar est" style="width:54.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund invests at least 80% of assets in securities included in the fund&#x27;s underlying index. The fund&#x27;s underlying index is the MSCI USA IMI Information Techn</div><div class="mc-why">Fidelity MSCI Information Technology ($15B+ AUM, 0.08% fee) — MSCI USA IMI tech index, ~300 names including mid/small tech. 1y +37%, 6m +44%. Cheapest of the big tech ETFs; thesis is the durable AI/enterprise spend cycle</div></div></div>
+<div class="blurb"><div class="mc-what">An index fund tracking the MSCI USA technology index — roughly 300 information-technology stocks from large down to small companies. It is Fidelity&#x27;s broad tech-sector offering.</div><div class="mc-why">Up 37% in a year and 44% in six months, riding durable AI and enterprise spending rather than any single event. At 0.08% it is the cheapest of the big tech ETFs, and the small and mid-cap inclusion gives it breadth the mega-cap funds lack.</div></div></div>
 
 <div class="row hm k-stock has-blurb" data-ev="0.09855465516249656" data-r1y="0.8825785063960854">
   <div class="id"><span class="rank">4</span>
@@ -540,7 +541,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.9%</div><div class="track"><div class="bar est" style="width:49.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">NetApp, Inc. provides a range of enterprise software, systems, and services that customers use to transform their data infrastructures in the United States, Can</div><div class="mc-why">NetApp&#x27;s move is driven by real product/earnings momentum, not geopolitics: fiscal Q1 2027 revenue $2.03B (+~30% YoY), EPS $2.58 vs $2.12 consensus, and FY27 guidance raised; INSIGHT 2026 announcements (Novus AI-factory </div></div></div>
+<div class="blurb"><div class="mc-what">NetApp sells data-storage systems and software that companies use to manage their data infrastructure. It operates across the Americas, Europe, the Middle East, Africa, and Asia Pacific.</div><div class="mc-why">Fiscal first-quarter revenue of $2.03B rose about 30% with EPS of $2.58 beating the $2.12 consensus, and management raised full-year guidance. New products like the Novus AI-factory storage line and partnerships with Oracle, Supermicro, and SAP are durable business wins, not rumors. Valuation is stretched and NAND margins bear watching, but the momentum is operational.</div></div></div>
 
 <div class="row hm k-stock has-blurb" data-ev="0.09709494822169325" data-r1y="1.0690522186638476">
   <div class="id"><span class="rank">5</span>
@@ -552,7 +553,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.7%</div><div class="track"><div class="bar est" style="width:48.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Avnet, Inc., engages in the distribution of electronic component technology in the Americas, Europe, the Middle East, Africa, and Asia/Pacific. The company oper</div><div class="mc-why">Blowout Q2 CY2026: revenue $8.3B +47.7% (+10.5% beat), adjusted EPS $2.28 (+182%, vs $1.77 est), and Q3 guidance ($9.15B revenue / $2.85 EPS midpoints) 18.7%/51% above consensus - the AI data-center buildout is pulling h</div></div></div>
+<div class="blurb"><div class="mc-what">Avnet is a global distributor of electronic components, selling chips and parts to manufacturers through its Electronic Components and Farnell businesses. It operates across the Americas, Europe, the Middle East, Africa, and Asia Pacific.</div><div class="mc-why">Second-quarter revenue of $8.3B jumped 48% with adjusted EPS of $2.28 — up 182% and well above the $1.77 estimate — and next quarter&#x27;s guidance sits roughly 19% above consensus on revenue. The AI data-center buildout is pulling demand hard through distribution, with industrial and automotive markets also normalizing. Distributor margins are thin and the stock has priced in much of the turnaround, but the demand is secular, not headline-driven.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.09698837084900683" data-r1y="1.2566690964502838">
   <div class="id"><span class="rank">6</span>
@@ -564,7 +565,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.7%</div><div class="track"><div class="bar est" style="width:48.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Benchmark Electronics, Inc., together with its subsidiaries, offers product design, engineering services, technology solutions, and manufacturing services in th</div><div class="mc-why">Benchmark Electronics (Tempe, AZ - US-domiciled) delivered a genuine beat-and-raise on Jul 29: revenue $756M (+17.7%) beat $720M est, adjusted EPS $0.75 (+36%) beat $0.69, record quarterly bookings, and raised FY26 reven</div></div></div>
+<div class="blurb"><div class="mc-what">Benchmark designs and manufactures electronic products for other companies, offering product design, engineering, and testing services across the Americas, Asia, and Europe. It is based in Tempe, Arizona.</div><div class="mc-why">A genuine beat-and-raise on July 29: revenue of $756M beat the $720M estimate, adjusted EPS of $0.75 beat $0.69, bookings hit a quarterly record, and full-year revenue guidance was raised above $3B for the third time. Private AI infrastructure and semiconductor equipment demand are the disclosed drivers, with operating income expected to grow up to twice as fast as revenue. It is leveraged to the AI-capex cycle and manufacturing margins are thin, but the move is on results, not rumors.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.09612069228012687" data-r1y="0.9352941618837061">
   <div class="id"><span class="rank">7</span>
@@ -576,7 +577,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.6%</div><div class="track"><div class="bar est" style="width:48.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">lower expected value than picks</div>
-<div class="blurb"><div class="mc-what">SharkNinja, Inc., a product design and technology company, engages in the provision of various solutions for consumers in the United States, China, and internat</div><div class="mc-why">Quality consumer compounder executing: Q2 sales +22.2% to $1.77B (international +36.6%), EPS +30%, raised FY26 guidance (sales +16-17%, EPS $6.45-6.55), 27.8% ROE, broad-based category growth plus TikTok Shop/DTC channel</div></div></div>
+<div class="blurb"><div class="mc-what">SharkNinja designs household products — vacuums, air fryers, coffee systems, grills, and beauty appliances — sold in the U.S., China, and internationally. It grows by launching new product categories quickly.</div><div class="mc-why">Second-quarter sales rose 22% to $1.77B with international up 37%, EPS grew 30%, and management raised full-year guidance to $6.45–$6.55 per share. Return on equity is near 28%, growth is broad across categories, and TikTok Shop and direct-to-consumer channels are adding new reach. Tariffs are a real but managed headwind; the durable driver is the pace of new-product launches.</div></div></div>
 
 <div class="row hm k-etf hm-extra has-blurb" data-ev="0.09446468135910782" data-r1y="0.3775539379764081">
   <div class="id"><span class="rank">8</span>
@@ -588,7 +589,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.4%</div><div class="track"><div class="bar est" style="width:47.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund will normally invest at least 90% of its net assets (including investment borrowings) in the common stocks and depositary receipts that comprise the in</div><div class="mc-why">Cybersecurity demand is structural, not event-driven: Gartner sees global infosec spending ~$244-249B in 2026 (+12.7%), AI security spend doubling to ~$51B, AI-driven attacks up 89% YoY, and enterprise procurement shifti</div></div></div>
+<div class="blurb"><div class="mc-what">An ETF holding U.S.-listed cybersecurity companies, tracking the Nasdaq CTA Cybersecurity Index. It is First Trust&#x27;s vehicle for the security-software theme, with about $16B in assets.</div><div class="mc-why">Cybersecurity demand is structural: global security spending is forecast near $245B in 2026, up 13%, with AI-security spending doubling and AI-driven attacks up 89% year over year. The index jumped 14% last quarter on real enterprise budget growth, and the fund captures it directly. The 63% six-month run is steep and growth multiples are sensitive to a hawkish Fed, but the spending trend behind it is durable.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.09211358947376269" data-r1y="0.4462393869802186">
   <div class="id"><span class="rank">9</span>
@@ -600,7 +601,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+9.2%</div><div class="track"><div class="bar est" style="width:46.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="why" data-cap="Why not picked">lower expected value than picks</div>
-<div class="blurb"><div class="mc-what">Nordson Corporation engineers, manufactures, and markets products and systems to dispense, apply, and control adhesives, coatings, polymers, sealants, biomateri</div><div class="mc-why">Nordson (US-domiciled, Westlake OH) reported a strong fiscal Q3 on Aug 19: adj EPS $3.25 vs $3.09 consensus, revenue $817.67M vs $779M (+10.3% y/y), and RAISED FY2026 guidance (sales $3.035-3.075B; adj EPS $11.80-12.00, </div></div></div>
+<div class="blurb"><div class="mc-what">Nordson engineers precision dispensing equipment — systems that apply adhesives, coatings, sealants, and medical components — for manufacturers worldwide. It is based in Westlake, Ohio.</div><div class="mc-why">Fiscal third-quarter adjusted EPS of $3.25 beat the $3.09 consensus on revenue of $818M, up 10%, and management raised full-year guidance with backlog up 35% and the advanced-technology division up 28%. The dividend was raised to $0.94 a quarter. This is the steadiest earnings story of the group — broad industrial-tech demand, no single event. The main risk is the stock&#x27;s multiple compressing from a high bar.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08634106520858263" data-r1y="0.6799188871821409">
   <div class="id"><span class="rank">10</span>
@@ -612,7 +613,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.6%</div><div class="track"><div class="bar est" style="width:43.2%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Healthcare cap full</div>
-<div class="blurb"><div class="mc-what">Ligand Pharmaceuticals Incorporated, a biopharmaceutical company, develops and licenses biopharmaceutical assets worldwide. It offers Pradefovir, Posaconazole, </div><div class="mc-why">Ligand Pharmaceuticals (NASDAQ:LGND, San Diego, CA) is a US-domiciled biotech that earns high-margin recurring revenue from royalty rights and partnerships on partnered drugs rather than selling its own products — a dura</div></div></div>
+<div class="blurb"><div class="mc-what">Ligand is a San Diego biotech that earns high-margin recurring revenue from royalty rights on partnered drugs, rather than selling its own medicines. Its income is spread across many products instead of riding on one drug.</div><div class="mc-why">Second-quarter EPS of $2.37 beat the $1.97 consensus on revenue up 34%, and full-year EPS guidance of $9.00–9.50 was issued. All ten covering analysts rate it a Buy, with Barclays and Citi initiating or raising targets in September. No trial readout or buyout rumor explains the run — it is compounding confidence in a broadening royalty portfolio, a far more durable base than a single-drug bet.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08512843829039674" data-r1y="1.3294205038819866">
   <div class="id"><span class="rank">11</span>
@@ -624,7 +625,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.5%</div><div class="track"><div class="bar est" style="width:42.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Okta, Inc. operates as an identity partner in the United States and internationally. It offers Single Sign-on to secure access to cloud and on-premises applicat</div><div class="mc-why">Beat-and-raise with ~29% pop; new products ~a third of bookings; Oktane 2026 AI-agent security launches (Agent SSO, Blueprint Alliance with AWS/CrowdStrike). 32 buys. Identity platform with real new-product traction and </div></div></div>
+<div class="blurb"><div class="mc-what">Okta provides identity and access management — the single sign-on and security systems companies use to control who can access their cloud and on-premises applications. It operates in the U.S. and internationally.</div><div class="mc-why">Beat-and-raise with a roughly 29% pop; new products are about a third of bookings, and the Oktane 2026 launches added AI-agent security (Agent SSO and a Blueprint Alliance with AWS and CrowdStrike). Thirty-two analysts rate it a buy. Identity is a durable franchise with real new-product traction and a fresh AI-agent growth vector; valuation is the limiter, not the business.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08459386059577131" data-r1y="0.4573791003975767">
   <div class="id"><span class="rank">12</span>
@@ -636,7 +637,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.5%</div><div class="track"><div class="bar est" style="width:42.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Remitly Global, Inc., a cross-border payment company engages in the provision of digital financial services in the United States, Canada, and internationally. I</div><div class="mc-why">Q2 beat: revenue +20.2% to $495M, huge EPS beat ($0.93 vs $0.12 est), raised FY guidance, 10M+ quarterly active customers (first time). 10 buys + 2 strong buys; BlackRock bought $410M position in Q2. Digital remittance p</div></div></div>
+<div class="blurb"><div class="mc-what">Remitly is a digital remittance company letting people send money across borders through its app and website. It serves the U.S., Canada, and international corridors.</div><div class="mc-why">Second-quarter revenue grew 20% to $495M with a huge EPS beat ($0.93 vs $0.12 estimated), full-year guidance was raised, and quarterly active customers topped 10 million for the first time. Operating margin expanded to 13.5% from 3.6%, and BlackRock bought a $410M position in the quarter. Network effects and accelerating profitability make this a durable fintech growth story, not an event trade.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08324788471549784" data-r1y="0.6675180051953113">
   <div class="id"><span class="rank">13</span>
@@ -648,7 +649,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:41.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Cisco Systems, Inc. designs, develops, and sells technologies to power, help, secure, and draw insights from the internet in the Americas, Europe, the Middle Ea</div><div class="mc-why">Operating story is strong - record Q4 FY26 (rev $17.25B +18% y/y, EPS $1.22 vs $1.17), $9.3B in FY26 hyperscaler AI orders (4.5x FY25), FY27 guide ~$72-73B revenue - and nothing here is event-driven. But the &#x27;peak growth</div></div></div>
+<div class="blurb"><div class="mc-what">Cisco designs and sells networking equipment, security, and collaboration technology that powers the internet for businesses worldwide. It is one of the largest enterprise-technology companies in the world.</div><div class="mc-why">Record fiscal fourth quarter: revenue of $17.25B up 18%, EPS of $1.22 beating $1.17, with $9.3B in hyperscaler AI orders — 4.5 times last year&#x27;s — and fiscal 2027 revenue guided near $72–73B. Nothing here is event-driven; it is enterprise and AI-infrastructure spending. The overhang is the &#x27;peak growth&#x27; narrative — margins are compressing and the stock has been flat for three months — but the dividend and $32B of recurring revenue provide a floor.</div></div></div>
 
 <div class="row hm k-etf hm-extra has-blurb" data-ev="0.0830408436562791" data-r1y="0.5093840005601862">
   <div class="id"><span class="rank">14</span>
@@ -660,7 +661,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.3%</div><div class="track"><div class="bar est" style="width:41.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund generally will invest at least 90% of its total assets in securities that comprise the underlying index. The underlying index, which is composed of sec</div><div class="mc-why">Invesco S&amp;P 500 Equal Weight Technology ($2B+ AUM, 0.40% fee) — same sector as XLK but equal-weighted, so less Apple/Microsoft/Nvidia dominance. 1y +51%, 6m +46% — the equal weight captured the broadening tech rally. Sli</div></div></div>
+<div class="blurb"><div class="mc-what">An ETF owning the technology stocks of the S&amp;P 500 in equal weights, rather than letting Apple, Microsoft, and Nvidia dominate. It is Invesco&#x27;s equal-weight take on the tech sector, with over $2B in assets.</div><div class="mc-why">Up 51% in a year and 46% in six months — the equal weighting captured the broadening tech rally beyond the mega-caps. It is slightly more dependent on that broadening continuing, but within tech it is the most diversified option. The 0.40% fee is the price of that balance.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08147810217925666" data-r1y="0.46721390749604574">
   <div class="id"><span class="rank">15</span>
@@ -672,7 +673,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.1%</div><div class="track"><div class="bar est" style="width:40.7%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">lower expected value than picks</div>
-<div class="blurb"><div class="mc-what">MSC Industrial Direct Co., Inc., together with its subsidiaries, engages in the distribution of metalworking and maintenance, repair, and operations (MRO) produ</div><div class="mc-why">Q3 sales +7.8%, EPS +41% on margin expansion, near 52-week high, earnings October 22. Well-executed cyclical industrial distributor with operational leverage. Continuation rests on sustained manufacturing demand — solid </div></div></div>
+<div class="blurb"><div class="mc-what">MSC distributes metalworking tools and maintenance, repair, and operations supplies — cutting tools, abrasives, safety gear, fasteners — to manufacturers in the U.S., Canada, Mexico, and the U.K. It is a classic industrial distributor.</div><div class="mc-why">Third-quarter sales rose 7.8% with EPS up 41% on margin expansion, and the stock sits near a 52-week high ahead of October 22 earnings. It is a well-executed cyclical with real operating leverage: when manufacturing demand holds, profits grow faster than sales. Continuation rests on that demand holding — solid but cyclical.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.08071950464249932" data-r1y="0.38641272993564657">
   <div class="id"><span class="rank">16</span>
@@ -684,7 +685,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+8.1%</div><div class="track"><div class="bar est" style="width:40.4%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
-<div class="blurb"><div class="mc-what">CNO Financial Group, Inc., through its subsidiaries, develops, markets, and administers health insurance, annuity, individual life insurance and other insurance</div><div class="mc-why">Steady insurer with no event dependence: Q2 beat Jul 30 (EPS $1.26 vs $0.97, rev +11.6%), raised 2026 op EPS guidance to $4.60-4.80, 377% RBC ratio, dividend $0.18/q. Conservative business, raised guidance, no binary cat</div></div></div>
+<div class="blurb"><div class="mc-what">CNO sells health insurance, annuities, and life insurance to middle-income pre-retirees and retirees in the U.S. — Medicare supplement, long-term care, and life policies sold by phone, online, and through agents.</div><div class="mc-why">A steady insurer with no event dependence: second-quarter EPS of $1.26 beat $0.97, revenue rose 12%, and 2026 operating EPS guidance was raised to $4.60–4.80. The capital ratio sits at a fortress-like 377% and the dividend is $0.18 a quarter. Conservative business, raised guidance, no binary catalysts — continuation is solid, just not spectacular at full valuation.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.07919765238283274" data-r1y="0.6640286308551948">
   <div class="id"><span class="rank">17</span>
@@ -696,7 +697,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.9%</div><div class="track"><div class="bar est" style="width:39.6%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Texas Instruments Incorporated designs, manufactures, and sells semiconductors to electronics designers and manufacturers in the United States, China, the rest </div><div class="mc-why">Analog leader in a genuine cyclical recovery: Q2 revenue +23% YoY to $5.46B, analog operating margin 45.6%, $6.5B trailing FCF covering a raised $1.52/q dividend — the SLAB deal adds wireless connectivity and $450M of sy</div></div></div>
+<div class="blurb"><div class="mc-what">Texas Instruments designs and manufactures analog semiconductors — the chips that manage power and signals inside electronics — sold to designers and manufacturers worldwide through its Analog and Embedded Processing divisions.</div><div class="mc-why">The analog leader is in a genuine cyclical recovery: second-quarter revenue rose 23% to $5.46B with analog operating margins near 46%, and $6.5B of trailing free cash flow covers a raised $1.52 quarterly dividend. The SLAB acquisition adds wireless connectivity and $450M of synergies, though its size makes it an uncharacteristic deal investors are right to watch. Cyclical, but the recovery is real.</div></div></div>
 
 <div class="row hm k-etf hm-extra has-blurb" data-ev="0.07904651449568278" data-r1y="0.34943245034616965">
   <div class="id"><span class="rank">18</span>
@@ -708,7 +709,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.9%</div><div class="track"><div class="bar est" style="width:39.5%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund generally will invest at least 80% of its assets in the component securities of its underlying index and in investments that have economic characterist</div><div class="mc-why">iShares Expanded Tech Sector ($5B+ AUM, 0.41% fee) — S&amp;P North American tech + tech-adjacent (internet retail, interactive media). 1y +36%, 6m +41%. Broader definition of tech captures the AI-adjacent rally; the extra cy</div></div></div>
+<div class="blurb"><div class="mc-what">An ETF tracking North American technology plus tech-adjacent companies — internet retail and interactive media alongside classic tech. It is BlackRock&#x27;s broader definition of the sector, with over $5B in assets.</div><div class="mc-why">Up 36% in a year and 41% in six months, capturing the AI-adjacent rally that pure tech definitions miss. The broader net adds a touch of cyclicality, but the demand behind it — AI infrastructure and digital platforms — is durable. A straightforward way to own tech plus its neighbors.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.0782146501578701" data-r1y="0.5552410613475367">
   <div class="id"><span class="rank">19</span>
@@ -720,7 +721,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.8%</div><div class="track"><div class="bar est" style="width:39.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
-<div class="blurb"><div class="mc-what">Affiliated Managers Group, Inc., through its affiliates, operates as an investment management company providing investment management services to mutual funds, </div><div class="mc-why">Affiliated Managers Group (US-domiciled) reported strong Q2 earnings growth Jul 31; Zacks upgraded to strong-buy Aug 4, TD Cowen holds a Buy ($454 target), consensus Buy with ~$371 average target. The business is a diver</div></div></div>
+<div class="blurb"><div class="mc-what">AMG is an asset-management company that owns stakes in a diversified group of boutique investment firms, serving mutual funds, institutions, and wealthy individuals in the U.S. It grows through its affiliate partnerships.</div><div class="mc-why">Strong second-quarter earnings growth in July earned a Zacks strong-buy upgrade in August, and TD Cowen holds a Buy with a $454 target. The diversified affiliate model has no binary catalyst — it simply compounds with markets. That is also the caveat: as an asset manager, sustained performance needs sustained market and asset levels. No earnings for about a month.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.07152363879829896" data-r1y="0.5647184171848154">
   <div class="id"><span class="rank">20</span>
@@ -732,7 +733,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.2%</div><div class="track"><div class="bar est" style="width:35.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">65%</div>
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
-<div class="blurb"><div class="mc-what">BlackRock Science and Technology Term Trust is a closed-ended equity mutual fund launched by BlackRock, Inc. The fund is managed by BlackRock Advisors, LLC. It </div><div class="mc-why">BlackRock term trust trading at a modest discount to NAV with a stable monthly $0.1625 distribution; upside comes from AI/tech NAV growth plus discount convergence into the ~2031 liquidation — a fund-quality and discount</div></div></div>
+<div class="blurb"><div class="mc-what">A BlackRock closed-end fund investing in science and technology stocks, managed by BlackRock Advisors. It pays a steady monthly distribution and is structured to liquidate around 2031.</div><div class="mc-why">Trading at a modest discount to net asset value with a stable $0.1625 monthly distribution, the upside comes from two durable sources: AI and tech driving the portfolio&#x27;s value, and the discount narrowing as the 2031 liquidation approaches. This is a fund-quality and discount story, not an event trade.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06990820590170421" data-r1y="0.9011385387277544">
   <div class="id"><span class="rank">21</span>
@@ -744,7 +745,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.0%</div><div class="track"><div class="bar est" style="width:35.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Healthcare cap full</div>
-<div class="blurb"><div class="mc-what">Lantheus Holdings, Inc. develops, manufactures, and commercializes diagnostic and therapeutic products that assist clinicians in diagnosis and treatment of hear</div><div class="mc-why">Radiopharma leader (PYLARIFY prostate PET, DEFINITY) with a durable growth engine: CMS granted Transitional Pass-Through status for PYLARIFY TruVu effective Oct 1, 2026, securing separate Medicare payment, while the PSMA</div></div></div>
+<div class="blurb"><div class="mc-what">Lantheus develops and sells diagnostic imaging products that help doctors detect heart disease, cancer, and other conditions — led by PYLARIFY for prostate-cancer imaging and DEFINITY for ultrasound. It sells worldwide.</div><div class="mc-why">The radiopharma leader has a durable growth engine: Medicare granted PYLARIFY TruVu separate payment status effective October 2026, and the prostate-imaging market is compounding near 29% a year. The company is profitable with 22% return on equity and trades near 16 times forward earnings — reasonable for this growth. Regulatory wins like this one are the business model working, not luck.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06954897316972933" data-r1y="0.6429771673563964">
   <div class="id"><span class="rank">22</span>
@@ -756,7 +757,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+7.0%</div><div class="track"><div class="bar est" style="width:34.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Real Estate cap full</div>
-<div class="blurb"><div class="mc-what">DiamondRock Hospitality Company is a self-advised real estate investment trust (REIT) that is an owner of a leading portfolio of geographically diversified hote</div><div class="mc-why">DRH&#x27;s gains are operational: Q2 EPS $0.44 vs $0.22 consensus, revenue +4.1%, comparable RevPAR +7%, adjusted FFO +25.7% YoY, full-year 2026 guidance raised (RevPAR growth 2.5-4%, adjusted EBITDA $310-320M, FFO $1.18-1.23</div></div></div>
+<div class="blurb"><div class="mc-what">DiamondRock is a real-estate investment trust owning 34 premium hotels with 9,400 rooms, concentrated in leisure destinations and major gateway markets. It is self-advised and self-managed.</div><div class="mc-why">The gains are operational: second-quarter EPS of $0.44 doubled the $0.22 consensus, revenue rose 4%, comparable revenue per room grew 7%, and funds from operations jumped 26%. Full-year guidance was raised and the dividend lifted 22% to $0.11. Urban hotels accelerated with real margin expansion. Lodging is cyclical and a one-time tax benefit flatters the numbers, but demand and discipline are both showing.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06777741863075994" data-r1y="0.3644235643639919">
   <div class="id"><span class="rank">23</span>
@@ -768,7 +769,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.8%</div><div class="track"><div class="bar est" style="width:33.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">75%</div>
   <div class="why" data-cap="Why not picked">Financial Services cap full</div>
-<div class="blurb"><div class="mc-what">Principal Financial Group, Inc. provides retirement, asset management, and insurance products and services to businesses, individuals, and institutional clients</div><div class="mc-why">Beam Benefits acquisition closed Sep 1 (25k SMB customers, ~$175M 2025 premiums), 2026 capital-deployment and EPS targets unchanged; Q2 operating EPS beat ($2.50 vs $2.34), dividend raised to $0.84/q, KBW PT raised to $1</div></div></div>
+<div class="blurb"><div class="mc-what">Principal provides retirement plans, asset management, and insurance to businesses, individuals, and institutions worldwide. It is one of the large diversified U.S. financial-services firms.</div><div class="mc-why">The Beam Benefits acquisition closed September 1, adding 25,000 small-business customers and about $175M of annual premiums, while 2026 capital and earnings targets were left unchanged. Second-quarter operating EPS of $2.50 beat $2.34, the dividend was raised to $0.84 a quarter, and KBW lifted its target to $117. The three-month return is flat — no vertical spike — and nothing here depends on a binary event.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06592360642234738" data-r1y="0.835270281989791">
   <div class="id"><span class="rank">24</span>
@@ -780,7 +781,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.6%</div><div class="track"><div class="bar est" style="width:33.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Plexus Corp. provides electronic manufacturing services in the United States, the Asia-Pacific, Europe, the Middle East, and Africa. The company offers design, </div><div class="mc-why">Well-run EMS provider with durable demand signals: record $1.305B quarterly revenue (+28% YoY), raised guidance (&gt;20% 2026 growth), 31 new program wins ($255M annualized) concentrated in data-center power, semiconductor </div></div></div>
+<div class="blurb"><div class="mc-what">Plexus provides electronic manufacturing services — building complex electronic products for other companies — in the U.S., Asia Pacific, Europe, the Middle East, and Africa.</div><div class="mc-why">Record quarterly revenue of $1.305B, up 28%, with guidance raised to over 20% growth for 2026 and 31 new program wins worth $255M annualized. The wins are concentrated in data-center power, semiconductor equipment, automation, and defense — broad end-market strength, not a single event. A well-run manufacturer riding durable demand.</div></div></div>
 
 <div class="row hm k-etf hm-extra has-blurb" data-ev="0.06412615410390653" data-r1y="0.491694749840077">
   <div class="id"><span class="rank">25</span>
@@ -792,7 +793,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.4%</div><div class="track"><div class="bar est" style="width:32.1%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">The fund will normally invest at least 80% of its total assets in securities of the index or in depositary receipts representing securities of the index. The in</div><div class="mc-why">Robo Global Artificial Intelligence ETF — global (US-heavy) AI index at 52-week highs on genuine AI infrastructure demand. The theme has durable multi-year demand behind it, though the price (P/E 39.8, beta 1.49) demands</div></div></div>
+<div class="blurb"><div class="mc-what">An ETF holding public companies that earn a significant share of revenue from artificial intelligence, as measured by the Robo Global index. It sits at 52-week highs on genuine AI infrastructure demand.</div><div class="mc-why">The theme has durable multi-year demand behind it — AI buildout spending is real and recurring, not a headline spike, and the fund is global with a U.S. emphasis. The caveat is price: at a 39.8 P/E and 1.49 beta, the market demands that the growth continue. The demand is likely to; the multiple leaves little room for disappointment.</div></div></div>
 
 <div class="row hm k-etf hm-extra has-blurb" data-ev="0.06370482491068878" data-r1y="0.20924887815339654">
   <div class="id"><span class="rank">26</span>
@@ -804,7 +805,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.4%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">overlaps XLK (33%) — kept the higher-EV fund</div>
-<div class="blurb"><div class="mc-what">The fund invests, under normal circumstances, at least 80% of its net assets, plus any borrowings for investment purposes, in constituents of the index and/or i</div><div class="mc-why">WisdomTree U.S. Quality Growth Fund: $3B AUM, YTD +18.5% vs S&amp;P 500 +12.8%, at 52-week high, holdings aggregate Moderate Buy. Rules-based quality+growth screen on US large/mid caps — a durable factor strategy executing w</div></div></div>
+<div class="blurb"><div class="mc-what">A WisdomTree ETF applying a rules-based screen for quality and growth among U.S. large- and mid-cap stocks, rebalanced twice a year. About $3B in assets.</div><div class="mc-why">Up 18.5% year-to-date versus 12.8% for the S&amp;P 500, sitting at a 52-week high with holdings carrying an aggregate Moderate Buy. The quality-plus-growth screen is a durable factor strategy executing well — systematic, not story-driven. Rules-based selection means no manager bets and no event risk.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06355962819548985" data-r1y="0.3848880723015389">
   <div class="id"><span class="rank">27</span>
@@ -816,7 +817,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.4%</div><div class="track"><div class="bar est" style="width:31.8%"></div></div></div>
   <div class="cf" data-cap="Confidence">80%</div>
   <div class="why" data-cap="Why not picked">lower expected value than picks</div>
-<div class="blurb"><div class="mc-what">AMETEK, Inc. manufactures and sells electronic instruments (EIG) and electromechanical (EMG) devices in the United States and internationally. It operates throu</div><div class="mc-why">AMETEK (Berwyn, PA - US-domiciled) posted record Q2 on Aug 4: revenue $2.04B (+15%), adjusted EPS $2.09 (+17%, beat $1.99 est), record orders $2.3B (+28%), backlog $4.11B with 80% shippable within 12 months, and raised F</div></div></div>
+<div class="blurb"><div class="mc-what">AMETEK manufactures electronic instruments and electromechanical devices — precision measurement and motion-control products — sold in the U.S. and internationally. It is based in Berwyn, Pennsylvania.</div><div class="mc-why">Record second quarter: revenue of $2.04B up 15%, adjusted EPS of $2.09 beating $1.99, record orders of $2.3B up 28%, and a $4.11B backlog with 80% shippable within a year. Full-year EPS guidance was raised to $8.20–8.30. The $5B Indicor acquisition is modestly accretive and folds into existing divisions. Demand tied to AI infrastructure and defense modernization is durable, not rumor-driven.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06261767825371052" data-r1y="1.0338765510610601">
   <div class="id"><span class="rank">28</span>
@@ -828,7 +829,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.3%</div><div class="track"><div class="bar est" style="width:31.3%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">lower expected value than picks</div>
-<div class="blurb"><div class="mc-what">The Chefs&#x27; Warehouse, Inc., together with its subsidiaries, distributes specialty food and center-of-the-plate products in the United States, the Middle East, a</div><div class="mc-why">Specialty food distributor with a real operating story (Q2 revenue +13% beat, EPS beat, portfolio shifting to higher-margin specialty customers), but at an all-time high on a 42x forward multiple the market has priced in</div></div></div>
+<div class="blurb"><div class="mc-what">Chefs&#x27; Warehouse distributes specialty foods — artisan cheeses, truffles, caviar, custom-cut meats and seafood — to restaurants and chefs in the U.S., the Middle East, and Canada. It is shifting its mix toward higher-margin specialty customers.</div><div class="mc-why">A real operating story: second-quarter revenue grew 13% with an EPS beat, and the portfolio keeps tilting toward higher-margin specialty customers that value the service. Fine dining and premium grocery demand has proven resilient. The caution is price — at an all-time high on 42 times forward earnings, the market has priced in years of perfect execution.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.06194061448530595" data-r1y="0.7498626416332954">
   <div class="id"><span class="rank">29</span>
@@ -840,7 +841,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.2%</div><div class="track"><div class="bar est" style="width:31.0%"></div></div></div>
   <div class="cf" data-cap="Confidence">70%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">Analog Devices, Inc. engages in the design, manufacture, testing, and marketing of integrated circuits (ICs), software, and subsystems products in the United St</div><div class="mc-why">Fresh, well-documented story: Aug 19 Q3 beat (EPS $3.45 vs $3.34, rev +39.2% y/y), Q4 guidance of $3.71-4.01 EPS, Zacks highlights broad industrial recovery + AI/data-center exposure. Run-up rides the semi cycle recovery</div></div></div>
+<div class="blurb"><div class="mc-what">Analog Devices designs and manufactures integrated circuits, software, and subsystems — the analog and mixed-signal chips at the heart of industrial, automotive, and communications equipment — sold worldwide.</div><div class="mc-why">August third-quarter EPS of $3.45 beat $3.34 on revenue up 39%, with fourth-quarter guidance of $3.71–4.01 EPS. The run rides a broad industrial recovery plus AI and data-center exposure — a genuine semiconductor cycle, not a binary event or commodity spike. Valuation carries a premium and insiders have been selling steadily, but the cycle is the story.</div></div></div>
 
 <div class="row hm k-stock hm-extra has-blurb" data-ev="0.061730906490712015" data-r1y="0.5627623907669548">
   <div class="id"><span class="rank">30</span>
@@ -852,7 +853,7 @@ a.navbtn:hover { background:
   <div class="cell" data-cap="Expected value"><div class="lbl est">+6.2%</div><div class="track"><div class="bar est" style="width:30.9%"></div></div></div>
   <div class="cf" data-cap="Confidence">60%</div>
   <div class="why" data-cap="Why not picked">Technology cap full</div>
-<div class="blurb"><div class="mc-what">PC Connection, Inc., together with its subsidiaries, provides various information technology (IT) solutions worldwide. It operates in three segments: Connection</div><div class="mc-why">Run-up (+52.8% 1y, concentrated in last 6m) was earned by a real Q2 beat (EPS $1.31 vs $1.00, rev $854M vs $765M) and rising estimates in a steady IT-reseller business - not event-driven. But analyst sentiment has just t</div></div></div>
+<div class="blurb"><div class="mc-what">PC Connection provides information-technology solutions to businesses, enterprises, and public-sector customers through three divisions — enterprise, business, and public sector. It is an IT reseller and services provider.</div><div class="mc-why">The run-up was earned: a real second-quarter beat with EPS of $1.31 versus $1.00 and revenue of $854M versus $765M, in a steady IT-reseller business — not event-driven. Analyst sentiment has just cooled, with Zacks cutting to Hold and consensus targets below the price. Durable business, cooling momentum — the bull case is the operations, now at a cheaper debate.</div></div></div>
 </div>
 <div class="hm-more"><button class="sbtn" id="hm-toggle" data-n="30">Show all 30 ↓</button></div>
 
