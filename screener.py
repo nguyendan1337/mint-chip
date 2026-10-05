@@ -1616,11 +1616,32 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # The near-miss table Dan asked for — alternatives worth a look, with the
     # reason each missed (cap, overlap, or final-score order).
     hm_html = ""
-    # --- Market chat: reader-facing plain-language section (market overview,
-    # per-sector paragraphs, per-ticker what/why). Content is written by the
-    # researcher into market_chat.json; the chart only renders it.
+    # --- Market today: single reader-facing section (themed blocks with
+    # colored bold leads). Content is written by the researcher into
+    # market_chat.json as "market_today": [{"tone": "good"|"bad"|"verdict",
+    # "lead": "...", "body": "..."}]; the chart only renders it.
+    _TONE_COLORS = {"good": "#4ade80", "bad": "#f87171",
+                    "verdict": "#ffd54f"}
     mc_html = ""
-    if market_chat and market_chat.get("sectors"):
+    _mt = market_chat.get("market_today") if market_chat else None
+    if _mt:
+        _parts = ['<h2>Market today</h2>', '<div class="note mc-today">']
+        for _b in _mt:
+            _tone = str(_b.get("tone", "")).strip().lower()
+            _color = _TONE_COLORS.get(_tone, "#cfd6cf")
+            _lead = str(_b.get("lead", "")).strip()
+            _body = str(_b.get("body", "")).strip()
+            if not _lead and not _body:
+                continue
+            _parts.append(
+                f'<p><b style="color:{_color}">{_html.escape(_lead)}</b>'
+                + (f' {_html.escape(_body)}' if _body else '') + '</p>')
+        _parts.append(
+            '<p class="fineprint">As of ' +
+            _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
+        mc_html = "\n".join(_parts)
+    elif market_chat and market_chat.get("sectors"):
+        # legacy fallback: overview + per-sector expandables
         _parts = ['<h2>Market chat</h2>']
         _ov = str(market_chat.get("overview") or "").strip()
         if _ov:
