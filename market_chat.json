@@ -1,0 +1,384 @@
+{
+ "asof": "2026-10-05",
+ "market_today": [
+  {
+   "tone": "good",
+   "lead": "AI spending is still the engine.",
+   "body": "The AI infrastructure buildout keeps compounding \u2014 record memory-test revenue, book-to-bill above 2, and data-center names raising guidance. Tech picks like XLK and newcomers WST and IDT are riding real order books, not multiple expansion."
+  },
+  {
+   "tone": "good",
+   "lead": "Boring businesses are earning their keep.",
+   "body": "The top of the stock list is full of unglamorous compounders \u2014 asset managers, industrial suppliers, a REIT, an occupational-health chain. In a market priced for perfection, steady cash flow is doing the quiet work."
+  },
+  {
+   "tone": "bad",
+   "lead": "Borrowing costs are the headwind.",
+   "body": "The 10-year Treasury sits at a 24-year high near 5.3%, which means safe bonds pay enough to compete with stocks for investor money. Growth names are priced for perfection against that backdrop \u2014 any earnings miss gets punished."
+  },
+  {
+   "tone": "bad",
+   "lead": "Oil is still the wild card.",
+   "body": "Month seven of the US-Iran conflict with Hormuz constrained and Brent near $100. OPEC meets today and the G-7 just released reserves. An escalation reprices inflation expectations and with them the entire rate outlook."
+  },
+  {
+   "tone": "verdict",
+   "lead": "Bottom line:",
+   "body": "Two markets in one: AI capex and steady compounders are working, while rates and oil keep everyone honest. The new momentum treatment is doing its job \u2014 today's list favors sustained trends over last month's spikes."
+  }
+ ],
+ "honorable": [
+  {
+   "ticker": "VGT",
+   "kind": "stock",
+   "name": "Vanguard Information Technology Index Fund ETF Shares",
+   "what": "The fund employs an indexing investment approach designed to track the performance of the index, an index made up of stocks of large, mid-size, and small U.S. c",
+   "why": "Vanguard Information Technology ETF ($100B+ AUM, 0.10% fee) \u2014 ~300 US tech stocks, broader than XLK with mid-cap tech included. 1y +36%, 6m +44% riding the same AI capex cycle. Vanguard scale and low fee make it a durabl"
+  },
+  {
+   "ticker": "IYW",
+   "kind": "stock",
+   "name": "iShares U.S. Technology ETF",
+   "what": "The fund generally will invest at least 80% of its assets in the component securities of its underlying index. The underlying index measures the performance of ",
+   "why": "iShares US Technology ($20B+ AUM, 0.40% fee) \u2014 Russell 1000 tech/growth-tilted, heavier software/services than XLK. 1y +37%, 6m +45%. Same AI-infrastructure thesis as the other tech ETFs; fee is higher than VGT/XLK for s"
+  },
+  {
+   "ticker": "FTEC",
+   "kind": "stock",
+   "name": "Fidelity MSCI Information Technology Index ETF",
+   "what": "The fund invests at least 80% of assets in securities included in the fund's underlying index. The fund's underlying index is the MSCI USA IMI Information Techn",
+   "why": "Fidelity MSCI Information Technology ($15B+ AUM, 0.08% fee) \u2014 MSCI USA IMI tech index, ~300 names including mid/small tech. 1y +37%, 6m +44%. Cheapest of the big tech ETFs; thesis is the durable AI/enterprise spend cycle"
+  },
+  {
+   "ticker": "NTAP",
+   "kind": "stock",
+   "name": "NetApp, Inc.",
+   "what": "NetApp, Inc. provides a range of enterprise software, systems, and services that customers use to transform their data infrastructures in the United States, Can",
+   "why": "NetApp's move is driven by real product/earnings momentum, not geopolitics: fiscal Q1 2027 revenue $2.03B (+~30% YoY), EPS $2.58 vs $2.12 consensus, and FY27 guidance raised; INSIGHT 2026 announcements (Novus AI-factory "
+  },
+  {
+   "ticker": "AVT",
+   "kind": "stock",
+   "name": "Avnet, Inc.",
+   "what": "Avnet, Inc., engages in the distribution of electronic component technology in the Americas, Europe, the Middle East, Africa, and Asia/Pacific. The company oper",
+   "why": "Blowout Q2 CY2026: revenue $8.3B +47.7% (+10.5% beat), adjusted EPS $2.28 (+182%, vs $1.77 est), and Q3 guidance ($9.15B revenue / $2.85 EPS midpoints) 18.7%/51% above consensus - the AI data-center buildout is pulling h"
+  },
+  {
+   "ticker": "BHE",
+   "kind": "stock",
+   "name": "Benchmark Electronics, Inc.",
+   "what": "Benchmark Electronics, Inc., together with its subsidiaries, offers product design, engineering services, technology solutions, and manufacturing services in th",
+   "why": "Benchmark Electronics (Tempe, AZ - US-domiciled) delivered a genuine beat-and-raise on Jul 29: revenue $756M (+17.7%) beat $720M est, adjusted EPS $0.75 (+36%) beat $0.69, record quarterly bookings, and raised FY26 reven"
+  },
+  {
+   "ticker": "SN",
+   "kind": "stock",
+   "name": "SharkNinja, Inc.",
+   "what": "SharkNinja, Inc., a product design and technology company, engages in the provision of various solutions for consumers in the United States, China, and internat",
+   "why": "Quality consumer compounder executing: Q2 sales +22.2% to $1.77B (international +36.6%), EPS +30%, raised FY26 guidance (sales +16-17%, EPS $6.45-6.55), 27.8% ROE, broad-based category growth plus TikTok Shop/DTC channel"
+  },
+  {
+   "ticker": "CIBR",
+   "kind": "stock",
+   "name": "First Trust NASDAQ Cybersecurity ETF",
+   "what": "The fund will normally invest at least 90% of its net assets (including investment borrowings) in the common stocks and depositary receipts that comprise the in",
+   "why": "Cybersecurity demand is structural, not event-driven: Gartner sees global infosec spending ~$244-249B in 2026 (+12.7%), AI security spend doubling to ~$51B, AI-driven attacks up 89% YoY, and enterprise procurement shifti"
+  },
+  {
+   "ticker": "NDSN",
+   "kind": "stock",
+   "name": "Nordson Corporation",
+   "what": "Nordson Corporation engineers, manufactures, and markets products and systems to dispense, apply, and control adhesives, coatings, polymers, sealants, biomateri",
+   "why": "Nordson (US-domiciled, Westlake OH) reported a strong fiscal Q3 on Aug 19: adj EPS $3.25 vs $3.09 consensus, revenue $817.67M vs $779M (+10.3% y/y), and RAISED FY2026 guidance (sales $3.035-3.075B; adj EPS $11.80-12.00, "
+  },
+  {
+   "ticker": "LGND",
+   "kind": "stock",
+   "name": "Ligand Pharmaceuticals Incorporated",
+   "what": "Ligand Pharmaceuticals Incorporated, a biopharmaceutical company, develops and licenses biopharmaceutical assets worldwide. It offers Pradefovir, Posaconazole, ",
+   "why": "Ligand Pharmaceuticals (NASDAQ:LGND, San Diego, CA) is a US-domiciled biotech that earns high-margin recurring revenue from royalty rights and partnerships on partnered drugs rather than selling its own products \u2014 a dura"
+  },
+  {
+   "ticker": "OKTA",
+   "kind": "stock",
+   "name": "Okta, Inc.",
+   "what": "Okta, Inc. operates as an identity partner in the United States and internationally. It offers Single Sign-on to secure access to cloud and on-premises applicat",
+   "why": "Beat-and-raise with ~29% pop; new products ~a third of bookings; Oktane 2026 AI-agent security launches (Agent SSO, Blueprint Alliance with AWS/CrowdStrike). 32 buys. Identity platform with real new-product traction and "
+  },
+  {
+   "ticker": "RELY",
+   "kind": "stock",
+   "name": "Remitly Global, Inc.",
+   "what": "Remitly Global, Inc., a cross-border payment company engages in the provision of digital financial services in the United States, Canada, and internationally. I",
+   "why": "Q2 beat: revenue +20.2% to $495M, huge EPS beat ($0.93 vs $0.12 est), raised FY guidance, 10M+ quarterly active customers (first time). 10 buys + 2 strong buys; BlackRock bought $410M position in Q2. Digital remittance p"
+  },
+  {
+   "ticker": "CSCO",
+   "kind": "stock",
+   "name": "Cisco Systems, Inc.",
+   "what": "Cisco Systems, Inc. designs, develops, and sells technologies to power, help, secure, and draw insights from the internet in the Americas, Europe, the Middle Ea",
+   "why": "Operating story is strong - record Q4 FY26 (rev $17.25B +18% y/y, EPS $1.22 vs $1.17), $9.3B in FY26 hyperscaler AI orders (4.5x FY25), FY27 guide ~$72-73B revenue - and nothing here is event-driven. But the 'peak growth"
+  },
+  {
+   "ticker": "RSPT",
+   "kind": "stock",
+   "name": "Invesco S&P 500 Equal Weight Technology ETF",
+   "what": "The fund generally will invest at least 90% of its total assets in securities that comprise the underlying index. The underlying index, which is composed of sec",
+   "why": "Invesco S&P 500 Equal Weight Technology ($2B+ AUM, 0.40% fee) \u2014 same sector as XLK but equal-weighted, so less Apple/Microsoft/Nvidia dominance. 1y +51%, 6m +46% \u2014 the equal weight captured the broadening tech rally. Sli"
+  },
+  {
+   "ticker": "MSM",
+   "kind": "stock",
+   "name": "MSC Industrial Direct Co., Inc.",
+   "what": "MSC Industrial Direct Co., Inc., together with its subsidiaries, engages in the distribution of metalworking and maintenance, repair, and operations (MRO) produ",
+   "why": "Q3 sales +7.8%, EPS +41% on margin expansion, near 52-week high, earnings October 22. Well-executed cyclical industrial distributor with operational leverage. Continuation rests on sustained manufacturing demand \u2014 solid "
+  },
+  {
+   "ticker": "CNO",
+   "kind": "stock",
+   "name": "CNO Financial Group, Inc.",
+   "what": "CNO Financial Group, Inc., through its subsidiaries, develops, markets, and administers health insurance, annuity, individual life insurance and other insurance",
+   "why": "Steady insurer with no event dependence: Q2 beat Jul 30 (EPS $1.26 vs $0.97, rev +11.6%), raised 2026 op EPS guidance to $4.60-4.80, 377% RBC ratio, dividend $0.18/q. Conservative business, raised guidance, no binary cat"
+  },
+  {
+   "ticker": "TXN",
+   "kind": "stock",
+   "name": "Texas Instruments Incorporated",
+   "what": "Texas Instruments Incorporated designs, manufactures, and sells semiconductors to electronics designers and manufacturers in the United States, China, the rest ",
+   "why": "Analog leader in a genuine cyclical recovery: Q2 revenue +23% YoY to $5.46B, analog operating margin 45.6%, $6.5B trailing FCF covering a raised $1.52/q dividend \u2014 the SLAB deal adds wireless connectivity and $450M of sy"
+  },
+  {
+   "ticker": "IGM",
+   "kind": "stock",
+   "name": "iShares Expanded Tech Sector ETF",
+   "what": "The fund generally will invest at least 80% of its assets in the component securities of its underlying index and in investments that have economic characterist",
+   "why": "iShares Expanded Tech Sector ($5B+ AUM, 0.41% fee) \u2014 S&P North American tech + tech-adjacent (internet retail, interactive media). 1y +36%, 6m +41%. Broader definition of tech captures the AI-adjacent rally; the extra cy"
+  },
+  {
+   "ticker": "AMG",
+   "kind": "stock",
+   "name": "Affiliated Managers Group, Inc.",
+   "what": "Affiliated Managers Group, Inc., through its affiliates, operates as an investment management company providing investment management services to mutual funds, ",
+   "why": "Affiliated Managers Group (US-domiciled) reported strong Q2 earnings growth Jul 31; Zacks upgraded to strong-buy Aug 4, TD Cowen holds a Buy ($454 target), consensus Buy with ~$371 average target. The business is a diver"
+  },
+  {
+   "ticker": "BSTZ",
+   "kind": "stock",
+   "name": "BlackRock Science and Technology Term Trust",
+   "what": "BlackRock Science and Technology Term Trust is a closed-ended equity mutual fund launched by BlackRock, Inc. The fund is managed by BlackRock Advisors, LLC. It ",
+   "why": "BlackRock term trust trading at a modest discount to NAV with a stable monthly $0.1625 distribution; upside comes from AI/tech NAV growth plus discount convergence into the ~2031 liquidation \u2014 a fund-quality and discount"
+  },
+  {
+   "ticker": "LNTH",
+   "kind": "stock",
+   "name": "Lantheus Holdings, Inc.",
+   "what": "Lantheus Holdings, Inc. develops, manufactures, and commercializes diagnostic and therapeutic products that assist clinicians in diagnosis and treatment of hear",
+   "why": "Radiopharma leader (PYLARIFY prostate PET, DEFINITY) with a durable growth engine: CMS granted Transitional Pass-Through status for PYLARIFY TruVu effective Oct 1, 2026, securing separate Medicare payment, while the PSMA"
+  },
+  {
+   "ticker": "DRH",
+   "kind": "stock",
+   "name": "DiamondRock Hospitality Company",
+   "what": "DiamondRock Hospitality Company is a self-advised real estate investment trust (REIT) that is an owner of a leading portfolio of geographically diversified hote",
+   "why": "DRH's gains are operational: Q2 EPS $0.44 vs $0.22 consensus, revenue +4.1%, comparable RevPAR +7%, adjusted FFO +25.7% YoY, full-year 2026 guidance raised (RevPAR growth 2.5-4%, adjusted EBITDA $310-320M, FFO $1.18-1.23"
+  },
+  {
+   "ticker": "PFG",
+   "kind": "stock",
+   "name": "Principal Financial Group, Inc.",
+   "what": "Principal Financial Group, Inc. provides retirement, asset management, and insurance products and services to businesses, individuals, and institutional clients",
+   "why": "Beam Benefits acquisition closed Sep 1 (25k SMB customers, ~$175M 2025 premiums), 2026 capital-deployment and EPS targets unchanged; Q2 operating EPS beat ($2.50 vs $2.34), dividend raised to $0.84/q, KBW PT raised to $1"
+  },
+  {
+   "ticker": "PLXS",
+   "kind": "stock",
+   "name": "Plexus Corp.",
+   "what": "Plexus Corp. provides electronic manufacturing services in the United States, the Asia-Pacific, Europe, the Middle East, and Africa. The company offers design, ",
+   "why": "Well-run EMS provider with durable demand signals: record $1.305B quarterly revenue (+28% YoY), raised guidance (>20% 2026 growth), 31 new program wins ($255M annualized) concentrated in data-center power, semiconductor "
+  },
+  {
+   "ticker": "THNQ",
+   "kind": "stock",
+   "name": "Robo Global Artificial Intelligence ETF",
+   "what": "The fund will normally invest at least 80% of its total assets in securities of the index or in depositary receipts representing securities of the index. The in",
+   "why": "Robo Global Artificial Intelligence ETF \u2014 global (US-heavy) AI index at 52-week highs on genuine AI infrastructure demand. The theme has durable multi-year demand behind it, though the price (P/E 39.8, beta 1.49) demands"
+  },
+  {
+   "ticker": "QGRW",
+   "kind": "stock",
+   "name": "Wisdomtree U.S. Quality Growth Fund",
+   "what": "The fund invests, under normal circumstances, at least 80% of its net assets, plus any borrowings for investment purposes, in constituents of the index and/or i",
+   "why": "WisdomTree U.S. Quality Growth Fund: $3B AUM, YTD +18.5% vs S&P 500 +12.8%, at 52-week high, holdings aggregate Moderate Buy. Rules-based quality+growth screen on US large/mid caps \u2014 a durable factor strategy executing w"
+  },
+  {
+   "ticker": "AME",
+   "kind": "stock",
+   "name": "AMETEK, Inc.",
+   "what": "AMETEK, Inc. manufactures and sells electronic instruments (EIG) and electromechanical (EMG) devices in the United States and internationally. It operates throu",
+   "why": "AMETEK (Berwyn, PA - US-domiciled) posted record Q2 on Aug 4: revenue $2.04B (+15%), adjusted EPS $2.09 (+17%, beat $1.99 est), record orders $2.3B (+28%), backlog $4.11B with 80% shippable within 12 months, and raised F"
+  },
+  {
+   "ticker": "CHEF",
+   "kind": "stock",
+   "name": "The Chefs' Warehouse, Inc.",
+   "what": "The Chefs' Warehouse, Inc., together with its subsidiaries, distributes specialty food and center-of-the-plate products in the United States, the Middle East, a",
+   "why": "Specialty food distributor with a real operating story (Q2 revenue +13% beat, EPS beat, portfolio shifting to higher-margin specialty customers), but at an all-time high on a 42x forward multiple the market has priced in"
+  },
+  {
+   "ticker": "ADI",
+   "kind": "stock",
+   "name": "Analog Devices, Inc.",
+   "what": "Analog Devices, Inc. engages in the design, manufacture, testing, and marketing of integrated circuits (ICs), software, and subsystems products in the United St",
+   "why": "Fresh, well-documented story: Aug 19 Q3 beat (EPS $3.45 vs $3.34, rev +39.2% y/y), Q4 guidance of $3.71-4.01 EPS, Zacks highlights broad industrial recovery + AI/data-center exposure. Run-up rides the semi cycle recovery"
+  },
+  {
+   "ticker": "CNXN",
+   "kind": "stock",
+   "name": "PC Connection, Inc.",
+   "what": "PC Connection, Inc., together with its subsidiaries, provides various information technology (IT) solutions worldwide. It operates in three segments: Connection",
+   "why": "Run-up (+52.8% 1y, concentrated in last 6m) was earned by a real Q2 beat (EPS $1.31 vs $1.00, rev $854M vs $765M) and rising estimates in a steady IT-reseller business - not event-driven. But analyst sentiment has just t"
+  }
+ ],
+ "tickers": [
+  {
+   "ticker": "AAMI",
+   "kind": "stock",
+   "name": "Acadian Asset Management",
+   "what": "Asset management holding company running systematic (quant) investment strategies.",
+   "why": "Q2 EPS beat by 28%, revenue up 45%, record $233B assets with 10 straight quarters of inflows \u2014 the run is operational, not event-driven."
+  },
+  {
+   "ticker": "FTNT",
+   "kind": "stock",
+   "name": "Fortinet",
+   "what": "Cybersecurity company selling network security and AI-driven security operations.",
+   "why": "Q2 revenue up 26%, billings up 33%, raised full-year guidance; expanding AI attack surfaces are a durable tailwind for security spending."
+  },
+  {
+   "ticker": "WST",
+   "kind": "stock",
+   "name": "West Pharmaceutical Services",
+   "what": "Makes containment and delivery systems for injectable drugs.",
+   "why": "Four straight earnings beats, raised 2026 guidance, Morgan Stanley upgraded to Overweight \u2014 a century-old franchise executing, not a headline trade."
+  },
+  {
+   "ticker": "VCTR",
+   "kind": "stock",
+   "name": "Victory Capital",
+   "what": "Asset manager with $360B in client assets across funds and ETFs.",
+   "why": "Record Q2 with 56% EBITDA margins and steady inflows; growth is broad-based across international, institutional, and ETF channels."
+  },
+  {
+   "ticker": "IEX",
+   "kind": "stock",
+   "name": "IDEX Corp",
+   "what": "Diversified industrial conglomerate making pumps, valves, and applied fluidics.",
+   "why": "Q2 beat with raised guidance and a 16th straight annual dividend hike; multiple analysts raised targets on durable industrial demand."
+  },
+  {
+   "ticker": "IDT",
+   "kind": "stock",
+   "name": "IDT Corp",
+   "what": "Communications and payments company (NRS point-of-sale, fintech, net2phone).",
+   "why": "Record FY2026 results with three growing segments and FY2027 guidance for double-digit profit growth \u2014 no single event behind it."
+  },
+  {
+   "ticker": "ARW",
+   "kind": "stock",
+   "name": "Arrow Electronics",
+   "what": "Global distributor of electronic components and enterprise computing.",
+   "why": "Three straight quarters of triple-digit EPS growth plus new HPE and IBM distribution deals \u2014 commercial wins, not binary events."
+  },
+  {
+   "ticker": "APLE",
+   "kind": "stock",
+   "name": "Apple Hospitality REIT",
+   "what": "REIT owning upscale hotels across the US.",
+   "why": "Pays a ~6.2% monthly distribution backed by a Q2 beat; analysts upgraded on a strong fall convention and travel outlook."
+  },
+  {
+   "ticker": "CON",
+   "kind": "stock",
+   "name": "Concentra Group",
+   "what": "Largest US provider of occupational health services.",
+   "why": "Four straight earnings beats in a recession-resilient business, with fresh analyst upgrades across the board."
+  },
+  {
+   "ticker": "PK",
+   "kind": "stock",
+   "name": "Park Hotels & Resorts",
+   "what": "REIT owning large hotels including iconic resorts.",
+   "why": "Raised RevPAR guidance, repaid a $1.3B Hawaii loan, reopened Royal Palm \u2014 fundamentals, not events, though lodging is cyclical."
+  },
+  {
+   "ticker": "XLK",
+   "kind": "etf",
+   "name": "Technology Select Sector SPDR",
+   "what": "S&P 500 technology sector ETF (Apple, Microsoft, Nvidia on top).",
+   "why": "Riding the AI infrastructure buildout \u2014 hyperscalers spending ~$700-800B this year; the risk is the ROI debate, not a single catalyst."
+  },
+  {
+   "ticker": "XNTK",
+   "kind": "etf",
+   "name": "SPDR NYSE Technology ETF",
+   "what": "Broad technology sector ETF.",
+   "why": "Tech earnings are delivering on the AI capex cycle; momentum has fundamental backing."
+  },
+  {
+   "ticker": "SPMO",
+   "kind": "etf",
+   "name": "Invesco S&P 500 Momentum ETF",
+   "what": "S&P 500 momentum ETF holding the 100 strongest-trend stocks.",
+   "why": "The momentum factor itself is working, beating the S&P in 2024 and 2025 \u2014 diversified by construction, though momentum crashes are violent."
+  },
+  {
+   "ticker": "VFLO",
+   "kind": "etf",
+   "name": "VictoryShares Free Cash Flow ETF",
+   "what": "ETF screening profitable US large caps for free-cash-flow yield.",
+   "why": "Rules-based quality/value at 0.39% fee with a 5-star rating; the run reflects durable quality, not hype."
+  },
+  {
+   "ticker": "FELC",
+   "kind": "etf",
+   "name": "Fidelity Enhanced Large Cap Core ETF",
+   "what": "Fidelity's actively managed large-cap core equity ETF.",
+   "why": "Quant stock selection with 1.99% annualized alpha and favorable upside/downside capture \u2014 cheap at 0.18%."
+  },
+  {
+   "ticker": "VLUE",
+   "kind": "etf",
+   "name": "iShares MSCI USA Value Factor ETF",
+   "what": "iShares US value-factor ETF (large/mid-cap value stocks).",
+   "why": "Value is working as a factor; strictly US-focused and highly rated, though memory-semiconductor exposure adds cyclicality."
+  },
+  {
+   "ticker": "USXF",
+   "kind": "etf",
+   "name": "iShares ESG Advanced MSCI USA ETF",
+   "what": "ESG-screened US large/mid-cap ETF.",
+   "why": "The ESG screen acts as a quality tilt; diversified momentum with strong alpha signals, riding the AI cycle."
+  },
+  {
+   "ticker": "FELV",
+   "kind": "etf",
+   "name": "Fidelity Enhanced Large Cap Value ETF",
+   "what": "Fidelity's actively managed large-cap value ETF.",
+   "why": "Systematic value/profitability signals at 0.18%; value is a durable factor and the quant overlay has beaten its benchmark."
+  },
+  {
+   "ticker": "IBB",
+   "kind": "etf",
+   "name": "iShares Biotechnology ETF",
+   "what": "Biotech ETF with 249+ US holdings (Vertex, Amgen, Gilead, Regeneron on top).",
+   "why": "Dozens of 2026 FDA approvals plus pharma M&A near its strongest since 2019 \u2014 a fundamental setup, not an event spike."
+  },
+  {
+   "ticker": "PWB",
+   "kind": "etf",
+   "name": "Invesco Dynamic Large Cap Growth ETF",
+   "what": "Invesco multi-factor large-cap growth ETF (52 stocks).",
+   "why": "Factor selection has beaten QQQ recently, but it's concentrated high-beta AI exposure with a steep fee."
+  }
+ ]
+}

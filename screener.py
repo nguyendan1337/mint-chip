@@ -1561,6 +1561,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             for _t in _sec.get("tickers", []):
                 _bmap[str(_t.get("ticker", "")).upper()] = (
                     "mc", str(_t.get("what", "")), str(_t.get("why", "")))
+    if market_chat and market_chat.get("tickers"):
+        for _t in market_chat["tickers"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "mc", str(_t.get("what", "")), str(_t.get("why", "")))
     if watchlist_chat and watchlist_chat.get("tickers"):
         for _t in watchlist_chat["tickers"]:
             _bmap[str(_t.get("ticker", "")).upper()] = (
