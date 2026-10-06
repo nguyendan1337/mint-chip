@@ -22,7 +22,7 @@ No API keys needed.
 ├── code/                        # the pipeline: screener.py, llm_research.py, cache.py, requirements.txt
 ├── ledgers/                     # thesis_ledger.jsonl, rejected_ledger.jsonl — the permanent outcome record
 ├── audits/                      # monthly audit reports (audit_report_YYYY-MM.md)
-└── fuse/                        # the Light-the-Fuse experiment: design, outcome ledger, prototype
+└── light_the_fuse/               # the Light-the-Fuse experiment: design, outcome ledger, prototype
 ```
 
 ## How it runs
@@ -108,7 +108,7 @@ exceptional runs — fundamental momentum first (earnings surprise, beat
 streaks, guidance vs consensus), price confirms (52-week-high nearness,
 breakout volume). Same don't-go-negative mandate, different lens: Mint
 picks 1-year compounders, Fuse looks for fresh ignitions. See
-[`fuse/FUSE_DESIGN.md`](fuse/FUSE_DESIGN.md). No schedule, no public page —
+[`light_the_fuse/FUSE_DESIGN.md`](light_the_fuse/FUSE_DESIGN.md). No schedule, no public page —
 its outcome ledger is scored by the monthly audit, which is the only
 evidence base on which it could ever graduate.
 
