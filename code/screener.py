@@ -3706,10 +3706,29 @@ def record_picks_ledger(final, ranked, args, cache=None):
         log(f"ledger: recording {len(_LAST_DATA_COMPLETENESS['missing'])} picks "
             f"without prices; backfill before thesis_check")
     already = _ledger_seen_today(THESIS_LEDGER, "picked")
+    # Fuse dual-confirmation + fundamental-momentum context (audit
+    # instrumentation only — never selection, never a gate). Computed for
+    # stock picks via fuse_checks; ETFs skip (Fuse is stocks-only).
+    # Any failure here yields null fields; it must never break the append.
+    fuse_ctx = {}
+    try:
+        from fuse_checks import check_tickers as _fuse_check
+        stock_ticks = [t for t in tickers
+                       if str(final[final["ticker"] == t].iloc[0].get("kind", ""))
+                       == "stock"]
+        if stock_ticks:
+            fuse_ctx = _fuse_check(stock_ticks) or {}
+        n_confirmed = sum(1 for v in fuse_ctx.values()
+                         if v.get("dual_confirm") is True)
+        log(f"ledger: fuse check done for {len(stock_ticks)} stock picks "
+            f"({n_confirmed} dual-confirmed)")
+    except Exception as e:
+        log(f"ledger: fuse check failed ({e}) — continuing with null fields")
     npick = 0
     for _, r in final.iterrows():
         if r["ticker"] in already:
             continue
+        _fc = fuse_ctx.get(r["ticker"], {})
         ledger_append(THESIS_LEDGER, {
             "event": "picked",
             "ticker": r["ticker"], "kind": r.get("kind", ""),
@@ -3724,6 +3743,18 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "dd_freq": _safe(r.get("dd_freq")),
             "base_score": _safe(r.get("base_score")),
             "final_score": _safe(r.get("final_score")),
+            # Fuse cross-check fields (audit instrumentation, added
+            # 2026-10-05): dual_confirm True/False/None (None = could not
+            # be determined); sue = most recent earnings surprise
+            # (fraction); beat_streak = consecutive positive surprises;
+            # implied_upside = (analyst mean target - price)/price.
+            # RESEARCHER RULE: these fields are context for the monthly
+            # audit only. They must NOT move continuation/confidence
+            # scores until the audit validates them against outcomes.
+            "dual_confirm": _fc.get("dual_confirm"),
+            "sue": _safe(_fc.get("sue")),
+            "beat_streak": _fc.get("beat_streak"),
+            "implied_upside": _safe(_fc.get("implied_upside")),
             "rationale": str(r.get("llm_rationale", "") or "")[:500],
             "benchmark": args.benchmark,
             "etf_benchmark": etf_benchmark(args),
