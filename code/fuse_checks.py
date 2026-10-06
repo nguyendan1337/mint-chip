@@ -6,9 +6,14 @@ fields using the Light-the-Fuse v3.1 screen definition:
   - dual_confirm: True / False / None
       True  = the ticker passes Fuse v3.1's full screen
               (technical gates + fundamental pass + Piotroski gate +
-               14-day earnings veto + mandate filters)
+               14-day earnings veto + mandate filters). The Piotroski
+              gate is mechanically evaluable for non-financials only;
+              financials/insurers always yield None (their statements
+              need manual review — a passing score there does not carry
+              the same information as for an industrial).
       False = it was evaluated and failed at least one gate
-      None  = could not be determined (missing data / download failure)
+      None  = could not be determined (missing data / download failure /
+              financial-sector manual-review case)
   - sue: most recent reported earnings surprise (fraction, unwinsorized)
   - beat_streak: consecutive positive surprises, trailing 8 quarters
   - implied_upside: (analyst mean target - price) / price, None if unavailable
@@ -39,7 +44,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuse"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "light_the_fuse"))
 try:
     from fuse_v3 import (fund_metrics, tech_metrics, tech_pass, fund_pass,
                          RELIGION_WORDS)
