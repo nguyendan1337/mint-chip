@@ -2936,6 +2936,7 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     if ecloses is None:
         ecloses = download_prices(etickers, period="1y")
         cache.put(ekey, ecloses)
+        _cache_put_px(cache, ecloses)
     eout = []
     for c in ecands:
         s = ecloses.get(c["ticker"])
@@ -3224,6 +3225,57 @@ def _watchlist_cand(r, headlines):
     return cand
 
 
+def _adapt_research_store_outputs(raw, what, flow=None):
+    """Accept either a legacy research-outputs file or the unified
+    research_store.json. Returns the legacy-shaped {"stocks": ..., "world":
+    ...} dict the merge expects. flow selects which flow's world layer is
+    served ("mint-chip-daily" / "mint-chip-watchlist-daily"); None serves
+    none. Pure passthrough for legacy files, so existing behavior is
+    unchanged when no store is in play."""
+    try:
+        from research_store import adapt_if_store
+    except ImportError:
+        return raw
+    adapted = adapt_if_store(raw, flow)
+    if adapted is not raw:
+        log(f"{what}: unified research_store.json detected "
+            f"({len(adapted.get('stocks', {}))} ticker assessments)")
+    return adapted
+
+
+def _cache_put_px(cache, closes):
+    """ADDITIVE price-cache sharing: also store each ticker's close series
+    under px_<TICKER> in the same date partition, so a later flow (e.g. the
+    watchlist) can reuse prices this flow already downloaded today. Existing
+    bulk keys are untouched."""
+    n = 0
+    for t, s in (closes or {}).items():
+        if s is not None:
+            cache.put(f"px_{t}", s)
+            n += 1
+    return n
+
+
+def _get_px_or_download(cache, tickers, period="1y"):
+    """Return ({ticker: closes}, n_from_cache). Reuses per-ticker px_
+    entries first; bulk-downloads only the misses, then backfills px_ for
+    them. Falls back to a full download when the cache is disabled."""
+    closes, miss = {}, []
+    for t in tickers:
+        s = cache.get(f"px_{t}")
+        if s is None:
+            miss.append(t)
+        else:
+            closes[t] = s
+    if miss:
+        fresh = download_prices(miss, period=period)
+        for t, s in (fresh or {}).items():
+            closes[t] = s
+            if s is not None:
+                cache.put(f"px_{t}", s)
+    return closes, len(tickers) - len(miss)
+
+
 def run_watchlist(args, tickers):
     """Phase A for --watchlist: Dan's tickers through quant + headlines.
 
@@ -3242,10 +3294,13 @@ def run_watchlist(args, tickers):
     log(f"Watchlist Phase A: {tickers}")
     print(f"Watchlist: {', '.join(tickers)}")
 
-    closes = cache.get("watchlist_prices_" + StepCache.tickers_key(tickers))
+    _wkey = "watchlist_prices_" + StepCache.tickers_key(tickers)
+    closes = cache.get(_wkey)
     if closes is None:
-        closes = download_prices(tickers, period="1y")
-        cache.put("watchlist_prices_" + StepCache.tickers_key(tickers), closes)
+        closes, _n_px = _get_px_or_download(cache, tickers)
+        cache.put(_wkey, closes)
+        log(f"watchlist: {_n_px} tickers' 1y prices from per-ticker cache, "
+            f"{len(tickers) - _n_px} downloaded")
     else:
         log(f"watchlist: {len(closes)} tickers' 1y prices from cache")
     ok = [t for t in tickers
@@ -3410,7 +3465,10 @@ def run_watchlist_apply(args):
     log("Watchlist Phase B: applying research")
     bundle = load_json_arg(args.watchlist_apply[0], "watchlist bundle")
     outputs = validate_outputs(
-        load_json_arg(args.watchlist_apply[1], "watchlist research outputs"),
+        _adapt_research_store_outputs(
+            load_json_arg(args.watchlist_apply[1], "watchlist research outputs"),
+            "watchlist research outputs",
+            flow="mint-chip-watchlist-daily"),
         "watchlist research outputs")
     df = pd.DataFrame(bundle["candidates"])
     log(f"Loaded {len(df)} watchlist candidates")
@@ -4001,7 +4059,10 @@ def main():
             setup_logging()
             log("Phase B: applying LLM research (no Phase A log found; new file)")
         outputs = validate_outputs(
-            load_json_arg(args.llm_apply[1], "research outputs"))
+            _adapt_research_store_outputs(
+                load_json_arg(args.llm_apply[1], "research outputs"),
+                "research outputs",
+                flow="mint-chip-daily"))
         df = pd.DataFrame(bundle["candidates"])
         log(f"Loaded {len(df)} candidates from bundle")
         kinds = df["kind"].value_counts().to_dict() if "kind" in df.columns else {}
@@ -4181,6 +4242,7 @@ def main():
     if closes is None:
         closes = download_prices(cand_tickers, period="1y")
         cache.put(prices_key, closes)
+        _cache_put_px(cache, closes)
 
     # Precise 1y return check vs benchmark, same methodology
     outperformers = []
