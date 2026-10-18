@@ -2689,7 +2689,10 @@ def honorable_mentions(ranked, final, args, top_k=30):
                     reverse=True)[:top_k]:
         t = str(r["ticker"])
         kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
-        if t in _LAST_OVERLAP_DROPS:
+        if t in _STABILITY_GATED:
+            reason = (f"stability {_STABILITY_GATED[t]} — below the "
+                      f"B-or-better pick bar")
+        elif t in _LAST_OVERLAP_DROPS:
             w, ov = _LAST_OVERLAP_DROPS[t]
             reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
         elif sec_counts.get((kind, sec), 0) >= caps.get(kind, 2):
@@ -2824,6 +2827,10 @@ def run_self_check(final, args, out_csv):
             check("est_floor",
                   bool((final["est_next_1y"] >= args.min_est - 1e-9).all()),
                   f"min_est={args.min_est}")
+        if "stability" in final.columns:
+            check("stability_gate",
+                  bool(final["stability"].isin(["A", "B"]).all()),
+                  "all picks B-or-better (gate added 2026-10-16)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
     fails = [c for c in checks if not c["ok"]]
@@ -3038,6 +3045,10 @@ def pick_final(adj, args, llm_path):
     veto = args.veto_dep if llm_path else None
     adj = add_research_columns(adj, llm_path=llm_path)
 
+    # reset per-run stability-gate record (ticker -> C/D grade)
+    global _STABILITY_GATED
+    _STABILITY_GATED = {}
+
     # research-driven hard exclusions (rule violations, etc.)
     if "llm_excluded" in adj.columns and adj["llm_excluded"].any():
         _ex = adj[adj["llm_excluded"]]
@@ -3087,6 +3098,24 @@ def pick_final(adj, args, llm_path):
                 f"wrappers removed: {_dropped_names}")
 
     def pick_group(ranked, n, cap, label):
+        # STABILITY GATE (2026-10-16, Dan's call after DELL): a pick slot
+        # requires stability B or better. The system knew DELL was fragile
+        # (C: 76% vol, -32% drawdown) and picked it anyway on EV because
+        # stability graded but never constrained. C/D names are still
+        # researched, keep their EVs, and can appear as honorable mentions —
+        # they just can't be buys. Empty slots beat fragile picks.
+        if "stability" in ranked.columns:
+            gated = ranked[~ranked["stability"].isin(["A", "B"])]
+            if len(gated):
+                log(f"stability gate (B-or-better): {len(gated)} {label} "
+                    f"barred from picks: "
+                    f"{[str(t) + '(' + str(s) + ')' for t, s in zip(gated['ticker'], gated['stability'])]}")
+                for t, s in zip(gated["ticker"], gated["stability"]):
+                    _STABILITY_GATED[str(t)] = str(s)
+            ranked = ranked[ranked["stability"].isin(["A", "B"])].copy()
+        else:
+            log(f"WARNING: stability gate skipped for {label} — no "
+                f"'stability' column on ranked frame")
         # expected-value floor first: never pick a negative-EV name
         cut = ranked[ranked["est_next_1y"] < args.min_est]
         if len(cut):
@@ -3630,6 +3659,7 @@ def _ledger_seen_today(path, event="picked"):
 
 _LAST_DATA_COMPLETENESS = {}
 _LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
+_STABILITY_GATED = {}  # ticker -> grade; C/D names barred from pick slots (2026-10-16)
 
 
 def fetch_pick_prices(tickers, cache=None):
@@ -4367,9 +4397,14 @@ def main():
     n_earn_soon = int(df["earn_soon"].sum())
     log(f"earnings within 14d: {n_earn_soon} of top {enrich_n} "
         f"({df[df['earn_soon'] == 1.0]['ticker'].tolist()[:10]})")
-    df["base_score"] = df["base_score"] + 0.06 * df["z_insider"] - 0.25 * df["earn_soon"]
+    df["base_score"] = df["base_score"] + 0.06 * df["z_insider"]
+    # earn_soon dock REMOVED 2026-10-18 (Dan's call — fix 1): the -0.25 dock
+    # acted as a veto across half the pool's score range and fired before the
+    # researcher could judge. Earnings risk is now the researcher's job via
+    # event_dependence (EARNINGS-RISK RULE in the daily cron); earn_soon and
+    # days-to-earnings still flow into the research bundle as flags.
     df = df.sort_values("base_score", ascending=False)
-    log("base_score adjusted for insider/earnings; re-sorted")
+    log("base_score adjusted for insider; re-sorted (earn_soon dock removed 2026-10-18)")
 
     # 6c) Absolute risk gates before research/final selection
     df, gate_report = apply_risk_gates(df, max_vol=args.max_vol, min_dd=args.min_dd)
