@@ -1003,6 +1003,11 @@ def est_parts(row, dep, cont, conf=1.0):
     if not r6:
         # fallback for rows computed before ret_6m_skip1m existed
         try:
+            log("WARNING: ret_6m_skip1m missing for %s — falling back to ret_6m "
+                "(upside input includes the most recent month)" % row.get("ticker", "?"))
+        except Exception:
+            pass
+        try:
             r6 = float(row.get("ret_6m", 0) or 0)
         except Exception:
             r6 = 0.0
@@ -3232,6 +3237,7 @@ def _watchlist_cand(r, headlines):
         "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
         "kind": r.get("kind", "stock"),
         "ret_1y": float(r["ret_1y"]), "ret_6m": _safe(r.get("ret_6m")),
+        "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
         "ret_3m": _safe(r.get("ret_3m")),
         "vol60": float(r["vol60"]),
         "maxdd": float(r["maxdd"]),
@@ -4502,6 +4508,7 @@ def main():
                 "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
                 "kind": r.get("kind", "stock"),
                 "ret_1y": float(r["ret_1y"]), "ret_6m": _safe(r.get("ret_6m")),
+                "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
                 "ret_3m": _safe(r.get("ret_3m")), "ret_2w": _safe(r.get("ret_2w")),
                 "vol60": float(r["vol60"]),
                 "maxdd": float(r["maxdd"]),
