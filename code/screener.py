@@ -2569,8 +2569,10 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         cands = pool[~pool["ticker"].isin(set(sel["ticker"]) | evicted)].copy()
         cands = cands[cands["final_score"] >= min_score]
         if "llm_event_dependence" in cands.columns:
-            cands = cands[cands["llm_event_dependence"].map(_dep_ok)]
-        cands = cands[cands["sector"].map(lambda s: counts.get(s, 0) < cap)]
+            # astype(bool): an empty map() yields an object-dtype Series,
+            # which pandas would read as a (zero-width) column selector
+            cands = cands[cands["llm_event_dependence"].map(_dep_ok).astype(bool)]
+        cands = cands[cands["sector"].map(lambda s: counts.get(s, 0) < cap).astype(bool)]
         surv_holds = {t: etf_top_holdings(t) for t in sel["ticker"]}
 
         def _clear(r):
@@ -3144,7 +3146,7 @@ def pick_final(adj, args, llm_path):
             taken = set(first["ticker"]) if len(first) else set()
             taken_counts = Counter(first["sector"]) if len(first) else Counter()
             rest = est_ok[~est_ok["ticker"].isin(taken)].copy()
-            rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap)]
+            rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
             if not rest.empty:
                 rest["_newcat"] = (~rest["sector"].isin(set(taken_counts))).astype(int)
                 rest = rest.sort_values(["_newcat", "est_next_1y"],
