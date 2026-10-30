@@ -154,3 +154,42 @@ def check_tickers(tickers, workers=6):
         return seen
     except Exception:
         return {}
+
+
+def _iu_one(ticker):
+    """(ticker, implied_upside or None) from a single info call.
+
+    Light version of the _one() computation above: the two-strike risk
+    gate (2026-10-30) needs implied_upside for every selection candidate
+    BEFORE selection, not just for final picks, so this skips the 1y
+    download and fundamental pass entirely — one info call, best-effort.
+    """
+    try:
+        info = yf.Ticker(ticker).info or {}
+        tgt = info.get("targetMeanPrice")
+        price = (info.get("currentPrice") or info.get("regularMarketPrice")
+                 or info.get("previousClose"))
+        if tgt and price and float(price) > 0:
+            return ticker, float(tgt) / float(price) - 1.0
+    except Exception:
+        pass
+    return ticker, None
+
+
+def implied_upside_map(tickers, workers=8):
+    """ticker list -> {ticker: implied_upside or None}. Never raises.
+
+    None means unavailable (no analyst target — common for ETFs — or a
+    failed fetch); callers must treat None as 'strike not counted',
+    never as a negative reading.
+    """
+    try:
+        if not tickers or not _YF_OK:
+            return {}
+        out = {}
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for t, v in ex.map(_iu_one, list(dict.fromkeys(tickers))):
+                out[t] = v
+        return out
+    except Exception:
+        return {}

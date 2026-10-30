@@ -1039,12 +1039,48 @@ def est_parts(row, dep, cont, conf=1.0):
     upside = min(r6c, 0.25) + 0.5 * max(r6c - 0.25, 0.0)
     # downside: half the worst 1y drawdown, floored at 10%, scaled by how
     # OFTEN pain arrives (dd_freq): frequent dippers hurt more than rare ones.
-    downside = max(abs(dd) * 0.5, 0.10) * (1 + ddf)
+    downside_base = max(abs(dd) * 0.5, 0.10) * (1 + ddf)
+    downside = downside_base
+    # EARNINGS-GAP FLOOR (2026-10-30, Dan delegated judgment after the
+    # October audit): backward-looking drawdowns do not price a scheduled
+    # print. When earnings land within 30 days, the downside input is at
+    # least half the ticker's typical earnings-day move (median absolute
+    # close-to-close move on past announcement dates; fallback 12%, the
+    # cross-sectional average from the audit's cited sample). This moves
+    # the downside INPUT only — formula structure and weights unchanged.
+    earn_gap_applied = False
+    earn_move_typ = None
+    earn_move_fallback = False
+    earnings_in_days = None
+    try:
+        _ed = row.get("earnings_in_days")
+        earnings_in_days = (None if _ed is None or _ed != _ed
+                            else float(_ed))
+    except Exception:
+        earnings_in_days = None
+    if earnings_in_days is not None and 0 <= earnings_in_days <= 30:
+        try:
+            _tm = row.get("earn_move_typ")
+            earn_move_typ = (None if _tm is None or _tm != _tm
+                             else float(_tm))
+        except Exception:
+            earn_move_typ = None
+        if earn_move_typ is None:
+            earn_move_typ = EARN_GAP_FALLBACK_MOVE
+            earn_move_fallback = True
+        if 0.5 * earn_move_typ > downside:
+            downside = 0.5 * earn_move_typ
+            earn_gap_applied = True
     # character: the Composure parts est doesn't already see (quality, entry
     # timing, structure/cost) adjust the whole estimate up/down by up to ~50%.
     est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep * 0.20)
     return {"r6": r6, "upside": upside, "dd": dd, "dd_freq": ddf,
-            "downside": downside, "character": char,
+            "downside": downside, "downside_base": downside_base,
+            "earn_gap_applied": earn_gap_applied,
+            "earn_move_typ": earn_move_typ,
+            "earn_move_fallback": earn_move_fallback,
+            "earnings_in_days": earnings_in_days,
+            "character": char,
             "dep": dep, "cont": cont, "conf": conf, "est": est}
 
 
@@ -1074,6 +1110,222 @@ def estimate_next_year(row, dep, cont, conf=1.0):
     return est_parts(row, dep, cont, conf)["est"]
     raw = cont * upside - (1 - cont) * downside - dep * 0.20
     return conf * raw
+
+
+# ---- Oct 30, 2026 changes (Dan delegated judgment; October audit) ----
+# 1) Earnings-gap downside input: est_parts() floors the EV downside at
+#    half the typical earnings-day move when earnings are within 30 days.
+# 2) Two-strike risk gate in pick_final: candidates carrying >=2 of
+#    {earnings <=14d, 6m run >=50%, implied_upside <0, dep >=0.40} are
+#    honorable mentions only, never picks. Watchlist mode never applies it.
+EARN_GAP_FALLBACK_MOVE = 0.12  # audit-cited cross-sectional average (§11.3)
+EARN_GAP_WINDOW_DAYS = 30      # earnings proximity for the downside floor
+RISK_GATE_MIN_STRIKES = 2
+
+
+def _earnings_dates_one(t):
+    """(ticker, [past earnings dates as naive Timestamps]) — never raises."""
+    try:
+        ed = yf.Ticker(t).earnings_dates
+        if ed is None or not len(ed):
+            return t, []
+        idx = ed.index
+        try:
+            idx = idx.tz_localize(None)
+        except Exception:
+            try:
+                idx = idx.tz_convert("America/New_York").tz_localize(None)
+            except Exception:
+                pass
+        today = pd.Timestamp.now().normalize()
+        past = sorted(d for d in idx if d <= today + pd.Timedelta(days=1))
+        return t, past
+    except Exception:
+        return t, []
+
+
+def typical_earnings_move(closes, earn_dates):
+    """Median absolute close-to-close move on past earnings dates.
+
+    yfinance stamps earnings announcements at ~16:00 ET (after the
+    close), so the reaction session is the first session AFTER the
+    announcement date and the move is measured against the
+    announcement-date session's close. Returns None when fewer than 2
+    usable announcements exist (caller then applies the 12% fallback
+    and logs it).
+    """
+    if closes is None or not earn_dates:
+        return None
+    try:
+        s = closes.dropna()
+        if len(s) < 60:
+            return None
+        idx = s.index
+        if getattr(idx, "tz", None) is not None:
+            s = s.copy()
+            s.index = idx.tz_localize(None)
+        moves = []
+        for d in earn_dates:
+            dd = pd.Timestamp(d).normalize()
+            pos = int(s.index.searchsorted(dd, side="right"))
+            if pos <= 0 or pos >= len(s):
+                continue
+            prev, cur = float(s.iloc[pos - 1]), float(s.iloc[pos])
+            if prev > 0:
+                moves.append(abs(cur / prev - 1.0))
+        if len(moves) < 2:
+            return None
+        import statistics
+        return float(statistics.median(moves))
+    except Exception:
+        return None
+
+
+def attach_earnings_gap_inputs(df, cache=None):
+    """Ensure every row with earnings within 30 days carries earn_move_typ
+    (the ticker's typical earnings-day move), so est_parts can apply the
+    earnings-gap downside floor. Cached per ticker-set in the StepCache,
+    like the other per-ticker enrichment. Fail-soft throughout: rows whose
+    history is unavailable get the 12% fallback value, flagged in the
+    earn_move_fallback column, and the fallback use is logged."""
+    from cache import StepCache
+    if df is None or df.empty or "earnings_in_days" not in df.columns:
+        return df
+    df = df.copy()
+    if "earn_move_typ" not in df.columns:
+        df["earn_move_typ"] = None
+    if "earn_move_fallback" not in df.columns:
+        df["earn_move_fallback"] = False
+    ed = pd.to_numeric(df["earnings_in_days"], errors="coerce")
+    need_mask = ed.between(0, EARN_GAP_WINDOW_DAYS) & \
+        pd.to_numeric(df["earn_move_typ"], errors="coerce").isna()
+    need = sorted(df.loc[need_mask, "ticker"].astype(str).unique())
+    if not need:
+        return df
+    if cache is None:
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    key = "earn_moves_" + StepCache.tickers_key(need)
+    moves = cache.get(key)
+    if moves is None:
+        log(f"earnings-gap inputs: computing typical earnings-day moves "
+            f"for {len(need)} tickers (earnings within "
+            f"{EARN_GAP_WINDOW_DAYS}d)")
+        closes = download_prices(need, period="2y", min_rows=50)
+        dates = {}
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for t, ds in ex.map(_earnings_dates_one, need):
+                dates[t] = ds
+        moves = {t: typical_earnings_move(closes.get(t), dates.get(t))
+                 for t in need}
+        cache.put(key, moves)
+    fallback = []
+    for t in need:
+        mv = moves.get(t)
+        m = df["ticker"].astype(str) == t
+        if mv is None:
+            df.loc[m, "earn_move_typ"] = EARN_GAP_FALLBACK_MOVE
+            df.loc[m, "earn_move_fallback"] = True
+            fallback.append(t)
+        else:
+            df.loc[m, "earn_move_typ"] = float(mv)
+            _ed = ed[m].iloc[0] if m.any() else None
+            log(f"  earnings-gap input {t}: typical earnings-day move "
+                f"{mv:.1%} (earnings in {_ed:.0f}d)")
+    if fallback:
+        log(f"earnings-gap downside: fallback typical move "
+            f"{EARN_GAP_FALLBACK_MOVE:.0%} used for {len(fallback)} "
+            f"tickers (earnings-day history unavailable): {fallback}")
+    return df
+
+
+def attach_implied_upside(df, cache=None):
+    """Attach an implied_upside column ((analyst mean target - price) /
+    price) for every candidate, pre-selection, so the two-strike risk
+    gate can count the valuation strike. Cached per ticker-set in the
+    StepCache. Fail-soft: unavailable (no target — typical for ETFs —
+    or a failed fetch) stays NaN and the strike is simply not counted."""
+    from cache import StepCache
+    if df is None or df.empty or "ticker" not in df.columns:
+        return df
+    df = df.copy()
+    tickers = sorted(df["ticker"].astype(str).unique())
+    if cache is None:
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    key = "implied_upside_" + StepCache.tickers_key(tickers)
+    m = cache.get(key)
+    if m is None:
+        try:
+            from fuse_checks import implied_upside_map
+            m = implied_upside_map(tickers) or {}
+        except Exception as e:
+            log(f"implied upside: fetch failed ({e}) — valuation strike "
+                f"will not be counted this run")
+            m = {}
+        cache.put(key, m)
+    df["implied_upside"] = df["ticker"].astype(str).map(
+        lambda t: m.get(t))
+    n_ok = int(df["implied_upside"].notna().sum())
+    log(f"implied upside: available for {n_ok}/{len(df)} candidates "
+        f"(unavailable names simply don't take the valuation strike)")
+    return df
+
+
+def compute_risk_strikes(df, llm_path=True):
+    """Two-strike risk gate inputs (2026-10-30): per candidate, count
+    strikes from spell-start values —
+      (a) earnings within 14 days (earnings_in_days in [0, 14]);
+      (b) trailing 6m run (ret_6m_skip1m, the EV upside's series;
+          ret_6m fallback, mirroring est_parts) >= 50%;
+      (c) implied_upside < 0 (analyst mean target below price);
+      (d) event_dependence (dep) >= 0.40.
+    A missing field never counts as a strike (fail-soft, logged). Adds
+    risk_strikes (list of human-readable strike labels) and
+    risk_strike_count columns; pick_group enforces >=2 as HM-only."""
+    df = df.copy()
+    if "llm_event_dependence" in df.columns:
+        dep_col = "llm_event_dependence"
+    elif "news_penalty" in df.columns:
+        dep_col = "news_penalty"
+    else:
+        dep_col = None
+        log("WARNING: risk-flag gate — no dep column; strike (d) not "
+            "counted for any candidate")
+    if "implied_upside" not in df.columns:
+        log("WARNING: risk-flag gate — implied_upside unavailable; "
+            "strike (c) not counted for any candidate")
+    if "earnings_in_days" not in df.columns:
+        log("WARNING: risk-flag gate — earnings_in_days unavailable; "
+            "strike (a) not counted for any candidate")
+    all_strikes, counts = [], []
+    for _, r in df.iterrows():
+        strikes = []
+        ed = _safe(r.get("earnings_in_days"))
+        if ed is not None and 0 <= ed <= 14:
+            strikes.append(f"earnings in {ed:.0f}d")
+        r6 = _safe(r.get("ret_6m_skip1m"))
+        if r6 is None:
+            r6 = _safe(r.get("ret_6m"))
+        if r6 is not None and r6 >= 0.50:
+            strikes.append(f"6m run {r6:+.0%}")
+        iu = _safe(r.get("implied_upside"))
+        if iu is not None and iu < 0:
+            strikes.append(f"implied upside {iu:+.0%}")
+        dep = _safe(r.get(dep_col)) if dep_col else None
+        if dep is not None and dep >= 0.40:
+            strikes.append(f"dep {dep:.2f}")
+        all_strikes.append(strikes)
+        counts.append(len(strikes))
+        if strikes:
+            log(f"  risk strikes {r['ticker']}: {len(strikes)} — "
+                f"{', '.join(strikes)}")
+    df["risk_strikes"] = all_strikes
+    df["risk_strike_count"] = counts
+    n2 = sum(1 for c in counts if c >= RISK_GATE_MIN_STRIKES)
+    log(f"risk-flag gate inputs: {len(df)} candidates, "
+        f"{sum(1 for c in counts if c >= 1)} with >=1 strike, "
+        f"{n2} with >={RISK_GATE_MIN_STRIKES} strikes (barred from picks)")
+    return df
 
 
 def watchlist_quality_summary(ratings, evs, tickers=None):
@@ -2696,7 +2948,11 @@ def honorable_mentions(ranked, final, args, top_k=30):
                     reverse=True)[:top_k]:
         t = str(r["ticker"])
         kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
-        if t in _STABILITY_GATED:
+        if t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+        elif t in _STABILITY_GATED:
             reason = (f"stability {_STABILITY_GATED[t]} — below the "
                       f"B-or-better pick bar")
         elif t in _LAST_OVERLAP_DROPS:
@@ -2838,6 +3094,11 @@ def run_self_check(final, args, out_csv):
             check("stability_gate",
                   bool(final["stability"].isin(["A", "B"]).all()),
                   "all picks B-or-better (gate added 2026-10-16)")
+        if "risk_strike_count" in final.columns:
+            check("risk_flag_gate",
+                  bool((final["risk_strike_count"] <
+                        RISK_GATE_MIN_STRIKES).all()),
+                  "all picks <2 risk strikes (gate added 2026-10-30)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
     fails = [c for c in checks if not c["ok"]]
@@ -3028,17 +3289,25 @@ def add_research_columns(df, llm_path=True):
         "(cont x upside - (1-cont) x downside - dep x 0.20); "
         "upside = first 25% of 6m run SKIPPING the most recent month at full "
         "weight, beyond at half weight (cap 50%); downside = max(|maxDD| x 0.5, "
-        "10%) x (1 + drawdown_freq); "
+        "10%) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
+        "move when earnings are within 30d (2026-10-30); "
         "character = quality/entry-timing/structure z-sum, clamped [-2, 2]")
     for (_, r), d, c, f in zip(sub.iterrows(), dep, cont, conf):
         p = est_parts(r, d, c, f)
+        _gap = ""
+        if p.get("earn_gap_applied"):
+            _gap = (f"; EARNINGS-GAP downside {p['downside_base']:.1%} -> "
+                    f"{p['downside']:.1%} (max of base, 0.5 x typical "
+                    f"earnings-day move {p['earn_move_typ']:.1%}"
+                    f"{', FALLBACK 12%' if p.get('earn_move_fallback') else ''}; "
+                    f"earnings in {p['earnings_in_days']:.0f}d)")
         log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
             f"{1 + 0.25 * p['character']:.2f}char x "
             f"({p['cont']:.2f} x {p['upside']:.3f} - {1 - p['cont']:.2f} x "
             f"{p['downside']:.3f} - {p['dep']:.2f} x 0.20) "
             f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%}; "
             f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%}; "
-            f"char={p['character']:+.2f}]")
+            f"char={p['character']:+.2f}]{_gap}")
     return sub
 
 
@@ -3055,6 +3324,12 @@ def pick_final(adj, args, llm_path):
     # reset per-run stability-gate record (ticker -> C/D grade)
     global _STABILITY_GATED
     _STABILITY_GATED = {}
+    # reset per-run risk-gate record (ticker -> {count, strikes})
+    global _RISK_GATED
+    _RISK_GATED = {}
+    # TWO-STRIKE RISK GATE inputs (2026-10-30): strike counts for every
+    # selection candidate; pick_group bars >=2-strike names from picks.
+    adj = compute_risk_strikes(adj, llm_path=llm_path)
 
     # research-driven hard exclusions (rule violations, etc.)
     if "llm_excluded" in adj.columns and adj["llm_excluded"].any():
@@ -3123,6 +3398,30 @@ def pick_final(adj, args, llm_path):
         else:
             log(f"WARNING: stability gate skipped for {label} — no "
                 f"'stability' column on ranked frame")
+        # TWO-STRIKE RISK GATE (2026-10-30, Dan delegated judgment after
+        # the October audit): the audit's §11 cohort — names carrying >=2
+        # of {earnings <=14d, 6m run >=50%, implied_upside <0, dep >=0.40}
+        # — went 75% negative with a 26% deep-loss rate vs 4% for the
+        # rest, and contained every blowup (FTNT, FFIV, TWLO, NTAP).
+        # >=2-strike names keep their EVs and can appear as honorable
+        # mentions with the strike detail — they just can't be buys.
+        if "risk_strike_count" in ranked.columns:
+            rgated = ranked[ranked["risk_strike_count"] >=
+                            RISK_GATE_MIN_STRIKES]
+            if len(rgated):
+                log(f"risk-flag gate (>={RISK_GATE_MIN_STRIKES} strikes): "
+                    f"{len(rgated)} {label} barred from picks: "
+                    f"{[str(t) + '(' + str(c) + ' strikes: ' + ', '.join(s) + ')' for t, c, s in zip(rgated['ticker'], rgated['risk_strike_count'], rgated['risk_strikes'])]}")
+                for t, c, s in zip(rgated["ticker"],
+                                   rgated["risk_strike_count"],
+                                   rgated["risk_strikes"]):
+                    _RISK_GATED[str(t)] = {"count": int(c),
+                                           "strikes": list(s)}
+            ranked = ranked[ranked["risk_strike_count"] <
+                            RISK_GATE_MIN_STRIKES].copy()
+        else:
+            log(f"WARNING: risk-flag gate skipped for {label} — no "
+                f"'risk_strike_count' column on ranked frame")
         # expected-value floor first: never pick a negative-EV name
         cut = ranked[ranked["est_next_1y"] < args.min_est]
         if len(cut):
@@ -3513,6 +3812,10 @@ def run_watchlist_apply(args):
                                w_down=args.w_down, w_up=args.w_up,
                                w_outlier=args.w_outlier)
     log_research_assessments(ranked)
+    # earnings-gap EV downside input applies in watchlist mode too (it
+    # is an EV input, not a selection gate); the two-strike risk gate
+    # does NOT apply here — watchlist rates every name.
+    ranked = attach_earnings_gap_inputs(ranked)
     final = add_research_columns(ranked, llm_path=True)
     final = final.sort_values("est_next_1y", ascending=False).reset_index(drop=True)
 
@@ -3668,6 +3971,7 @@ def _ledger_seen_today(path, event="picked"):
 _LAST_DATA_COMPLETENESS = {}
 _LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
 _STABILITY_GATED = {}  # ticker -> grade; C/D names barred from pick slots (2026-10-16)
+_RISK_GATED = {}  # ticker -> {count, strikes}; >=2-strike names barred from pick slots (2026-10-30)
 
 
 def fetch_pick_prices(tickers, cache=None):
@@ -3836,6 +4140,8 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "cont": _safe(r.get("llm_continuation")),
             "conf": _safe(r.get("llm_confidence")),
             "character": _safe(r.get("character")),
+            "stability": (r.get("stability")
+                          if isinstance(r.get("stability"), str) else None),
             "dd_freq": _safe(r.get("dd_freq")),
             "base_score": _safe(r.get("base_score")),
             "final_score": _safe(r.get("final_score")),
@@ -3872,8 +4178,15 @@ def record_picks_ledger(final, ranked, args, cache=None):
         p = est_parts(r, d if d is not None else 0.3,
                       c if c is not None else 0.5, f_ if f_ is not None else 1.0)
         reason = None
+        extra = {}
         if r.get("llm_excluded"):
             reason = f"research exclusion: {str(r.get('llm_exclude_reason', ''))[:200]}"
+        elif t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+            extra = {"risk_strikes": list(_rg["strikes"]),
+                     "risk_strike_count": int(_rg["count"])}
         elif d is not None and d > veto:
             reason = f"event-dependence veto (dep={d:.2f} > {veto})"
         elif p["est"] < args.min_est:
@@ -3885,10 +4198,107 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "name": r.get("name", ""), "price": prices.get(t),
             "reason": reason, "est_next_1y": round(p["est"], 4),
             "dep": d, "cont": c, "conf": f_,
+            **extra,
         })
         recorded += 1
     log(f"ledger: recorded {npick} new picks ({len(final)} final), "
         f"{recorded} rejected (control group)")
+    # spell exits: why did yesterday's picks stop being picks? (audit
+    # instrumentation, 2026-10-30 — the October audit could not attribute
+    # whipsaw without exit reasons). Never breaks the pick recording.
+    try:
+        _record_spell_exits(final_set, ranked, args, today)
+    except Exception as e:
+        log(f"ledger: spell-exit recording failed ({e})")
+
+
+def _record_spell_exits(final_set, ranked, args, today):
+    """Append an 'exit' event for each ticker whose latest pick spell
+    ended before today (picked on an earlier date, not picked today),
+    with the reason the code can determine at this point:
+
+      thesis_break   latest thesis-check status is 'broken'
+      risk_flag_gate barred today by the two-strike risk gate
+      gate_trip      stability gate, dep veto, or research exclusion
+      overlap        evicted by the ETF holdings-overlap repair
+      ev_below_floor still in today's pool but EV under the floor
+      cap            in today's pool, passed floors/gates, lost on
+                     sector cap / slot count / score order
+      pool_exit      not in today's research pool at all
+
+    Idempotent per (ticker, pick_date): a spell's exit is recorded once.
+    Residual gap: 'cap' bundles cap-full, slot-count and ranking losses
+    (pick_top_with_sector_cap logs the split, but the ledger does not
+    separate them), and a name dropped by the pre-research risk gates
+    reads as pool_exit."""
+    import json as _json
+    latest_pick = {}   # ticker -> (date, event)
+    latest_check = {}  # ticker -> status
+    exited = set()     # (ticker, pick_date) with an exit already recorded
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                t = e.get("ticker")
+                if not t:
+                    continue
+                if e.get("event") == "picked":
+                    if (t not in latest_pick
+                            or e.get("date", "") >= latest_pick[t][0]):
+                        latest_pick[t] = (e.get("date", ""), e)
+                elif e.get("event") == "check":
+                    latest_check[t] = e.get("status")
+                elif e.get("event") == "exit":
+                    exited.add((t, e.get("pick_date")))
+    except FileNotFoundError:
+        return
+    ranked_by_ticker = {}
+    if ranked is not None and len(ranked):
+        for _, r in ranked.iterrows():
+            ranked_by_ticker[str(r["ticker"])] = r
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    n_exit = 0
+    for t, (pdate, _ev) in sorted(latest_pick.items()):
+        if not pdate or pdate >= today or t in final_set:
+            continue
+        if (t, pdate) in exited:
+            continue
+        r = ranked_by_ticker.get(t)
+        if latest_check.get(t) == "broken":
+            reason = "thesis_break"
+        elif t in _RISK_GATED:
+            reason = "risk_flag_gate"
+        elif t in _STABILITY_GATED:
+            reason = "gate_trip"
+        elif r is None:
+            reason = "pool_exit"
+        elif bool(r.get("llm_excluded")):
+            reason = "gate_trip"
+        elif t in _LAST_OVERLAP_DROPS:
+            reason = "overlap"
+        else:
+            d = _safe(r.get("llm_event_dependence"))
+            if d is not None and d > veto:
+                reason = "gate_trip"
+            else:
+                c = _safe(r.get("llm_continuation"))
+                f_ = _safe(r.get("llm_confidence"))
+                p = est_parts(r, d if d is not None else 0.3,
+                              c if c is not None else 0.5,
+                              f_ if f_ is not None else 1.0)
+                reason = ("ev_below_floor" if p["est"] < args.min_est
+                          else "cap")
+        ledger_append(THESIS_LEDGER, {
+            "event": "exit", "ticker": t, "date": today,
+            "pick_date": pdate, "exit_reason": reason,
+        })
+        n_exit += 1
+        log(f"ledger: exit {t} (picked {pdate}) — {reason}")
+    if n_exit:
+        log(f"ledger: recorded {n_exit} spell exits")
 
 
 def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
@@ -4113,6 +4523,10 @@ def main():
         # absolute risk gates also apply on the Phase-B path
         ranked, gate_report = apply_risk_gates(ranked, max_vol=args.max_vol,
                                                min_dd=args.min_dd)
+        # Oct 30, 2026 inputs: typical earnings-day moves (earnings-gap
+        # EV downside floor) + pre-selection implied upside (risk gate)
+        ranked = attach_earnings_gap_inputs(ranked, cache)
+        ranked = attach_implied_upside(ranked, cache)
         final_stocks, final_etfs = pick_final(ranked, args, llm_path=True)
         final = pd.concat([final_stocks, final_etfs], ignore_index=True)
         _print_llm_final(final_stocks, final_etfs, args)
@@ -4600,6 +5014,8 @@ def main():
                 f"(dep={r.get('llm_event_dependence', '?')}, cont={r.get('llm_continuation', '?')})")
 
     # 8) Final picks: most-confident stocks + most-confident ETFs
+    adj = attach_earnings_gap_inputs(adj, cache)
+    adj = attach_implied_upside(adj, cache)
     final_stocks, final_etfs = pick_final(adj, args, llm_path)
     final = pd.concat([final_stocks, final_etfs], ignore_index=True)
 
