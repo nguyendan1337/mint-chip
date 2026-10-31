@@ -1,0 +1,16 @@
+{
+ "date": "2026-10-30",
+ "flow": "daily",
+ "bundle": "research_bundle_20261030_133527_VGT.json",
+ "screener_sha256": "7e53a483983c335725a88ef0499b1041e32f0a369c8fb03a8fac8aa125aba99a",
+ "self_check": "18/18",
+ "counts": {
+  "candidates": 210,
+  "picks": 14,
+  "gate_bars": 29,
+  "stability_bars": 27,
+  "dep_binds": 59,
+  "vetoes": 17
+ },
+ "git_commit_of_pages_at_publish": null
+}

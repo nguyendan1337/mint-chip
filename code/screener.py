@@ -3126,6 +3126,305 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
     return pd.DataFrame(picked)
 
 
+
+# ---------------- Auditability: full-frame snapshot + run manifest --------
+# (2026-10-30, Dan approved. INSTRUMENTATION ONLY: these functions read the
+# frames selection already produced and write JSON evidence files; nothing
+# here feeds back into selection. The monthly audit replays from the frame
+# snapshots; the manifests pin the exact code (sha256) that produced them.)
+
+def _mirror_risk_strikes(r, dep_used):
+    """Strike labels identical to compute_risk_strikes, computed inline for
+    rows/flows that function never saw (pre-selection-gate drops) or where
+    its 'barred from picks' summary would be false (watchlist mode).
+    The implied-upside strike is skipped when implied_upside is
+    unavailable, mirroring compute_risk_strikes' fail-soft rule."""
+    strikes = []
+    ed = _safe(r.get("earnings_in_days"))
+    if ed is not None and 0 <= ed <= 14:
+        strikes.append(f"earnings in {ed:.0f}d")
+    r6 = _safe(r.get("ret_6m_skip1m"))
+    if r6 is None:
+        r6 = _safe(r.get("ret_6m"))
+    if r6 is not None and r6 >= 0.50:
+        strikes.append(f"6m run {r6:+.0%}")
+    iu = _safe(r.get("implied_upside"))
+    if iu is not None and iu < 0:
+        strikes.append(f"implied upside {iu:+.0%}")
+    if dep_used is not None and dep_used >= 0.40:
+        strikes.append(f"dep {dep_used:.2f}")
+    return strikes
+
+
+def _frame_row(r, outcome, reason):
+    dep_raw = _safe(r.get("llm_event_dependence"))
+    dep_used = _safe(r.get("dep_used"))
+    if dep_used is None and dep_raw is not None:
+        dep_used, _dcap = effective_dep(str(r.get("ticker")), r.get("kind"),
+                                        r.get("sector"), dep_raw)
+    strikes = r.get("risk_strikes")
+    if isinstance(strikes, (list, tuple)):
+        strikes = [str(s) for s in strikes]
+    else:
+        strikes = _mirror_risk_strikes(r, dep_used)
+    scount = _safe(r.get("risk_strike_count"))
+    _dc = r.get("dep_capped")
+    dep_capped = (bool(_dc) if _dc is not None
+                  and not (isinstance(_dc, float) and _dc != _dc) else False)
+    return {
+        "ticker": str(r.get("ticker")),
+        "kind": (str(r.get("kind")) if r.get("kind") is not None else None),
+        "category": (str(r.get("sector"))
+                     if r.get("sector") is not None else None),
+        "base_score": _safe(r.get("base_score")),
+        "final_score": _safe(r.get("final_score")),
+        "est_next_1y": _safe(r.get("est_next_1y")),
+        "dep": dep_raw,
+        "dep_used": dep_used,
+        "dep_capped": dep_capped,
+        "continuation": _safe(r.get("llm_continuation")),
+        "confidence": _safe(r.get("llm_confidence")),
+        "character": _safe(r.get("character")),
+        "stability": (str(r.get("stability"))
+                      if isinstance(r.get("stability"), str) else None),
+        "risk_strikes": strikes,
+        "risk_strike_count": (int(scount) if scount is not None
+                              else len(strikes)),
+        "implied_upside": _safe(r.get("implied_upside")),
+        "earnings_in_days": _safe(r.get("earnings_in_days")),
+        "outcome": outcome,
+        "outcome_reason": reason,
+        "rating": None,
+    }
+
+
+def _write_frame_manifest(rows, flow, bundle_path, counts,
+                          expected_candidates):
+    """Write frames/frame_<stamp>_<flow>.json and
+    manifests/manifest_<stamp>_<flow>.json (same stamp) under the project
+    dir and record _FRAME_SNAPSHOT for verification. Returns
+    (frame_path, manifest_path)."""
+    import hashlib
+    import json as _json
+    global _FRAME_SNAPSHOT
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    fdir = os.path.join(_base, "frames")
+    mdir = os.path.join(_base, "manifests")
+    os.makedirs(fdir, exist_ok=True)
+    os.makedirs(mdir, exist_ok=True)
+    frame_path = os.path.join(fdir, f"frame_{stamp}_{flow}.json")
+    manifest_path = os.path.join(mdir, f"manifest_{stamp}_{flow}.json")
+    bundle_name = (os.path.basename(str(bundle_path))
+                   if bundle_path else None)
+    with open(frame_path, "w") as f:
+        _json.dump({"date": run_date(), "flow": flow,
+                    "bundle": bundle_name, "rows": rows},
+                   f, indent=1, default=str)
+    try:
+        with open(os.path.abspath(__file__), "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        sha = None
+    with open(manifest_path, "w") as f:
+        _json.dump({"date": run_date(), "flow": flow,
+                    "bundle": bundle_name,
+                    "screener_sha256": sha,
+                    "self_check": None,
+                    "counts": counts,
+                    "git_commit_of_pages_at_publish": None},
+                   f, indent=1)
+    _FRAME_SNAPSHOT = {"frame_path": frame_path,
+                       "manifest_path": manifest_path,
+                       "candidates": expected_candidates}
+    log(f"frame snapshot: {frame_path} ({len(rows)} rows); "
+        f"manifest: {manifest_path}")
+    return frame_path, manifest_path
+
+
+def _verify_frame_snapshot(expected_candidates):
+    """Read the frame + manifest back from disk: frame exists, its row
+    count equals the candidates evaluated this run, and the manifest's
+    screener_sha256 matches the running file."""
+    import hashlib
+    import json as _json
+    if not _FRAME_SNAPSHOT or _FRAME_SNAPSHOT.get("error"):
+        return False
+    try:
+        with open(_FRAME_SNAPSHOT["frame_path"]) as f:
+            fr = _json.load(f)
+        with open(_FRAME_SNAPSHOT["manifest_path"]) as f:
+            mf = _json.load(f)
+        with open(os.path.abspath(__file__), "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        return (len(fr.get("rows", [])) == expected_candidates
+                and mf.get("screener_sha256") == sha)
+    except Exception:
+        return False
+
+
+def _mark_frame_failed(expected_candidates):
+    """Record a failed frame write so the self-check assert fails honestly
+    instead of being skipped."""
+    global _FRAME_SNAPSHOT
+    _FRAME_SNAPSHOT = {"frame_path": "", "manifest_path": "",
+                       "candidates": expected_candidates, "error": True}
+
+
+def _patch_manifest_self_check(result):
+    """Fill the manifest's self_check field once the run's checks are
+    known (the manifest is written before the self-check runs)."""
+    import json as _json
+    if not _FRAME_SNAPSHOT or _FRAME_SNAPSHOT.get("error"):
+        return
+    try:
+        mp = _FRAME_SNAPSHOT["manifest_path"]
+        with open(mp) as f:
+            m = _json.load(f)
+        m["self_check"] = result
+        with open(mp, "w") as f:
+            _json.dump(m, f, indent=1)
+    except Exception as e:
+        log(f"manifest: could not record self-check result ({e})")
+
+
+def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
+                               args, gate_report):
+    """Daily-flow frame snapshot: one row per bundle candidate (the
+    pre-selection-gate universe), each with the outcome and reason
+    selection actually produced. Reasons mirror, in order, the chart's
+    honorable-mention chain and the rejected-ledger chain. Reads frames
+    and globals only — selects nothing."""
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    floor = getattr(args, "min_est", 0.03)
+    picked = (set(final["ticker"])
+              if final is not None and len(final) else set())
+    hm_map = {str(h.get("ticker")): str(h.get("reason", ""))
+              for h in (hm or []) if h.get("ticker")}
+    gated_tickers = set((gate_report or {}).get("gated_tickers") or [])
+    # selection-true enrichment for post-gate rows (mirrors pick_final's
+    # own add_research_columns + compute_risk_strikes on the same inputs)
+    enriched = add_research_columns(ranked, llm_path=True)
+    enriched = compute_risk_strikes(enriched, llm_path=True)
+    by_ticker = {str(r["ticker"]): r for _, r in enriched.iterrows()}
+    # pre-selection-gate drops were never enriched/attached; enrich them
+    # separately (implied upside unavailable -> strike (c) fail-soft off)
+    pre_only = pre_gate[~pre_gate["ticker"].isin(set(by_ticker))]
+    if len(pre_only):
+        pre_enriched = add_research_columns(pre_only, llm_path=True)
+        for _, r in pre_enriched.iterrows():
+            by_ticker[str(r["ticker"])] = r
+    sec_counts = {}
+    if final is not None and len(final):
+        for _, r in final.iterrows():
+            k = (str(r.get("kind", "")), str(r.get("sector", "")))
+            sec_counts[k] = sec_counts.get(k, 0) + 1
+    caps = {"stock": getattr(args, "max_per_sector", 2),
+            "etf": getattr(args, "max_per_etf_category", 2)}
+    rows = []
+    for _, r0 in pre_gate.iterrows():
+        t = str(r0["ticker"])
+        r = by_ticker.get(t, r0)
+        est = _safe(r.get("est_next_1y"))
+        dep_used = _safe(r.get("dep_used"))
+        contender = (est is not None and est >= floor
+                     and not (dep_used is not None and dep_used > veto))
+        if t in picked:
+            outcome, reason = "picked", "picked"
+        elif t in hm_map:
+            outcome, reason = "honorable", hm_map[t]
+        elif bool(r.get("llm_excluded")):
+            outcome = "rejected"
+            reason = (f"research exclusion: "
+                      f"{str(r.get('llm_exclude_reason', ''))[:200]}")
+        elif t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+        elif t in _STABILITY_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"stability {_STABILITY_GATED[t]} — below the "
+                      f"B-or-better pick bar")
+        elif t in _LAST_OVERLAP_DROPS:
+            _w, _ov = _LAST_OVERLAP_DROPS[t]
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"overlaps {_w} ({_ov:.0%}) — kept the "
+                      f"higher-EV fund")
+        elif t in _FRAME_DEDUPE_DROPS:
+            outcome, reason = "rejected", _FRAME_DEDUPE_DROPS[t]
+        elif t in gated_tickers:
+            outcome = "rejected"
+            bits = []
+            _v = _safe(r.get("vol60"))
+            _dd = _safe(r.get("maxdd"))
+            if _v is not None and _v > args.max_vol:
+                bits.append(f"vol {_v:.0%} > {args.max_vol:.0%}")
+            if _dd is not None and _dd < args.min_dd:
+                bits.append(f"max drawdown {_dd:.0%} < {args.min_dd:.0%}")
+            reason = ("pre-selection risk gate"
+                      + (f" ({'; '.join(bits)})" if bits else ""))
+        elif dep_used is not None and dep_used > veto:
+            outcome = "rejected"
+            reason = f"event-dependence veto (dep={dep_used:.2f} > {veto})"
+        elif est is not None and est < floor:
+            outcome = "rejected"
+            reason = (f"expected-value floor (est={est:+.1%} "
+                      f"< {floor:+.0%})")
+        else:
+            _k = (str(r.get("kind", "")), str(r.get("sector", "")))
+            if sec_counts.get(_k, 0) >= caps.get(str(r.get("kind",
+                                                          "stock")), 2):
+                outcome = "rejected"
+                reason = f"{r.get('sector', '')} cap full"
+            else:
+                outcome = "rejected"
+                reason = "lower expected value than picks"
+        rows.append(_frame_row(r, outcome, reason))
+    counts = {
+        "candidates": len(rows),
+        "picks": len(picked),
+        "gate_bars": len(_RISK_GATED),
+        "stability_bars": len(_STABILITY_GATED),
+        "dep_binds": sum(1 for row in rows if row["dep_capped"]),
+        "vetoes": sum(1 for row in rows
+                      if row["outcome"] != "picked"
+                      and row["dep_used"] is not None
+                      and row["dep_used"] > veto),
+    }
+    return _write_frame_manifest(rows, "daily", bundle_path, counts,
+                                 expected_candidates=len(pre_gate))
+
+
+def write_frame_snapshot_watchlist(final, bundle_path, args):
+    """Watchlist-flow frame snapshot: one row per rated ticker. Outcome
+    maps BUY -> picked, HOLD -> honorable, SELL -> rejected, with
+    compute_rating's reason string. The two-strike gate does NOT apply in
+    watchlist mode, so strikes are mirrored inline for analysis only."""
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    rows = []
+    for _, r in final.iterrows():
+        rating = str(r.get("rating") or "")
+        outcome = {"BUY": "picked", "HOLD": "honorable",
+                   "SELL": "rejected"}.get(rating, "rejected")
+        row = _frame_row(r, outcome, str(r.get("rating_reason") or ""))
+        row["rating"] = rating or None
+        rows.append(row)
+    counts = {
+        "candidates": len(rows),
+        "picks": sum(1 for row in rows if row["outcome"] == "picked"),
+        "gate_bars": 0,
+        "stability_bars": 0,
+        "dep_binds": sum(1 for row in rows if row["dep_capped"]),
+        "vetoes": sum(1 for row in rows
+                      if row["outcome"] != "picked"
+                      and row["dep_used"] is not None
+                      and row["dep_used"] > veto),
+    }
+    return _write_frame_manifest(rows, "watchlist", bundle_path, counts,
+                                 expected_candidates=len(final))
+
+
 def run_self_check(final, args, out_csv):
     """Automatic post-run validation. Returns list of failures (alert!)."""
     import os
@@ -3238,6 +3537,14 @@ def run_self_check(final, args, out_csv):
                   "all picks <2 risk strikes (gate added 2026-10-30)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
+    if _FRAME_SNAPSHOT is not None:
+        # Auditability assert (2026-10-30): the frame snapshot + manifest
+        # written this run must exist on disk, cover every candidate
+        # evaluated, and carry this running file's sha256.
+        check("frame_manifest_written",
+              _verify_frame_snapshot(_FRAME_SNAPSHOT.get("candidates")),
+              f"frame rows vs {_FRAME_SNAPSHOT.get('candidates')} "
+              f"candidates; manifest hash vs running file")
     fails = [c for c in checks if not c["ok"]]
     log(f"SELF-CHECK: {len(checks) - len(fails)}/{len(checks)} passed")
     return checks, fails
@@ -3503,6 +3810,9 @@ def pick_final(adj, args, llm_path):
     # reset per-run risk-gate record (ticker -> {count, strikes})
     global _RISK_GATED
     _RISK_GATED = {}
+    # reset per-run dedupe record (auditability frame snapshot)
+    global _FRAME_DEDUPE_DROPS
+    _FRAME_DEDUPE_DROPS = {}
     # TWO-STRIKE RISK GATE inputs (2026-10-30): strike counts for every
     # selection candidate; pick_group bars >=2-strike names from picks.
     adj = compute_risk_strikes(adj, llm_path=llm_path)
@@ -3531,6 +3841,14 @@ def pick_final(adj, args, llm_path):
         srank = srank.sort_values("final_score", ascending=False)
         _dup_mask = srank.duplicated("_ckey", keep="first")
         _dropped_names = list(srank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        if _dup_mask.any():
+            _kept_by_key = dict(zip(srank.loc[~_dup_mask, "_ckey"],
+                                    srank.loc[~_dup_mask, "ticker"]))
+            for _dt, _dk in zip(srank.loc[_dup_mask, "ticker"],
+                                srank.loc[_dup_mask, "_ckey"]):
+                _FRAME_DEDUPE_DROPS[str(_dt)] = (
+                    f"share-class duplicate of {_kept_by_key.get(_dk, '?')} "
+                    f"— kept the higher-scoring listing")
         srank = srank[~_dup_mask].drop(columns=["_ckey"])
         if _dropped_names:
             log(f"share-class dedupe: {len(_dropped_names)} duplicate listings "
@@ -3550,6 +3868,15 @@ def pick_final(adj, args, llm_path):
         erank = erank.sort_values("final_score", ascending=False)
         _dup_mask = erank.duplicated("_pkey", keep="first")
         _dropped_names = list(erank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        if _dup_mask.any():
+            _kept_by_key = dict(zip(erank.loc[~_dup_mask, "_pkey"],
+                                    erank.loc[~_dup_mask, "ticker"]))
+            for _dt, _dk in zip(erank.loc[_dup_mask, "ticker"],
+                                erank.loc[_dup_mask, "_pkey"]):
+                _FRAME_DEDUPE_DROPS[str(_dt)] = (
+                    f"duplicate portfolio wrapper of "
+                    f"{_kept_by_key.get(_dk, '?')} "
+                    f"— kept the higher-scoring listing")
         erank = erank[~_dup_mask].drop(columns=["_pkey"])
         if _dropped_names:
             log(f"ETF portfolio dedupe: {len(_dropped_names)} duplicate "
@@ -4025,6 +4352,15 @@ def run_watchlist_apply(args):
     out = f"watchlist_results_{datetime.now().strftime('%Y%m%d')}.csv"
     final.to_csv(out, index=False)
     print(f"Saved: {out}")
+    # AUDITABILITY (2026-10-30, instrumentation only): full-frame
+    # snapshot + run manifest for the watchlist flow; verified into the
+    # checks list below as frame_manifest_written.
+    _wl_frame_ok = False
+    try:
+        write_frame_snapshot_watchlist(final, args.watchlist_apply[0], args)
+        _wl_frame_ok = _verify_frame_snapshot(len(final))
+    except Exception as e:
+        log(f"frame snapshot (watchlist): FAILED ({e})")
     # business summaries for blurb grounding + researcher-written blurbs
     try:
         _picks = list(final["ticker"])
@@ -4073,8 +4409,11 @@ def run_watchlist_apply(args):
     checks.append(("sorted_by_est",
                    bool((final["est_next_1y"].values[:-1] >=
                          final["est_next_1y"].values[1:]).all())))
+    checks.append(("frame_manifest_written", _wl_frame_ok))
     for name, ok in checks:
         print(f"[{'PASS' if ok else 'FAIL'}] {name}")
+    _patch_manifest_self_check(
+        f"{sum(1 for _, o in checks if o)}/{len(checks)}")
     write_run_summary(
         f"watchlist_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         {"timestamp": datetime.now().isoformat(), "mode": "watchlist",
@@ -4148,6 +4487,8 @@ _LAST_DATA_COMPLETENESS = {}
 _LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
 _STABILITY_GATED = {}  # ticker -> grade; C/D names barred from pick slots (2026-10-16)
 _RISK_GATED = {}  # ticker -> {count, strikes}; >=2-strike names barred from pick slots (2026-10-30)
+_FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
+_FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
 
 
 def fetch_pick_prices(tickers, cache=None):
@@ -4339,6 +4680,15 @@ def record_picks_ledger(final, ranked, args, cache=None):
         }
         if bool(r.get("dep_capped")):
             _pev["dep_capped"] = True
+        # Auditability (2026-10-30): the pick's two-strike risk-gate
+        # inputs, from the same columns pick_final's gate consumed.
+        _strikes = r.get("risk_strikes")
+        _pev["risk_strikes"] = ([str(s) for s in _strikes]
+                                if isinstance(_strikes, (list, tuple))
+                                else [])
+        _scount = _safe(r.get("risk_strike_count"))
+        _pev["risk_strike_count"] = (int(_scount) if _scount is not None
+                                     else len(_pev["risk_strikes"]))
         ledger_append(THESIS_LEDGER, _pev)
         npick += 1
     # rejected control group: names the system said no to, so the audit can
@@ -4707,6 +5057,10 @@ def main():
                                    w_outlier=args.w_outlier)
         log_world_layer(outputs)
         log_research_assessments(ranked)
+        # auditability (2026-10-30): keep the pre-gate frame so the
+        # frame snapshot can cover every evaluated candidate, including
+        # pre-selection-gate drops (reference only — gates return a copy)
+        pre_gate_ranked = ranked
         # absolute risk gates also apply on the Phase-B path
         ranked, gate_report = apply_risk_gates(ranked, max_vol=args.max_vol,
                                                min_dd=args.min_dd)
@@ -4721,10 +5075,27 @@ def main():
                f"{args.benchmark}_llm.csv")
         final.to_csv(out, index=False)
         print(f"Saved: {out}")
+        # AUDITABILITY (2026-10-30, instrumentation only): honorable
+        # mentions are computed here instead of after the ledger write
+        # (pure computation on the same inputs — the chart below reuses
+        # this same list) so the frame snapshot can carry the exact HM
+        # reasons; frame + manifest are written BEFORE the self-check,
+        # whose frame_manifest_written assert verifies them. Neither
+        # step feeds selection.
+        hm = honorable_mentions(ranked, final, args)
+        try:
+            write_frame_snapshot_daily(ranked, pre_gate_ranked, final, hm,
+                                       args.llm_apply[0], args, gate_report)
+        except Exception as e:
+            log(f"frame snapshot: FAILED ({e}) — the self-check's "
+                f"frame_manifest_written assert will fail this run")
+            _mark_frame_failed(len(pre_gate_ranked))
         # Self-check gates the run: a failure aborts BEFORE ledger appends
         # and chart write, so a broken run never records picks or produces
         # a publishable page.
         checks, fails = run_self_check(final, args, out)
+        _patch_manifest_self_check(
+            f"{len(checks) - len(fails)}/{len(checks)}")
         if fails:
             print("\n!!! SELF-CHECK FAILURES:")
             for c in fails:
@@ -4739,7 +5110,7 @@ def main():
             log(f"ledger: record_picks_ledger failed ({e})")
         chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
                       f"{args.benchmark}_llm.html")
-        hm = honorable_mentions(ranked, final, args)
+        # hm computed earlier (auditability frame snapshot) — reused here
         # market chat (researcher-written, plain language) + business
         # summaries for tomorrow's market chat — both optional files
         mc = None
