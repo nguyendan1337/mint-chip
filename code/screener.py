@@ -1122,6 +1122,85 @@ EARN_GAP_FALLBACK_MOVE = 0.12  # audit-cited cross-sectional average (§11.3)
 EARN_GAP_WINDOW_DAYS = 30      # earnings proximity for the downside floor
 RISK_GATE_MIN_STRIKES = 2
 
+# 3) Diversified-ETF dep ceiling (Fix B, 2026-10-30, Dan approved after
+#    the ETF-leg EV diagnosis): a diversified basket does not carry
+#    single-name event risk, but researchers were scoring diversified
+#    funds dep ~0.25 out of habit — a 5-point bracket charge that, with
+#    the 10% downside floor and the confidence haircut, meant a
+#    diversified fund needed a ~20% raw 6m run just to break even
+#    (98 scored ETFs on 2026-10-30: median EV -2.8%, exactly 1 over the
+#    +3% floor). For DIVERSIFIED ETFs only, the dep fed to every
+#    decision (EV term, dep veto, risk-gate strike, watchlist rating,
+#    stability grade) is capped at 0.15. Stocks and concentrated
+#    (sector/thematic) ETFs are untouched. The EV formula itself,
+#    the floor, the veto threshold and the caps are unchanged — this
+#    corrects a mis-priced INPUT, like the earnings-gap downside.
+DEP_CEILING_DIVERSIFIED = 0.15
+_ETF_SECTOR_KEYWORDS = (
+    "technology", "health", "biotech", "energy", "financial",
+    "real estate", "materials", "industrials", "utilities", "consumer",
+    "communication", "semiconductor", "cyber", "artificial", "robotics",
+    "cannabis", "gaming", "airline", "transportation", "infrastructure",
+    "water", "clean", "solar", "nuclear", "defense", "crypto",
+    "blockchain", "gold", "silver", "mining", "oil", "gas", "bank",
+    "insurance", "pharma", "media", "retail", "homebuild",
+)
+_ETF_SIZE_WORDS = ("large", "mid", "small")
+_ETF_FACTOR_WORDS = ("value", "blend", "growth", "momentum", "quality",
+                     "dividend")
+# Evidence from the most recent add_research_columns() enrichment, for
+# the dep_ceiling_applied self-check (a real recomputation, below).
+_DEP_CEILING_BINDS = {}      # ticker -> (dep_raw, dep_used)
+_DEP_CEILING_EVIDENCE = []   # per-row dicts from the latest enrichment
+
+
+def classify_etf_category(category):
+    """'diversified' | 'concentrated' for an ETF category string.
+
+    Diversified requires a size band (Large/Mid/Small) + a factor word
+    (Value/Blend/Growth/Momentum/Quality/Dividend) and NO sector/theme
+    keyword. Anything else — single-sector/thematic categories, and
+    ambiguous categories without the size+factor signature — is
+    concentrated (fail-safe: no ceiling applied)."""
+    c = str(category or "").lower()
+    if any(k in c for k in _ETF_SECTOR_KEYWORDS):
+        return "concentrated"
+    if (any(w in c for w in _ETF_SIZE_WORDS)
+            and any(w in c for w in _ETF_FACTOR_WORDS)):
+        return "diversified"
+    return "concentrated"
+
+
+def effective_dep(ticker, kind, category, dep):
+    """(dep_used, capped) — the ONE dep every decision consumes.
+
+    Shared by the main Phase B ranking and watchlist-mode rating so the
+    diversified-ETF ceiling can never diverge between flows. Only
+    diversified ETFs are capped; everything else passes through."""
+    try:
+        d = float(dep)
+    except Exception:
+        d = 0.3
+    if str(kind or "").lower() == "etf" \
+            and classify_etf_category(category) == "diversified":
+        used = min(d, DEP_CEILING_DIVERSIFIED)
+        return used, used < d - 1e-12
+    return d, False
+
+
+def _dep_used_of(r):
+    """dep_used for a frame row: the enriched column when present, else
+    recomputed from the raw fields via effective_dep (ledger/control
+    paths iterate the caller's unenriched ranked frame)."""
+    v = _safe(r.get("dep_used")) if hasattr(r, "get") else None
+    if v is not None:
+        return v
+    raw = _safe(r.get("llm_event_dependence"))
+    used, _c = effective_dep(r.get("ticker"), r.get("kind"),
+                             r.get("sector"),
+                             raw if raw is not None else 0.3)
+    return used
+
 
 def _earnings_dates_one(t):
     """(ticker, [past earnings dates as naive Timestamps]) — never raises."""
@@ -1283,7 +1362,11 @@ def compute_risk_strikes(df, llm_path=True):
     risk_strikes (list of human-readable strike labels) and
     risk_strike_count columns; pick_group enforces >=2 as HM-only."""
     df = df.copy()
-    if "llm_event_dependence" in df.columns:
+    if "dep_used" in df.columns:
+        # Fix B (2026-10-30): the strike must count the dep decisions
+        # actually consume (diversified-ETF ceiling applied), not raw.
+        dep_col = "dep_used"
+    elif "llm_event_dependence" in df.columns:
         dep_col = "llm_event_dependence"
     elif "news_penalty" in df.columns:
         dep_col = "news_penalty"
@@ -1381,7 +1464,7 @@ def add_ratings(df):
     Logs each rating for the audit trail.
     """
     sub = df.copy()
-    _rats = [compute_rating(r.get("est_next_1y"), r.get("llm_event_dependence"),
+    _rats = [compute_rating(r.get("est_next_1y"), _dep_used_of(r),
                             r.get("llm_confidence"), r.get("vol60"),
                             r.get("maxdd")) for _, r in sub.iterrows()]
     sub["rating"] = [x[0] for x in _rats]
@@ -2802,7 +2885,7 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         # idempotent: the two-pass Phase B reruns this repair, so skip
         # losers already recorded today
         if loser not in _ledger_seen_today(REJECTED_LEDGER, "rejected"):
-            ledger_append(REJECTED_LEDGER, {
+            _rev = {
                 "event": "rejected", "ticker": loser, "kind": "etf",
                 "name": str(lrow.get("name", "")),
                 "price": None,
@@ -2812,7 +2895,10 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
                 "dep": _safe(lrow.get("llm_event_dependence")),
                 "cont": _safe(lrow.get("llm_continuation")),
                 "conf": _safe(lrow.get("llm_confidence")),
-            })
+            }
+            if bool(lrow.get("dep_capped")):
+                _rev["dep_capped"] = True
+            ledger_append(REJECTED_LEDGER, _rev)
         evicted.add(loser)
         sel = sel[sel["ticker"] != loser].reset_index(drop=True)
         # refill the freed slot: same hard gates as selection, plus the
@@ -2820,10 +2906,11 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         counts = Counter(sel["sector"]) if len(sel) else Counter()
         cands = pool[~pool["ticker"].isin(set(sel["ticker"]) | evicted)].copy()
         cands = cands[cands["final_score"] >= min_score]
-        if "llm_event_dependence" in cands.columns:
+        if "llm_event_dependence" in cands.columns or "dep_used" in cands.columns:
             # astype(bool): an empty map() yields an object-dtype Series,
             # which pandas would read as a (zero-width) column selector
-            cands = cands[cands["llm_event_dependence"].map(_dep_ok).astype(bool)]
+            cands = cands[cands.apply(
+                lambda r: _dep_ok(_dep_used_of(r)), axis=1).astype(bool)]
         cands = cands[cands["sector"].map(lambda s: counts.get(s, 0) < cap).astype(bool)]
         surv_holds = {t: etf_top_holdings(t) for t in sel["ticker"]}
 
@@ -2931,8 +3018,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
         if ev < floor:
             continue
         try:
-            if (r.get("llm_event_dependence") is not None
-                    and float(r["llm_event_dependence"]) > veto):
+            if float(_dep_used_of(r)) > veto:
                 continue
         except Exception:
             pass
@@ -2994,9 +3080,10 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
             skipped["below_floor"] += 1
             skipped_names.setdefault("below_floor", []).append(r["ticker"])
             continue
-        if veto_dep is not None and "llm_event_dependence" in df.columns:
+        if veto_dep is not None and ("llm_event_dependence" in df.columns
+                                     or "dep_used" in df.columns):
             try:
-                if float(r["llm_event_dependence"]) > veto_dep:
+                if float(_dep_used_of(r)) > veto_dep:
                     skipped["vetoed_event_dep"] += 1
                     skipped_names.setdefault("vetoed_event_dep", []).append(r["ticker"])
                     continue
@@ -3082,10 +3169,60 @@ def run_self_check(final, args, out_csv):
             check("risk_gates",
                   bool(((final["vol60"] <= args.max_vol + 1e-9) &
                         (final["maxdd"] >= args.min_dd - 1e-9)).all()))
-        if "llm_event_dependence" in final.columns and args.veto_dep is not None:
+        _dep_veto_col = ("dep_used" if "dep_used" in final.columns
+                         else "llm_event_dependence")
+        if _dep_veto_col in final.columns and args.veto_dep is not None:
             check("dep_veto",
-                  bool((final["llm_event_dependence"] <= args.veto_dep + 1e-9).all()),
-                  f"veto_dep={args.veto_dep}")
+                  bool((final[_dep_veto_col] <= args.veto_dep + 1e-9).all()),
+                  f"veto_dep={args.veto_dep} (on {_dep_veto_col})")
+        if "dep_used" in final.columns and _DEP_CEILING_EVIDENCE:
+            # Fix B recomputation check (2026-10-30): re-derive every
+            # enriched ETF row's dep_used from its raw fields via the
+            # shared helper and require an exact match; every logged
+            # bind must correspond to a capped recomputation, and every
+            # diversified pick must sit at or under the ceiling.
+            _ev_ok, _ev_detail = True, ""
+            _capped_ev = set()
+            for _e in _DEP_CEILING_EVIDENCE:
+                _u2, _c2 = effective_dep(_e["ticker"], _e["kind"],
+                                         _e["category"], _e["dep_raw"])
+                if abs(_u2 - _e["dep_used"]) > 1e-9 or _c2 != _e["capped"]:
+                    _ev_ok = False
+                    _ev_detail = (f"{_e['ticker']}: evidence dep_used="
+                                  f"{_e['dep_used']:.2f} vs recomputed "
+                                  f"{_u2:.2f}")
+                    break
+                if _e["cls"] == "diversified" \
+                        and _e["dep_used"] > DEP_CEILING_DIVERSIFIED + 1e-9:
+                    _ev_ok = False
+                    _ev_detail = (f"{_e['ticker']}: diversified dep_used "
+                                  f"{_e['dep_used']:.2f} above ceiling")
+                    break
+                if _e["capped"]:
+                    _capped_ev.add(_e["ticker"])
+            if _ev_ok and set(_DEP_CEILING_BINDS) != _capped_ev:
+                _ev_ok = False
+                _ev_detail = ("logged binds "
+                              f"{sorted(_DEP_CEILING_BINDS)} != capped "
+                              f"evidence {sorted(_capped_ev)}")
+            if _ev_ok and "kind" in final.columns:
+                for _, _r in final[final["kind"] == "etf"].iterrows():
+                    _raw = _safe(_r.get("llm_event_dependence"))
+                    if _raw is None:
+                        _raw = _safe(_r.get("news_penalty"))
+                    _u3, _ = effective_dep(
+                        _r.get("ticker"), "etf", _r.get("sector"),
+                        _raw if _raw is not None else 0.3)
+                    if abs(_u3 - float(_r["dep_used"])) > 1e-9:
+                        _ev_ok = False
+                        _ev_detail = (f"pick {_r['ticker']}: dep_used "
+                                      f"{float(_r['dep_used']):.2f} != "
+                                      f"recomputed {_u3:.2f}")
+                        break
+            check("dep_ceiling_applied", _ev_ok,
+                  _ev_detail or
+                  f"{len(_DEP_CEILING_EVIDENCE)} ETF rows recomputed, "
+                  f"{len(_DEP_CEILING_BINDS)} binds match")
         if "est_next_1y" in final.columns:
             check("est_floor",
                   bool((final["est_next_1y"] >= args.min_est - 1e-9).all()),
@@ -3280,9 +3417,47 @@ def add_research_columns(df, llm_path=True):
         conf = pd.Series(0.5 if not llm_path else 0.7, index=sub.index)
     sub["llm_confidence"] = conf
     recs = sub.to_dict("records")
+    # Fix B (2026-10-30): diversified-ETF dep ceiling — dep_used is the
+    # dep EVERY downstream decision consumes (EV term, stability grade,
+    # dep veto, risk-gate strike, watchlist rating). One shared helper,
+    # both flows (this function serves Phase B and watchlist-apply).
+    global _DEP_CEILING_BINDS, _DEP_CEILING_EVIDENCE
+    _dep_eff = [effective_dep(r.get("ticker"), r.get("kind"),
+                              r.get("sector"), d)
+                for r, d in zip(recs, dep)]
+    dep_used = pd.Series([u for u, _ in _dep_eff], index=sub.index)
+    dep_capped = pd.Series([c for _, c in _dep_eff], index=sub.index)
+    sub["dep_used"] = dep_used
+    sub["dep_capped"] = dep_capped
+    _DEP_CEILING_BINDS = {}
+    _DEP_CEILING_EVIDENCE = []
+    _n_div = _n_conc = 0
+    for r, d, (u, cap) in zip(recs, dep, _dep_eff):
+        if str(r.get("kind") or "").lower() != "etf":
+            continue
+        cls = classify_etf_category(r.get("sector"))
+        if cls == "diversified":
+            _n_div += 1
+        else:
+            _n_conc += 1
+        _DEP_CEILING_EVIDENCE.append(
+            {"ticker": str(r.get("ticker")), "kind": "etf",
+             "category": str(r.get("sector") or ""), "cls": cls,
+             "dep_raw": float(d), "dep_used": float(u),
+             "capped": bool(cap)})
+        if cap:
+            _DEP_CEILING_BINDS[str(r.get("ticker"))] = (float(d), float(u))
+    if _n_div or _n_conc:
+        log(f"dep ceiling: {_n_div} diversified / {_n_conc} concentrated "
+            f"ETF candidates (diversified dep capped at "
+            f"{DEP_CEILING_DIVERSIFIED:.2f})")
+    for r, d, (u, cap) in zip(recs, dep, _dep_eff):
+        if cap:
+            log(f"dep ceiling (diversified fund): {r.get('ticker')} "
+                f"dep {float(d):.2f} -> {float(u):.2f}")
     sub["est_next_1y"] = [estimate_next_year(r, d, c, f)
-                          for r, d, c, f in zip(recs, dep, cont, conf)]
-    sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep)]
+                          for r, d, c, f in zip(recs, dep_used, cont, conf)]
+    sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep_used)]
     # --- est audit trail: formula + per-ticker components, so any reviewer
     # (human or LLM) can re-derive every estimate from the log alone ---
     log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
@@ -3291,8 +3466,9 @@ def add_research_columns(df, llm_path=True):
         "weight, beyond at half weight (cap 50%); downside = max(|maxDD| x 0.5, "
         "10%) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
         "move when earnings are within 30d (2026-10-30); "
-        "character = quality/entry-timing/structure z-sum, clamped [-2, 2]")
-    for (_, r), d, c, f in zip(sub.iterrows(), dep, cont, conf):
+        "character = quality/entry-timing/structure z-sum, clamped [-2, 2]; "
+        "dep = dep_used (diversified-ETF ceiling 0.15 applied, 2026-10-30)")
+    for (_, r), d, c, f in zip(sub.iterrows(), dep_used, cont, conf):
         p = est_parts(r, d, c, f)
         _gap = ""
         if p.get("earn_gap_applied"):
@@ -4129,7 +4305,7 @@ def record_picks_ledger(final, ranked, args, cache=None):
         if r["ticker"] in already:
             continue
         _fc = fuse_ctx.get(r["ticker"], {})
-        ledger_append(THESIS_LEDGER, {
+        _pev = {
             "event": "picked",
             "ticker": r["ticker"], "kind": r.get("kind", ""),
             "name": r.get("name", ""), "sector": r.get("sector", ""),
@@ -4160,7 +4336,10 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "rationale": str(r.get("llm_rationale", "") or "")[:500],
             "benchmark": args.benchmark,
             "etf_benchmark": etf_benchmark(args),
-        })
+        }
+        if bool(r.get("dep_capped")):
+            _pev["dep_capped"] = True
+        ledger_append(THESIS_LEDGER, _pev)
         npick += 1
     # rejected control group: names the system said no to, so the audit can
     # ask whether the vetoes/exclusions/floors were right
@@ -4173,12 +4352,16 @@ def record_picks_ledger(final, ranked, args, cache=None):
         if t in final_set or t in rseen or recorded >= 15:
             continue
         d = _safe(r.get("llm_event_dependence"))
+        d_used, d_cap = effective_dep(
+            t, r.get("kind"), r.get("sector"), d if d is not None else 0.3)
         c = _safe(r.get("llm_continuation"))
         f_ = _safe(r.get("llm_confidence"))
-        p = est_parts(r, d if d is not None else 0.3,
+        p = est_parts(r, d_used,
                       c if c is not None else 0.5, f_ if f_ is not None else 1.0)
         reason = None
         extra = {}
+        if d_cap:
+            extra["dep_capped"] = True
         if r.get("llm_excluded"):
             reason = f"research exclusion: {str(r.get('llm_exclude_reason', ''))[:200]}"
         elif t in _RISK_GATED:
@@ -4186,9 +4369,10 @@ def record_picks_ledger(final, ranked, args, cache=None):
             reason = (f"risk-flag gate ({_rg['count']} strikes: "
                       f"{', '.join(_rg['strikes'])})")
             extra = {"risk_strikes": list(_rg["strikes"]),
-                     "risk_strike_count": int(_rg["count"])}
-        elif d is not None and d > veto:
-            reason = f"event-dependence veto (dep={d:.2f} > {veto})"
+                     "risk_strike_count": int(_rg["count"]),
+                     **extra}
+        elif d is not None and d_used > veto:
+            reason = f"event-dependence veto (dep={d_used:.2f} > {veto})"
         elif p["est"] < args.min_est:
             reason = f"expected-value floor (est={p['est']:+.1%} < {args.min_est:+.0%})"
         else:
@@ -4281,12 +4465,15 @@ def _record_spell_exits(final_set, ranked, args, today):
             reason = "overlap"
         else:
             d = _safe(r.get("llm_event_dependence"))
-            if d is not None and d > veto:
+            d_used, _dcap = effective_dep(
+                t, r.get("kind"), r.get("sector"),
+                d if d is not None else 0.3)
+            if d is not None and d_used > veto:
                 reason = "gate_trip"
             else:
                 c = _safe(r.get("llm_continuation"))
                 f_ = _safe(r.get("llm_confidence"))
-                p = est_parts(r, d if d is not None else 0.3,
+                p = est_parts(r, d_used,
                               c if c is not None else 0.5,
                               f_ if f_ is not None else 1.0)
                 reason = ("ev_below_floor" if p["est"] < args.min_est
