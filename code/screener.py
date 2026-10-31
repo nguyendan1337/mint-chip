@@ -695,11 +695,6 @@ def log_levers(args):
     log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
         f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
     log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score")
-    log("watchlist seats: ENABLED — every watchlist.json ticker that is scored "
-        "but ranked outside the pool is seated via the surge mechanism (a seat "
-        "buys an EVALUATION only; the EV floor, dep veto, gates and caps still "
-        "decide). Seats added this run are logged as 'WATCHLIST SEAT:' lines "
-        "and counted in the 'research pool after watchlist seats' line below")
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
@@ -3044,14 +3039,8 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
     return pd.DataFrame(picked)
 
 
-def run_self_check(final, args, out_csv, seat_check=None):
-    """Automatic post-run validation. Returns list of failures (alert!).
-
-    seat_check (Phase B llm-apply path only): (seated_tickers,
-    accounted_tickers) — every candidate Phase A seated from watchlist.json
-    must appear in Phase B's ranked frame or its risk-gate output. A seat
-    that silently vanished in the bundle plumbing would defeat the seat
-    fix, so its absence fails the run like any other broken invariant."""
+def run_self_check(final, args, out_csv):
+    """Automatic post-run validation. Returns list of failures (alert!)."""
     import os
     checks = []
 
@@ -3062,13 +3051,6 @@ def run_self_check(final, args, out_csv, seat_check=None):
 
     check("csv_written", os.path.exists(out_csv), out_csv)
     check("nonempty_final", len(final) > 0, f"{len(final)} picks")
-    if seat_check is not None:
-        _seated, _accounted = seat_check
-        _seat_missing = sorted(set(_seated) - set(_accounted))
-        check("watchlist_seats_accounted", not _seat_missing,
-              f"{len(_seated)} Phase A watchlist seat(s) all present in "
-              f"Phase B ranked/gated output"
-              + (f"; MISSING: {_seat_missing}" if _seat_missing else ""))
     if len(final):
         check("no_dupes", not final["ticker"].duplicated().any(),
               f"{final['ticker'].duplicated().sum()} duplicate tickers")
@@ -4554,19 +4536,8 @@ def main():
         print(f"Saved: {out}")
         # Self-check gates the run: a failure aborts BEFORE ledger appends
         # and chart write, so a broken run never records picks or produces
-        # a publishable page. The seat accounting input: every candidate
-        # Phase A seated from watchlist.json must be visible in Phase B's
-        # ranked frame or its risk-gate output.
-        _seated = set()
-        if "watchlist_seat" in df.columns:
-            _wv = df["watchlist_seat"]
-            _seated = set(df.loc[_wv.map(
-                lambda v: bool(v) and not (isinstance(v, float) and v != v)),
-                "ticker"])
-        _accounted = (set(ranked["ticker"])
-                      | set(gate_report.get("gated_tickers", [])))
-        checks, fails = run_self_check(final, args, out,
-                                       seat_check=(_seated, _accounted))
+        # a publishable page.
+        checks, fails = run_self_check(final, args, out)
         if fails:
             print("\n!!! SELF-CHECK FAILURES:")
             for c in fails:
@@ -4911,63 +4882,6 @@ def main():
                 log(f"research pool after surge: {len(pool)} "
                     f"({len(_surg)} surge added)")
 
-    # Watchlist seats (added 2026-10-30): Dan's watchlist is his
-    # declared-interest list, but the pool above is pure base_score rank —
-    # in a rotation, followed names can fall outside the top-100 cutoffs
-    # and never get researched in the main flow at all (2026-10-29/30:
-    # VGT, base +0.15 vs a ~+0.27 ETF cutoff, and every other tech/growth
-    # watchlist ETF fell out of the ETF pool; the main page ran with 1 ETF
-    # while watchlist mode rated VGT +6.4% EV). Seats mirror the surge
-    # mechanism exactly: rows come from the same scored frames (df/edf),
-    # so a seated name has passed the same universe screens as any surge
-    # candidate — benchmark 1y outperformance, trash filters, risk gates —
-    # and a seat buys an EVALUATION only: EV floor, dep veto, stability
-    # gate, two-strike gate, caps and overlap dedupe still decide in
-    # Phase B. Names absent from the scored frames cannot be built into
-    # candidates; they are logged as skips, never fatal.
-    import json as _json
-    _wl_tickers = []
-    try:
-        _wl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "watchlist.json")
-        with open(_wl_path) as _wf:
-            _wl_tickers = [str(_t).strip().upper()
-                           for _t in _json.load(_wf).get("tickers", [])]
-    except Exception as _e:
-        log(f"WATCHLIST SEAT: watchlist.json unreadable ({_e}) — "
-            f"no seats added")
-    if _wl_tickers:
-        _pool_tickers = set(pool["ticker"])
-        _seat_frames = [_f for _f in (df, edf)
-                        if _f is not None and not _f.empty]
-        _scored = (pd.concat(_seat_frames, ignore_index=True)
-                   .drop_duplicates("ticker", keep="first")
-                   if _seat_frames else pd.DataFrame())
-        _scored_by_ticker = ({_r["ticker"]: _r
-                              for _, _r in _scored.iterrows()}
-                             if len(_scored) else {})
-        _seat_rows = []
-        for _t in _wl_tickers:
-            if _t in _pool_tickers:
-                continue  # already in the pool on merit — not a seat-add
-            _r = _scored_by_ticker.get(_t)
-            if _r is not None:
-                _seat_rows.append(_r)
-                log(f"WATCHLIST SEAT: {_t} — added to research pool "
-                    f"(watchlist seat; base {_r['base_score']:+.2f}, "
-                    f"rank outside top-100)")
-            else:
-                log(f"WATCHLIST SEAT SKIP: {_t} — not in the scored "
-                    f"stock/ETF frames (outside the pool's universe "
-                    f"screens: benchmark outperformance, trash filters, "
-                    f"risk gates — or no usable price history)")
-        if _seat_rows:
-            _seats = pd.DataFrame(_seat_rows).copy()
-            _seats["_watchlist_seat"] = True
-            pool = pd.concat([pool, _seats], ignore_index=True)
-            log(f"research pool after watchlist seats: {len(pool)} "
-                f"({len(_seats)} watchlist seats added)")
-
     # 7) News/research layer on top scorers (stocks + ETFs)
     if args.with_llm:
         # ---- LLM research stack (replaces the rules-based news layer) ----
@@ -5006,8 +4920,6 @@ def main():
                 log(f"NEWS INVALIDATION: {t} ({_trig}) — forcing fresh assessment")
             _sv = r.get("_surge")
             _is_surge = bool(_sv) and not (isinstance(_sv, float) and _sv != _sv)  # not NaN
-            _wv = r.get("_watchlist_seat")
-            _is_wseat = bool(_wv) and not (isinstance(_wv, float) and _wv != _wv)  # not NaN
             cand = {
                 "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
                 "kind": r.get("kind", "stock"),
@@ -5029,7 +4941,6 @@ def main():
                 "headlines": headlines[:12],
                 "news_trigger": _trig,
                 "surge": _is_surge,
-                "watchlist_seat": _is_wseat,
             }
             if r.get("kind") == "etf":
                 cand["expense_ratio"] = _safe(r.get("expense_ratio"))
