@@ -1,0 +1,16 @@
+{
+ "date": "2026-10-30",
+ "flow": "watchlist",
+ "bundle": "watchlist_bundle_20261030_160436.json",
+ "screener_sha256": "7e53a483983c335725a88ef0499b1041e32f0a369c8fb03a8fac8aa125aba99a",
+ "self_check": "4/4",
+ "counts": {
+  "candidates": 23,
+  "picks": 5,
+  "gate_bars": 0,
+  "stability_bars": 0,
+  "dep_binds": 2,
+  "vetoes": 0
+ },
+ "git_commit_of_pages_at_publish": null
+}
