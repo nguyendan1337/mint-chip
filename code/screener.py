@@ -1468,6 +1468,20 @@ def _z_of(r):
     return {c: _safe(r.get(c)) for c in ZCOLS}
 
 
+def _offense_score_of(r):
+    """Variant A offense score (2026-11-07): the scorer's momentum leg,
+    0.08 * z_6m + 0.06 * z_3m, from the row's recorded z components (the
+    exact production leg weights, recovered from build_scores via the
+    historical study's replication). Returns None when either component
+    is missing — an unscored name ranks below every scored name in
+    Variant A selection and records no score in frames/ledgers."""
+    z = _z_of(r)
+    a, b = z.get("z_6m"), z.get("z_3m")
+    if a is None or b is None:
+        return None
+    return 0.08 * float(a) + 0.06 * float(b)
+
+
 # RESEARCH POOL LANES (2026-11-06 pool package — Dan shipped on the
 # pool-gap diagnosis). The core pool stays top-N by base_score; the
 # lanes below only decide what gets EVALUATED — every gate, the EV
@@ -3647,6 +3661,8 @@ def honorable_mentions(ranked, final, args, top_k=30):
             reason = _ETF_GATED[t]
         elif t in _STOCK_GATED:
             reason = _STOCK_GATED[t]
+        elif t in _OFFENSE_BUDGET:
+            reason = _OFFENSE_BUDGET[t]
         elif t in _ETF_TIER2_CAPPED:
             reason = _ETF_TIER2_CAPPED[t]
         elif t in _LAST_OVERLAP_DROPS:
@@ -3654,6 +3670,10 @@ def honorable_mentions(ranked, final, args, top_k=30):
             reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
         elif sec_counts.get((kind, sec), 0) >= caps.get(kind, 2):
             reason = f"{sec} cap full"
+        elif t in _OFFENSE_RANKED:
+            _rk, _n = _OFFENSE_RANKED[t]
+            reason = (f"offense rank {_rk} of {_n} eligible — below the "
+                      f"pick line (Variant A momentum-ranked selection)")
         else:
             reason = "lower expected value than picks"
         try:
@@ -3789,6 +3809,8 @@ def _frame_row(r, outcome, reason):
         "est_next_1y": _safe(r.get("est_next_1y")),
         "base_rate": _safe(r.get("base_rate")),
         "cont_tilt": _safe(r.get("cont_tilt")),
+        "offense_score": (_offense_score_of(r)
+                          if str(r.get("kind", "")) == "stock" else None),
         "dep": dep_raw,
         "dep_used": dep_used,
         "dep_capped": dep_capped,
@@ -3891,6 +3913,9 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     "stock_selection": {
                         "gate_max_dep": STOCK_GATE_MAX_DEP,
                         "gate_implied_upside_min": 0.0,
+                        "ranking": "offense_score (Variant A, 2026-11-07)",
+                        "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
+                        "vol_budget_eligible_pct": 0.95,
                         "up_t1": STOCK_UP_T1,
                         "up_factor": STOCK_UP_FACTOR,
                         "up_cap": STOCK_UP_CAP},
@@ -4020,6 +4045,9 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         elif t in _ETF_TIER2_CAPPED:
             outcome = "honorable" if contender else "rejected"
             reason = _ETF_TIER2_CAPPED[t]
+        elif t in _OFFENSE_BUDGET:
+            outcome = "honorable" if contender else "rejected"
+            reason = _OFFENSE_BUDGET[t]
         elif t in _LAST_OVERLAP_DROPS:
             _w, _ov = _LAST_OVERLAP_DROPS[t]
             outcome = "honorable" if contender else "rejected"
@@ -4051,6 +4079,12 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
                                                           "stock")), 2):
                 outcome = "rejected"
                 reason = f"{r.get('sector', '')} cap full"
+            elif t in _OFFENSE_RANKED:
+                _rk, _n = _OFFENSE_RANKED[t]
+                outcome = "rejected"
+                reason = (f"offense rank {_rk} of {_n} eligible — below "
+                          f"the pick line (Variant A momentum-ranked "
+                          f"selection)")
             else:
                 outcome = "rejected"
                 reason = "lower expected value than picks"
@@ -4584,6 +4618,12 @@ def pick_final(adj, args, llm_path):
     # reset per-run dedupe record (auditability frame snapshot)
     global _FRAME_DEDUPE_DROPS
     _FRAME_DEDUPE_DROPS = {}
+    # reset per-run Variant A offense records (budget exclusions +
+    # eligible-set offense ranking; frame/HM reason strings read these)
+    global _OFFENSE_BUDGET
+    _OFFENSE_BUDGET = {}
+    global _OFFENSE_RANKED
+    _OFFENSE_RANKED = {}
     # TWO-STRIKE RISK GATE inputs (2026-10-30): strike counts for every
     # selection candidate; pick_group bars >=2-strike names from picks.
     adj = compute_risk_strikes(adj, llm_path=llm_path)
@@ -4795,7 +4835,55 @@ def pick_final(adj, args, llm_path):
         # EV shortlist: final_score's job is the quality floor (min_score);
         # among floor-passers, expected value ranks and selects. The number
         # the chart shows is the number that awards places.
-        est_ok = est_ok.sort_values("est_next_1y", ascending=False)
+        # VARIANT A — OFFENSE-RANKED STOCK SELECTION (shipped 2026-11-07
+        # on Dan's approval, under the refined mandate: "continue to do
+        # well" is the mandate's offensive clause, and going negative
+        # inside a correction is acceptable when the name does well over
+        # the next year — evidence in offensive_study_2026-11-07/,
+        # balanced_study_2026-11-07/ and selection_offense_2026-11-07/).
+        # STOCKS ONLY: eligibility is untouched (final_score floor,
+        # stability B-or-better, two-strike gate, iu/dep eligibility
+        # gate, the +1.5% EV floor above), but among eligible names the
+        # momentum leg (offense score) awards the places instead of EV,
+        # after a pain budget removes the eligible set's extreme-vol
+        # tail (vol60 above its own 95th percentile; excluded names stay
+        # honorable-mention eligible). Six-year backtest (survivor-
+        # flattered, top-slice effects): momentum-leg selection +20.3%
+        # fwd252 vs the EV blend's +6.9%, winner capture 30% vs 17%;
+        # the budget trims the worst pain slice. EV remains the printed
+        # number, the display sort, and the floor. ETFs unchanged.
+        # Judged by the Nov 30 audit on live picks vs the evaluated
+        # cohort (pre-registered with the ship).
+        if label == "stocks" and len(est_ok):
+            est_ok = est_ok.copy()
+            est_ok["offense_score"] = [_offense_score_of(r)
+                                       for _, r in est_ok.iterrows()]
+            _nosc = int(est_ok["offense_score"].isna().sum())
+            if "vol60" in est_ok.columns \
+                    and est_ok["vol60"].notna().sum() >= 10:
+                _vthr = float(est_ok["vol60"].quantile(0.95))
+                _over = est_ok[est_ok["vol60"] > _vthr]
+                if len(_over):
+                    log(f"variant A vol budget: 95th pct of eligible "
+                        f"vol60 = {_vthr:.3f}; excluded {len(_over)}: "
+                        f"{_over['ticker'].tolist()}")
+                    for _, _r in _over.iterrows():
+                        _OFFENSE_BUDGET[str(_r["ticker"])] = (
+                            f"volatility budget (vol60 "
+                            f"{float(_r['vol60']):.3f} > {_vthr:.3f}, the "
+                            f"95th percentile of the eligible set) — "
+                            f"Variant A pain budget")
+                    est_ok = est_ok[(est_ok["vol60"] <= _vthr)
+                                    | est_ok["vol60"].isna()].copy()
+            est_ok = est_ok.sort_values("offense_score", ascending=False,
+                                        na_position="last")
+            for _i, _t in enumerate(est_ok["ticker"].astype(str), 1):
+                _OFFENSE_RANKED[_t] = (_i, len(est_ok))
+            log(f"variant A selection: ranking {len(est_ok)} eligible "
+                f"stocks by offense score (0.08*z_6m + 0.06*z_3m); "
+                f"{_nosc} names without z components rank last")
+        else:
+            est_ok = est_ok.sort_values("est_next_1y", ascending=False)
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
                                          min_score=args.min_score, veto_dep=veto)
         first = first.copy()
@@ -4812,8 +4900,11 @@ def pick_final(adj, args, llm_path):
             rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
             if not rest.empty:
                 rest["_newcat"] = (~rest["sector"].isin(set(taken_counts))).astype(int)
-                rest = rest.sort_values(["_newcat", "est_next_1y"],
-                                        ascending=[False, False])
+                _fillkey = ("offense_score" if label == "stocks"
+                            else "est_next_1y")
+                rest = rest.sort_values(["_newcat", _fillkey],
+                                        ascending=[False, False],
+                                        na_position="last")
                 rest = rest.drop(columns=["_newcat"])
             fill = pick_top_with_sector_cap(rest, n=n - len(first),
                                             max_per_sector=cap,
@@ -5360,6 +5451,8 @@ _STOCK_GATED = {}  # ticker -> reason; stocks barred by the iu/dep eligibility g
 _ETF_TIER2 = {}  # ticker -> True; ETFs eligible only via the tier-2 proven-strength lane (2026-11-06)
 _ETF_TIER2_CAPPED = {}  # ticker -> reason; tier-2 ETFs that lost the tier-2 slot cap (2026-11-06)
 _FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
+_OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Variant A vol pain budget (2026-11-07)
+_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget Variant A offense ranking of eligible stocks (2026-11-07)
 _FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
 
 
@@ -5553,6 +5646,9 @@ def record_picks_ledger(final, ranked, args, cache=None):
         }
         if bool(r.get("dep_capped")):
             _pev["dep_capped"] = True
+        _off = _safe(r.get("offense_score"))
+        if _off is not None:
+            _pev["offense_score"] = _off
         # Auditability (2026-10-30): the pick's two-strike risk-gate
         # inputs, from the same columns pick_final's gate consumed.
         _strikes = r.get("risk_strikes")
