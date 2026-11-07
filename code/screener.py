@@ -1147,12 +1147,21 @@ def est_parts(row, dep, cont, conf=1.0):
         dep_ev = 0.0
     # BASE-ONLY EV CORE (2026-11-07; see EV_BASE_STOCK / EV_BASE_ETF):
     # the fitted price coefficients are zero, so the bracket is the
-    # per-kind base rate less the dep charge. cont carries no EV
-    # weight (it still drives the gates and the watchlist ratings);
-    # upside and downside remain computed above and recorded below
-    # for the gates and the audit trail.
+    # per-kind base rate less the dep charge; upside and downside
+    # remain computed above and recorded below for the gates and the
+    # audit trail.
+    # EV V2 CONTINUATION TILT (2026-11-07, Dan's directive; see
+    # EV_GAMMA_STOCK / EV_GAMMA_ETF): the bracket gains
+    # GAMMA[kind] x (cont - 0.50). The ETF gamma is half the live
+    # bucket estimate and survived the pre-ship robustness checks;
+    # the stock gamma is 0.0 because the stock continuation effect is
+    # not separately identified from dep on the live record, so the
+    # stock bracket is exactly the base-only core. cont still drives
+    # the gates and the watchlist ratings either way.
     base_rate = EV_BASE_ETF if is_etf else EV_BASE_STOCK
-    est = conf * (1 + 0.25 * char) * (base_rate - dep_ev * 0.20)
+    gamma = EV_GAMMA_ETF if is_etf else EV_GAMMA_STOCK
+    cont_tilt = gamma * (cont - 0.50)
+    est = conf * (1 + 0.25 * char) * (base_rate + cont_tilt - dep_ev * 0.20)
     return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
             "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
             "downside": downside, "downside_base": downside_base,
@@ -1161,6 +1170,7 @@ def est_parts(row, dep, cont, conf=1.0):
             "earn_move_fallback": earn_move_fallback,
             "earnings_in_days": earnings_in_days,
             "character": char, "base_rate": base_rate,
+            "cont_tilt": cont_tilt,
             "dep": dep, "dep_ev": dep_ev, "cont": cont, "conf": conf,
             "est": est}
 
@@ -1168,7 +1178,8 @@ def est_parts(row, dep, cont, conf=1.0):
 def estimate_next_year(row, dep, cont, conf=1.0):
     """Heuristic expected value, for display and ranking — NOT a prediction.
 
-    EV = conf x (1 + 0.25 x character) x (BASE[kind] - dep_ev x 0.20)
+    EV = conf x (1 + 0.25 x character)
+         x (BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20)
       BASE        = per-kind base rate (EV_BASE_STOCK / EV_BASE_ETF),
                     fitted on the 2021-2026 historical snapshots by
                     the 2026-11-07 design study: sign-constrained fits
@@ -1177,6 +1188,14 @@ def estimate_next_year(row, dep, cont, conf=1.0):
                     charge. est_parts still computes and records
                     upside/downside (the gates and the audit consume
                     them); they carry no EV weight.
+      GAMMA       = per-kind continuation tilt (EV_GAMMA_STOCK /
+                    EV_GAMMA_ETF, v2 shipped 2026-11-07): 0.0177 for
+                    ETFs (half the live bucket estimate; survived the
+                    dep-controlled and per-name robustness checks),
+                    0.0 for stocks (the stock continuation effect is
+                    not separately identified from dep on the live
+                    record). The applied tilt is recorded per row as
+                    cont_tilt.
       character   = the Composure parts this formula doesn't already see
                     (quality, entry timing, structure/cost), as a z-sum:
                     high-character names get their estimate lifted, low-
@@ -1327,6 +1346,36 @@ ETF_EV_UPSIDE_CONST = 0.08
 #    Nov 30 audit, agenda item 13 (ADOPTED branch).
 EV_BASE_STOCK = 0.0822
 EV_BASE_ETF = 0.0620
+# 7) EV V2 — CONTINUATION TILT (shipped 2026-11-07, Dan's directive:
+#    "find the best v2 from the evidence and ship it now"). The bracket
+#    gains a per-kind continuation term:
+#      EV = conf x (1 + 0.25 x character)
+#           x (BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20)
+#    Evidence basis (ev_smelltest_2026-11-07/results.md, v2_spec.md,
+#    gamma_robustness.md — live record, PRELIMINARY, one falling
+#    regime, horizons <= 24 trading days):
+#    - ETFs: the live bucket estimate was +0.35pp realized per 0.10 of
+#      cont, and the tilt SURVIVED the robustness checks that were run
+#      before shipping (dep-controlled spell regression +0.71
+#      [+0.43, +0.99]; per-name collapse +1.60 cont-only / +1.31
+#      [+0.36, +2.25] dep-controlled). GAMMA_ETF = 0.0177 is HALF the
+#      bucket estimate (the pre-registered v2 spec size): the
+#      dep-controlled estimates were larger but noisier and rest on a
+#      single observation window, so the conservative size stands.
+#      Caveat on the record: the effect has been observed once, in
+#      spells entered on or before Oct 31; November entries show zero
+#      so far at much shorter horizons.
+#    - Stocks: GAMMA_STOCK = 0.0. The stock continuation effect is
+#      NOT separately identified from dep on the live record
+#      (cont-dep correlation -0.56; dep-controlled gamma +0.05
+#      [-0.52, +0.61]; per-name -0.28 cont-only / -0.85 dep-controlled
+#      — a sign flip), so the coefficient the evidence supports for
+#      stocks is zero. The tilt ships only where the evidence carries
+#      it; the stock leg of EV is unchanged from the base-only core.
+#    Judged by the Nov 30 audit, agenda item 14, under its
+#    pre-registered adoption rule (this shipped state is what runs).
+EV_GAMMA_STOCK = 0.0
+EV_GAMMA_ETF = 0.0177
 DOWNSIDE_FLOOR = 0.15       # stocks (raised from 0.10, see est_parts)
 ETF_DOWNSIDE_FLOOR = 0.10   # ETFs: 10% already calibrated historically
 _ETF_SECTOR_KEYWORDS = (
@@ -3739,6 +3788,7 @@ def _frame_row(r, outcome, reason):
         "final_score": _safe(r.get("final_score")),
         "est_next_1y": _safe(r.get("est_next_1y")),
         "base_rate": _safe(r.get("base_rate")),
+        "cont_tilt": _safe(r.get("cont_tilt")),
         "dep": dep_raw,
         "dep_used": dep_used,
         "dep_capped": dep_capped,
@@ -4460,11 +4510,18 @@ def add_research_columns(df, llm_path=True):
                           for r, d, c, f in zip(recs, dep_used, cont, conf)]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
+    sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
+                          else EV_GAMMA_STOCK) * (float(c) - 0.50))
+                        for r, c in zip(recs, cont)]
     sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep_used)]
     # --- est audit trail: formula + per-ticker components, so any reviewer
     # (human or LLM) can re-derive every estimate from the log alone ---
     log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
-        "(BASE[kind] - dep_ev x 0.20) — BASE-ONLY CORE (2026-11-07): "
+        "(BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20) — "
+        "BASE-ONLY CORE (2026-11-07) + V2 CONTINUATION TILT "
+        "(2026-11-07): GAMMA = 0.0 stocks (effect not separately "
+        "identified from dep) / 0.0177 ETFs (half the live bucket "
+        "estimate, robustness-checked); "
         "BASE = 8.22% stocks / 6.20% ETFs (discovery-window fits from "
         "the 2021-2026 design study; the fitted upside/downside "
         "coefficients are zero, so both are computed and shown for the "
@@ -4489,10 +4546,11 @@ def add_research_columns(df, llm_path=True):
                     f"earnings in {p['earnings_in_days']:.0f}d)")
         log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
             f"{1 + 0.25 * p['character']:.2f}char x "
-            f"({p['base_rate']:.3f} base - {p['dep_ev']:.2f} x 0.20) "
+            f"({p['base_rate']:.3f} base + {p['cont_tilt']:+.4f} tilt "
+            f"- {p['dep_ev']:.2f} x 0.20) "
             f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%} (record only); "
             f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%} (record only); "
-            f"cont={p['cont']:.2f} (gates/ratings only); "
+            f"cont={p['cont']:.2f}; "
             f"char={p['character']:+.2f}]{_gap}")
     return sub
 
