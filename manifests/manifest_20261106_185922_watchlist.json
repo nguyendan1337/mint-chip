@@ -1,0 +1,34 @@
+{
+ "date": "2026-11-06",
+ "flow": "watchlist",
+ "bundle": "watchlist_bundle_20261106_185638.json",
+ "screener_sha256": "a602dd8e2c0e16f3a7886a5bd8ea3fac507c83e911ccec2f84b5be2fc5a0171f",
+ "self_check": "4/4",
+ "counts": {
+  "candidates": 23,
+  "picks": 4,
+  "gate_bars": 0,
+  "stability_bars": 0,
+  "dep_binds": 1,
+  "vetoes": 2
+ },
+ "etf_selection": {
+  "gate_max_run": 0.15,
+  "gate_max_dep": 0.2,
+  "tier2_max_run": 0.35,
+  "tier2_max_dep": 0.3,
+  "tier2_min_maxdd": -0.12,
+  "tier2_max_ddfreq": 0.05,
+  "tier2_max_picks": 3,
+  "ev_upside_const": 0.08
+ },
+ "stock_selection": {
+  "gate_max_dep": 0.3,
+  "gate_implied_upside_min": 0.0,
+  "up_t1": 0.15,
+  "up_factor": 0.3333333333333333,
+  "up_cap": 0.3
+ },
+ "pool_tail": null,
+ "git_commit_of_pages_at_publish": null
+}
