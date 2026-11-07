@@ -1873,16 +1873,16 @@ def compute_rating(dep, cont, conf, stability, strike_count,
 
     # SELL — hard fails first.
     if check_status == "broken":
-        return ("SELL", "thesis broken on the record — the story that "
+        return ("SELL", "thesis broken on the record, the story that "
                 "justified holding it no longer holds")
     if dep >= 0.7:
-        return ("SELL", "event-driven — the thesis depends on things "
+        return ("SELL", "event-driven, the thesis depends on things "
                 "outside its control")
     if cont is not None and cont < 0.40:
-        return ("SELL", "the run looks over — the researcher no longer "
+        return ("SELL", "the run looks over, the researcher no longer "
                 "expects it to keep doing well")
     if stab == "D":
-        return ("SELL", "fragile — it has shown it can fall hard and fast")
+        return ("SELL", "fragile, it has shown it can fall hard and fast")
 
     # BUY — the full pick test.
     if (dep < 0.50
@@ -1892,12 +1892,12 @@ def compute_rating(dep, cont, conf, stability, strike_count,
             and strikes <= 1
             and not etf_barred
             and check_status != "watch"):
-        return ("BUY", "passes the pick test — durable thesis, trusted "
+        return ("BUY", "passes the pick test: durable thesis, trusted "
                 "read, clean risk profile")
 
     # HOLD — name the main blocker.
     if check_status == "watch":
-        return ("HOLD", "story intact, but on watch — a warning flag "
+        return ("HOLD", "story intact, but on watch, a warning flag "
                 "is open")
     if etf_barred:
         return ("HOLD", "story intact, but the fund is beyond its "
@@ -1906,7 +1906,7 @@ def compute_rating(dep, cont, conf, stability, strike_count,
         return ("HOLD", "story intact, but risk flags are stacked "
                 "against it")
     if stab == "C":
-        return ("HOLD", "story intact, but the name is fragile — "
+        return ("HOLD", "story intact, but the name is fragile, "
                 "hold, don't add")
     if dep >= 0.50:
         return ("HOLD", "story intact, but it leans on outside events")
@@ -1914,7 +1914,7 @@ def compute_rating(dep, cont, conf, stability, strike_count,
         return ("HOLD", "story intact, but the outlook is only middling")
     if conf is not None and conf < 0.60:
         return ("HOLD", "story intact, but confidence in the read is low")
-    return ("HOLD", "story intact — hold")
+    return ("HOLD", "story intact, hold")
 
 
 # ---------------- ETF pipeline ----------------
