@@ -694,7 +694,7 @@ def log_levers(args):
         "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
     log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
         f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
-    log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score")
+    log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind), a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), and a {POOL_SECTOR_CAP}/sector cap on stock core seats — lanes buy evaluations only (2026-11-06)")
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
@@ -711,8 +711,9 @@ def log_levers(args):
         "z_dvol = liquidity. Higher z = better; bad metrics inverted.")
     log("expected value = conf * (1+0.25*character) * "
         "(cont*upside - (1-cont)*downside - dep*20%)")
-    log("  upside = 6m run SKIPPING the most recent month (short-term reversal): first 25% at full weight, excess at half, input capped at 50%")
-    log("  downside = max(|maxDD|*50%, 10%) * (1 + dd_freq); "
+    log("  upside (ETFs) = 6m run SKIPPING the most recent month (short-term reversal): first 25% at full weight, excess at half, input capped at 50% (momentum figure only — ETF EV uses the C3 constant)")
+    log(f"  upside (stocks, 2026-11-06 steep dampener V6) = first {STOCK_UP_T1:.0%} at full weight, excess at {STOCK_UP_FACTOR:.2f}, input capped at {STOCK_UP_CAP:.0%}")
+    log("  downside = max(|maxDD|*50%, 15% stocks / 10% ETFs) * (1 + dd_freq); "
         "dd_freq = fraction of rolling 1m windows losing >10%")
     log("  character = Composure z-sum of quality/entry-timing/structure "
         "(excludes momentum+volatility, no double-count), clamped [-2,2]")
@@ -724,6 +725,21 @@ def log_levers(args):
         "per-ticker character parts are in the 'character breakdown' section)")
     log(f"EV floor --min-est={args.min_est:+.1%}: every pick must earn its place; "
         "empty slots beat filler")
+    log(f"ETF EV (2026-11-06): upside term is the constant "
+        f"{ETF_EV_UPSIDE_CONST:.4f} (no-momentum EV, calibration candidate "
+        f"C3) — a fund's own 6m run does not enter its EV; ETF floor "
+        f"--min-est-etf={getattr(args, 'min_est_etf', 0.0):+.1%}")
+    log(f"ETF eligibility gate (2026-11-06, tiered): tier 1 needs 6m "
+        f"run <= +{ETF_GATE_MAX_RUN:.0%} and dep_used <= "
+        f"{ETF_GATE_MAX_DEP:.2f}; tier 2 (proven strength, max "
+        f"{ETF_TIER2_MAX_PICKS} picks) admits run <= "
+        f"+{ETF_TIER2_MAX_RUN:.0%} / dep <= {ETF_TIER2_MAX_DEP:.2f} "
+        f"with maxdd >= {ETF_TIER2_MIN_MAXDD:.0%} and dd_freq <= "
+        f"{ETF_TIER2_MAX_DDFREQ:.2f}; barred names stay "
+        f"honorable-mention eligible")
+    log(f"stock eligibility gate (2026-11-06): implied upside >= 0 "
+        f"and dep_used < {STOCK_GATE_MAX_DEP:.2f}; barred names stay "
+        f"honorable-mention eligible")
     log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
     log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
         f"--max-per-etf-category={args.max_per_etf_category} (ETFs); hard across both "
@@ -1035,11 +1051,44 @@ def est_parts(row, dep, cont, conf=1.0):
         char = max(-2.0, min(2.0, float(row.get("character", 0) or 0)))
     except Exception:
         char = 0.0
-    r6c = min(max(r6, 0.0), 0.50)
-    upside = min(r6c, 0.25) + 0.5 * max(r6c - 0.25, 0.0)
-    # downside: half the worst 1y drawdown, floored at 10%, scaled by how
-    # OFTEN pain arrives (dd_freq): frequent dippers hurt more than rare ones.
-    downside_base = max(abs(dd) * 0.5, 0.10) * (1 + ddf)
+    if str(row.get("kind") or "").lower() == "etf":
+        r6c = min(max(r6, 0.0), 0.50)
+        upside = min(r6c, 0.25) + 0.5 * max(r6c - 0.25, 0.0)
+    else:
+        # STEEP UPSIDE DAMPENER FOR STOCKS (2026-11-06, variant V6 of
+        # the stock test battery — Dan shipped): first 15% of the 6m
+        # run at full weight, beyond at 1/3, run capped at 30%. The
+        # legacy 25% / 1/2 / 50% shape let extended runs inflate EV;
+        # V6 was the only EV variant whose ranking improved on BOTH
+        # split halves of October (Spearman 0.11 -> 0.29 discovery,
+        # 0.19 -> 0.30 validation), and it compresses EV levels toward
+        # realized outcomes (Dan's calibration criterion). ETFs keep
+        # the legacy momentum figure below (their EV upside is then
+        # replaced by the C3 constant).
+        r6c = min(max(r6, 0.0), STOCK_UP_CAP)
+        upside = (min(r6c, STOCK_UP_T1)
+                  + STOCK_UP_FACTOR * max(r6c - STOCK_UP_T1, 0.0))
+    upside_momentum = upside
+    # ETF NO-MOMENTUM EV (2026-11-06, calibration candidate C3 — see
+    # ETF_EV_UPSIDE_CONST): for ETFs the upside term is the constant, so
+    # the fund's own run cannot inflate its EV. Applies wherever est is
+    # computed for an ETF row (selection, ledgers, watchlist ratings).
+    is_etf = str(row.get("kind") or "").lower() == "etf"
+    if is_etf:
+        upside = ETF_EV_UPSIDE_CONST
+    # downside: half the worst 1y drawdown, floored per kind, scaled by
+    # how OFTEN pain arrives (dd_freq): frequent dippers hurt more than
+    # rare ones. The STOCK floor rose 10% -> 15% on 2026-11-06: the
+    # historical study (2021-2026) found stock realized forward
+    # drawdowns ran 1.41x the formula at the median (n=5,887) — worst
+    # exactly where the floor binds (dd_freq = 0: median realized
+    # 16.0%, 88% drew down deeper than the 10% assumed). The same study
+    # found the ETF formula already calibrated at the 10% floor
+    # (median ratio 0.95; dd_freq = 0 realized exactly 10.0%), so ETFs
+    # keep ETF_DOWNSIDE_FLOOR — the raise applies only where the
+    # evidence lives.
+    _dd_floor = ETF_DOWNSIDE_FLOOR if is_etf else DOWNSIDE_FLOOR
+    downside_base = max(abs(dd) * 0.5, _dd_floor) * (1 + ddf)
     downside = downside_base
     # EARNINGS-GAP FLOOR (2026-10-30, Dan delegated judgment after the
     # October audit): backward-looking drawdowns do not price a scheduled
@@ -1074,7 +1123,8 @@ def est_parts(row, dep, cont, conf=1.0):
     # character: the Composure parts est doesn't already see (quality, entry
     # timing, structure/cost) adjust the whole estimate up/down by up to ~50%.
     est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep * 0.20)
-    return {"r6": r6, "upside": upside, "dd": dd, "dd_freq": ddf,
+    return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
+            "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
             "downside": downside, "downside_base": downside_base,
             "earn_gap_applied": earn_gap_applied,
             "earn_move_typ": earn_move_typ,
@@ -1136,6 +1186,71 @@ RISK_GATE_MIN_STRIKES = 2
 #    the floor, the veto threshold and the caps are unchanged — this
 #    corrects a mis-priced INPUT, like the earnings-gap downside.
 DEP_CEILING_DIVERSIFIED = 0.15
+
+# ---- Nov 6, 2026 changes (Dan's call after the special scorer/EV audit
+# and the ETF winner-detection study; both studies in the project dir) ----
+# 4) ETF EXTENSION/DEP ELIGIBILITY GATE (winner-detection rule R7,
+#    REPLAY-VALIDATED): October ETF picks were the most extended names in
+#    the evaluated universe (entry 6m run +32.2% vs winners' +12.7%) and
+#    lost to the rejects (-5.99% vs -1.85%). Rules built on Oct 5-15
+#    entries only and frozen beat both the actual picks and the full
+#    cohort on Oct 16-30; the best was: pick-eligible ETFs must have
+#    ret_6m_skip1m <= +15% AND dep_used <= 0.20 (validation mean -0.70%
+#    vs picks -3.74%, VOO-rel +2.92%, zero -15% drawdowns; first-week
+#    counterfactual +0.10% vs actual picks -10.04%). The gate removes
+#    names instead of shrinking EVs, so it cannot reproduce the failed
+#    dampener variants' zero-pick arithmetic. Barred ETFs keep their
+#    EVs and can appear as honorable mentions. Judged by the Nov 30
+#    audit (pre-registered: live ETF picks >= live evaluated cohort on
+#    mean return with MAE-bad rate no higher, n >= 30 pick spells).
+ETF_GATE_MAX_RUN = 0.15
+ETF_GATE_MAX_DEP = 0.20
+# 4b) TIER-2 "PROVEN STRENGTH" LANE (2026-11-06, Dan's directive after
+#    VFLO/DIVB were barred: "winners should absolutely not be barred").
+#    The flat R7 cap barred 440 October spells of which 87 were absolute
+#    winners and 290 beat VOO; the damage concentrated above +35% runs
+#    (0% positive, 48% blowups) and in deep-drawdown names. Tier 2 admits
+#    run <= +35% / dep <= 0.30 when the fund's scar tissue is shallow
+#    (maxdd >= -12%, dd_freq <= 0.05) — the exact profile of all 26
+#    October winner tickers. Tier-2-only cohort, validation half:
+#    -1.29% mean, +2.70% vs VOO, zero -15% drawdowns; the cohort still
+#    barred under the tiered gate: -6.46%, -2.86% rel, 8.0% blowups.
+#    Tier-2 picks are slot-capped so the page cannot refill with
+#    extended names. Judged by the Nov 30 audit alongside the gate.
+ETF_TIER2_MAX_RUN = 0.35
+ETF_TIER2_MAX_DEP = 0.30
+ETF_TIER2_MIN_MAXDD = -0.12
+ETF_TIER2_MAX_DDFREQ = 0.05
+ETF_TIER2_MAX_PICKS = 3
+# STOCK SELECTION (2026-11-06, Dan shipped on the stock test battery —
+# stock_winner_detection_2026-11-06): eligibility gate (implied_upside
+# >= 0 and dep_used < STOCK_GATE_MAX_DEP) and the steep upside dampener
+# in est_parts (first STOCK_UP_T1 of the 6m run at full weight, beyond
+# at STOCK_UP_FACTOR, run capped at STOCK_UP_CAP).
+STOCK_GATE_MAX_DEP = 0.30
+STOCK_UP_T1 = 0.15
+STOCK_UP_FACTOR = 1.0 / 3.0
+STOCK_UP_CAP = 0.30
+# 5) ETF NO-MOMENTUM EV (calibration candidate C3, the only variant with
+#    positive EV->return correlation on both split halves in both
+#    populations): for ETFs the EV upside term is a CONSTANT — the
+#    discovery-half median dampened upside of gate-eligible ETFs — so a
+#    fund's own 6-month run no longer enters its EV at all. Production
+#    EV was REVERSED for ETFs (each +1pp of EV predicted -0.55pp of
+#    realized return, C4 fit) because the momentum upside term pays for
+#    exactly the extension the gate now excludes. ETF EV ranks on
+#    cont/conf/character/dep/downside only. The constant is
+#    regime-stamped (October 2026 falling tape); the monthly audit
+#    re-derives it. Stocks are untouched.
+ETF_EV_UPSIDE_CONST = 0.08
+# Recalibrated 2026-11-06 (historical study, Jan 2021-Oct 2026): the
+# original 0.1115 was the October-2026 discovery-half median and sits
+# at ~p75 of historical per-snapshot medians (median-of-medians 0.079,
+# pooled 0.088; by year 0.060-0.107 with 2026 the highest). 0.08 is
+# the long-history central value. The Nov 30 audit re-derives it again
+# from live data.
+DOWNSIDE_FLOOR = 0.15       # stocks (raised from 0.10, see est_parts)
+ETF_DOWNSIDE_FLOOR = 0.10   # ETFs: 10% already calibrated historically
 _ETF_SECTOR_KEYWORDS = (
     "technology", "health", "biotech", "energy", "financial",
     "real estate", "materials", "industrials", "utilities", "consumer",
@@ -1200,6 +1315,192 @@ def _dep_used_of(r):
                              r.get("sector"),
                              raw if raw is not None else 0.3)
     return used
+
+
+# Scorer z-components (2026-11-06, Dan's call): the special audit could
+# not replay scorer variants because no per-ticker z-scores were ever
+# recorded ("no per-ticker z-scores" was a named data gap). The z's are
+# computed in the Phase A scorer and now travel with each candidate
+# (bundle dicts) into the frame snapshot, so future scorer tests are
+# replayable end to end. Recording only — never read by selection.
+ZCOLS = ["z_6m", "z_3m", "z_blowoff", "z_ext", "z_trend", "z_roe",
+         "z_margin", "z_earn", "z_fcf", "z_dte", "z_fpe", "z_ptb",
+         "z_vol", "z_dd", "z_beta"]
+
+
+def _z_of(r):
+    """The row's scorer z-components as a plain dict (from a nested 'z'
+    dict when the row came through a research bundle, else from the
+    z_* fields/columns of an in-process scored row)."""
+    try:
+        z = r.get("z")
+    except Exception:
+        z = None
+    if isinstance(z, dict) and z:
+        return {c: _safe(z.get(c)) for c in ZCOLS}
+    return {c: _safe(r.get(c)) for c in ZCOLS}
+
+
+# RESEARCH POOL LANES (2026-11-06 pool package — Dan shipped on the
+# pool-gap diagnosis). The core pool stays top-N by base_score; the
+# lanes below only decide what gets EVALUATED — every gate, the EV
+# formula and the floors decide picks exactly as before.
+POOL_SECTOR_CAP = 25        # stocks: max core seats per sector
+POOL_OVERFLOW_N = 15        # seats per kind for top ret_1y non-core names
+POOL_PERSIST_MAX = 20       # persistence seats per kind
+POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
+
+
+def _persistence_tickers():
+    """Tickers picked within the last POOL_PERSIST_WINDOW_DAYS days,
+    most recent pick first (from thesis_ledger 'picked' events).
+
+    A pool_exit exit deliberately does NOT cancel a seat: the pool
+    exit is the cliff this lane fixes (VCTR's thesis was still intact
+    when its Nov 6 exit was recorded as pool_exit), not a verdict.
+    The window itself is the expiry — a name that stops being picked
+    ages out within a week."""
+    try:
+        import datetime as _dt
+        import json as _j
+        cutoff = (_dt.date.today()
+                  - _dt.timedelta(days=POOL_PERSIST_WINDOW_DAYS)).isoformat()
+        last = {}
+        with open(THESIS_LEDGER) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = _j.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "picked" \
+                        and str(e.get("date", "")) >= cutoff:
+                    t = str(e.get("ticker"))
+                    if str(e["date"]) > last.get(t, ""):
+                        last[t] = str(e["date"])
+        return [t for t, _ in sorted(last.items(),
+                                     key=lambda kv: kv[1], reverse=True)]
+    except Exception:
+        return []
+
+
+def _build_pool(frame, n, kind, persist):
+    """Assemble one kind's research pool from its full scored frame.
+
+    Core: top-n by base_score (the frame arrives sorted), with a
+    per-sector cap for stocks. Persistence: recently-picked names keep
+    a seat even when their rank slips (the AAMI/NTAP cliff). Overflow:
+    the strongest trailing-1y names outside the core get seats (the
+    SNX/PR/XOM shape — big 1y benchmark-beaters whose cooled momentum
+    sinks base_score). Returns (pool_df, tail_records) where the tail
+    is core ranks n+1..n+100 that no lane seated — recorded so the
+    monthly audit measures pool leakage instead of finding anecdotes.
+    """
+    if frame is None or frame.empty:
+        return frame, []
+    f = frame.copy()
+    f["_pool_rank"] = range(1, len(f) + 1)
+    f["_pool_lane"] = None
+    taken = []
+    if kind == "stock":
+        counts = {}
+        for i, r in f.iterrows():
+            if len(taken) >= n:
+                break
+            sec = str(r.get("sector"))
+            if counts.get(sec, 0) >= POOL_SECTOR_CAP:
+                continue
+            counts[sec] = counts.get(sec, 0) + 1
+            taken.append(i)
+    else:
+        taken = list(f.index[:n])
+    if taken:
+        f.loc[taken, "_pool_lane"] = "core"
+    taken_set = set(f.loc[taken, "ticker"].astype(str)) if taken else set()
+    by_ticker = {str(t): i for i, t in zip(f.index,
+                                          f["ticker"].astype(str))}
+    n_p = 0
+    for t in persist:
+        if n_p >= POOL_PERSIST_MAX:
+            break
+        if t in taken_set or t not in by_ticker:
+            continue
+        i = by_ticker[t]
+        f.loc[i, "_pool_lane"] = "persistence"
+        taken.append(i)
+        taken_set.add(t)
+        n_p += 1
+    rest = f[~f.index.isin(taken)]
+    if len(rest):
+        for i in rest.sort_values("ret_1y", ascending=False) \
+                .head(POOL_OVERFLOW_N).index:
+            f.loc[i, "_pool_lane"] = "overflow"
+            taken.append(i)
+    pool = f.loc[sorted(taken,
+                        key=lambda i: int(f.loc[i, "_pool_rank"]))].copy()
+    tail = []
+    for _, r in f.iterrows():
+        if n < int(r["_pool_rank"]) <= n + 100 and r["_pool_lane"] is None:
+            tail.append({"ticker": str(r["ticker"]), "kind": kind,
+                         "rank": int(r["_pool_rank"]),
+                         "base_score": _safe(r.get("base_score")),
+                         "ret_1y": _safe(r.get("ret_1y")),
+                         "sector": (str(r.get("sector"))
+                                    if r.get("sector") is not None
+                                    else None),
+                         "z": _z_of(r)})
+    return pool, tail
+
+
+def _etf_tier_of(r):
+    """ETF pick-eligibility tier for a candidate row (2026-11-06, tiered
+    gate — Dan: 'winners should absolutely not be barred').
+
+    Tier 1 (core, the validated R7): 6m run <= +15% and dep_used <= 0.20.
+    Tier 2 (proven strength): run <= +35%, dep_used <= 0.30, worst
+    drawdown no deeper than -12%, and drawdown frequency <= 0.05 — the
+    profile every October winner shared (all 26 winner tickers had
+    dd_freq 0 and maxdd >= -10.6%). The tier-2-only cohort replayed at
+    -1.29% / +2.70% vs VOO / zero -15% drawdowns on the validation half,
+    vs the still-barred cohort's -6.46% / -2.86% / 8.0%. Tier-2 picks
+    are slot-capped (ETF_TIER2_MAX_PICKS).
+    Returns (tier, fail_reason): tier is 1, 2, or None (barred)."""
+    r6 = _safe(r.get("ret_6m_skip1m"))
+    if r6 is None:
+        r6 = _safe(r.get("ret_6m"))
+    du = _safe(_dep_used_of(r))
+    if (r6 is not None and r6 <= ETF_GATE_MAX_RUN
+            and du is not None and du <= ETF_GATE_MAX_DEP):
+        return 1, None
+    mdd = _safe(r.get("maxdd"))
+    ddf = _safe(r.get("dd_freq"))
+    if (r6 is not None and r6 <= ETF_TIER2_MAX_RUN
+            and du is not None and du <= ETF_TIER2_MAX_DEP
+            and mdd is not None and mdd >= ETF_TIER2_MIN_MAXDD
+            and ddf is not None and ddf <= ETF_TIER2_MAX_DDFREQ):
+        return 2, None
+    bits = []
+    if r6 is not None and r6 > ETF_TIER2_MAX_RUN:
+        bits.append(f"6m run {r6:+.0%} > +{ETF_TIER2_MAX_RUN:.0%}")
+    elif r6 is not None and r6 > ETF_GATE_MAX_RUN:
+        bits.append(f"6m run {r6:+.0%} > +{ETF_GATE_MAX_RUN:.0%} "
+                    f"without proven-strength credentials")
+    if du is not None and du > ETF_TIER2_MAX_DEP:
+        bits.append(f"dep {du:.2f} > {ETF_TIER2_MAX_DEP:.2f}")
+    elif du is not None and du > ETF_GATE_MAX_DEP:
+        bits.append(f"dep {du:.2f} > {ETF_GATE_MAX_DEP:.2f} "
+                    f"without proven-strength credentials")
+    if mdd is not None and mdd < ETF_TIER2_MIN_MAXDD:
+        bits.append(f"max drawdown {mdd:.0%} deeper than "
+                    f"{ETF_TIER2_MIN_MAXDD:.0%}")
+    if ddf is not None and ddf > ETF_TIER2_MAX_DDFREQ:
+        bits.append(f"drawdown frequency {ddf:.2f} > "
+                    f"{ETF_TIER2_MAX_DDFREQ:.2f}")
+    if not bits:
+        bits.append("insufficient data for tier-2 verification")
+    return None, "; ".join(bits)
 
 
 def _earnings_dates_one(t):
@@ -2993,6 +3294,74 @@ def fetch_pick_summaries(tickers, path="business_summaries.json", workers=6):
         log(f"pick summaries: could not write ({e})")
 
 
+def enforce_etf_tier2_cap(selected, pool, cap=2, min_score=0.0,
+                          veto_dep=None, max_tier2=ETF_TIER2_MAX_PICKS):
+    """Cap tier-2 (proven-strength lane) names in the SELECTED ETF
+    portfolio at max_tier2: evict the lowest-EV excess tier-2 picks and
+    refill from tier-1 candidates that respect the category cap and the
+    holdings-overlap cap against survivors. Evicted names are recorded
+    in _ETF_TIER2_CAPPED so frames/ledgers state the real reason."""
+    sel = selected.copy().reset_index(drop=True)
+    if not len(sel):
+        return sel
+
+    def _tier(r):
+        t, _w = _etf_tier_of(r)
+        return t
+
+    def _ev(r):
+        try:
+            return float(r["est_next_1y"])
+        except Exception:
+            return float("-inf")
+
+    tier2_picks = [str(r["ticker"]) for _, r in sel.iterrows()
+                   if str(r["ticker"]) in _ETF_TIER2]
+    if len(tier2_picks) <= max_tier2:
+        return sel
+    ev_of = {str(r["ticker"]): _ev(r) for _, r in sel.iterrows()}
+    excess = sorted(tier2_picks, key=lambda t: ev_of[t],
+                    reverse=True)[max_tier2:]
+    for t in excess:
+        _ETF_TIER2_CAPPED[t] = (
+            f"tier-2 slot cap ({max_tier2} proven-strength picks max)")
+        log(f"etf tier-2 cap: evicting {t} (EV {ev_of[t]:+.1%}) — "
+            f"{len(tier2_picks)} tier-2 picks > cap {max_tier2}")
+    sel = sel[~sel["ticker"].astype(str).isin(set(excess))]
+    sel = sel.reset_index(drop=True)
+    # refill from tier-1 pool candidates, category cap + overlap safe
+    need = len(selected) - len(sel)
+    if need > 0 and pool is not None and len(pool):
+        taken = set(sel["ticker"].astype(str)) | set(excess)
+        counts = Counter(sel["sector"]) if len(sel) else Counter()
+        surv_holds = {str(r["ticker"]): etf_top_holdings(str(r["ticker"]))
+                      for _, r in sel.iterrows()}
+        cand = []
+        for _, r in pool.iterrows():
+            t = str(r["ticker"])
+            if t in taken or _tier(r) != 1:
+                continue
+            if counts.get(str(r.get("sector", "")), 0) >= cap:
+                continue
+            h = etf_top_holdings(t)
+            if h and any(sv and holdings_overlap(h, sv) > 0.30
+                         for sv in surv_holds.values()):
+                continue
+            cand.append(r)
+        if cand:
+            cdf = pd.DataFrame(cand)
+            fill = pick_top_with_sector_cap(
+                cdf, n=need, max_per_sector=cap, min_score=min_score,
+                veto_dep=veto_dep, initial_counts=counts)
+            if len(fill):
+                fill = fill.copy()
+                fill["pick_pass"] = 3
+                log(f"etf tier-2 cap refill: "
+                    f"{fill['ticker'].astype(str).tolist()}")
+                sel = pd.concat([sel, fill], ignore_index=True)
+    return sel
+
+
 def honorable_mentions(ranked, final, args, top_k=30):
     """Near-miss table: researched names that cleared the EV floor but didn't
     make the chart — alternatives worth a look, each with the reason it
@@ -3006,6 +3375,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
     picked = set(final["ticker"]) if len(final) else set()
     veto = getattr(args, "veto_dep", 0.7) or 0.7
     floor = getattr(args, "min_est", 0.03)
+    floor_etf = getattr(args, "min_est_etf", 0.0)
     contenders = []
     for _, r in ranked.iterrows():
         t = str(r["ticker"])
@@ -3015,7 +3385,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
             ev = float(r["est_next_1y"])
         except Exception:
             continue
-        if ev < floor:
+        if ev < (floor_etf if str(r.get("kind", "")) == "etf" else floor):
             continue
         try:
             if float(_dep_used_of(r)) > veto:
@@ -3041,6 +3411,12 @@ def honorable_mentions(ranked, final, args, top_k=30):
         elif t in _STABILITY_GATED:
             reason = (f"stability {_STABILITY_GATED[t]} — below the "
                       f"B-or-better pick bar")
+        elif t in _ETF_GATED:
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            reason = _STOCK_GATED[t]
+        elif t in _ETF_TIER2_CAPPED:
+            reason = _ETF_TIER2_CAPPED[t]
         elif t in _LAST_OVERLAP_DROPS:
             w, ov = _LAST_OVERLAP_DROPS[t]
             reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
@@ -3185,6 +3561,10 @@ def _frame_row(r, outcome, reason):
         "continuation": _safe(r.get("llm_continuation")),
         "confidence": _safe(r.get("llm_confidence")),
         "character": _safe(r.get("character")),
+        # Scorer z-components (2026-11-06): recorded so future scorer
+        # variants are replayable from frames alone (the special audit
+        # listed their absence as a data gap). Recording only.
+        "z": _z_of(r),
         "stability": (str(r.get("stability"))
                       if isinstance(r.get("stability"), str) else None),
         "risk_strikes": strikes,
@@ -3192,6 +3572,19 @@ def _frame_row(r, outcome, reason):
                               else len(strikes)),
         "implied_upside": _safe(r.get("implied_upside")),
         "earnings_in_days": _safe(r.get("earnings_in_days")),
+        # Instrumentation (2026-11-06): the quant fields the October
+        # ETF tests needed but frames never recorded (vol/AUM/expense
+        # existed in the bundle; the 6m run and drawdown are the gate
+        # and downside inputs). Recorded for every evaluated row.
+        "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
+        "maxdd": _safe(r.get("maxdd")),
+        "vol60": _safe(r.get("vol60")),
+        "aum": _safe(r.get("aum")),
+        "expense_ratio": _safe(r.get("expense_ratio")),
+        "etf_tier": (("tier2" if str(r.get("ticker")) in _ETF_TIER2 else
+                      "barred" if str(r.get("ticker")) in _ETF_GATED
+                      else "tier1")
+                     if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
         "outcome_reason": reason,
         "rating": None,
@@ -3217,6 +3610,17 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
     manifest_path = os.path.join(mdir, f"manifest_{stamp}_{flow}.json")
     bundle_name = (os.path.basename(str(bundle_path))
                    if bundle_path else None)
+    # Pool tail (2026-11-06): the scored-but-unseated ranks recorded by
+    # Phase A in the bundle meta — republished in the manifest so the
+    # monthly audit can measure pool leakage from the manifest alone.
+    _pool_tail = None
+    try:
+        if bundle_path and os.path.exists(str(bundle_path)):
+            with open(str(bundle_path)) as _bf:
+                _pool_tail = _json.load(_bf).get("meta", {}) \
+                    .get("pool_tail")
+    except Exception:
+        _pool_tail = None
     with open(frame_path, "w") as f:
         _json.dump({"date": run_date(), "flow": flow,
                     "bundle": bundle_name, "rows": rows},
@@ -3232,6 +3636,22 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     "screener_sha256": sha,
                     "self_check": None,
                     "counts": counts,
+                    "etf_selection": {
+                        "gate_max_run": ETF_GATE_MAX_RUN,
+                        "gate_max_dep": ETF_GATE_MAX_DEP,
+                        "tier2_max_run": ETF_TIER2_MAX_RUN,
+                        "tier2_max_dep": ETF_TIER2_MAX_DEP,
+                        "tier2_min_maxdd": ETF_TIER2_MIN_MAXDD,
+                        "tier2_max_ddfreq": ETF_TIER2_MAX_DDFREQ,
+                        "tier2_max_picks": ETF_TIER2_MAX_PICKS,
+                        "ev_upside_const": ETF_EV_UPSIDE_CONST},
+                    "stock_selection": {
+                        "gate_max_dep": STOCK_GATE_MAX_DEP,
+                        "gate_implied_upside_min": 0.0,
+                        "up_t1": STOCK_UP_T1,
+                        "up_factor": STOCK_UP_FACTOR,
+                        "up_cap": STOCK_UP_CAP},
+                    "pool_tail": _pool_tail,
                     "git_commit_of_pages_at_publish": None},
                    f, indent=1)
     _FRAME_SNAPSHOT = {"frame_path": frame_path,
@@ -3297,6 +3717,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
     and globals only — selects nothing."""
     veto = getattr(args, "veto_dep", 0.7) or 0.7
     floor = getattr(args, "min_est", 0.03)
+    floor_etf = getattr(args, "min_est_etf", 0.0)
     picked = (set(final["ticker"])
               if final is not None and len(final) else set())
     hm_map = {str(h.get("ticker")): str(h.get("reason", ""))
@@ -3327,7 +3748,8 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         r = by_ticker.get(t, r0)
         est = _safe(r.get("est_next_1y"))
         dep_used = _safe(r.get("dep_used"))
-        contender = (est is not None and est >= floor
+        _fl = (floor_etf if str(r.get("kind", "")) == "etf" else floor)
+        contender = (est is not None and est >= _fl
                      and not (dep_used is not None and dep_used > veto))
         if t in picked:
             outcome, reason = "picked", "picked"
@@ -3346,6 +3768,15 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
             outcome = "honorable" if contender else "rejected"
             reason = (f"stability {_STABILITY_GATED[t]} — below the "
                       f"B-or-better pick bar")
+        elif t in _ETF_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _STOCK_GATED[t]
+        elif t in _ETF_TIER2_CAPPED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _ETF_TIER2_CAPPED[t]
         elif t in _LAST_OVERLAP_DROPS:
             _w, _ov = _LAST_OVERLAP_DROPS[t]
             outcome = "honorable" if contender else "rejected"
@@ -3367,10 +3798,10 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         elif dep_used is not None and dep_used > veto:
             outcome = "rejected"
             reason = f"event-dependence veto (dep={dep_used:.2f} > {veto})"
-        elif est is not None and est < floor:
+        elif est is not None and est < _fl:
             outcome = "rejected"
             reason = (f"expected-value floor (est={est:+.1%} "
-                      f"< {floor:+.0%})")
+                      f"< {_fl:+.0%})")
         else:
             _k = (str(r.get("kind", "")), str(r.get("sector", "")))
             if sec_counts.get(_k, 0) >= caps.get(str(r.get("kind",
@@ -3386,6 +3817,10 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         "picks": len(picked),
         "gate_bars": len(_RISK_GATED),
         "stability_bars": len(_STABILITY_GATED),
+        "etf_gate_bars": len(_ETF_GATED),
+        "stock_gate_bars": len(_STOCK_GATED),
+        "etf_tier2_candidates": len(_ETF_TIER2),
+        "etf_tier2_capped": len(_ETF_TIER2_CAPPED),
         "dep_binds": sum(1 for row in rows if row["dep_capped"]),
         "vetoes": sum(1 for row in rows
                       if row["outcome"] != "picked"
@@ -3523,18 +3958,53 @@ def run_self_check(final, args, out_csv):
                   f"{len(_DEP_CEILING_EVIDENCE)} ETF rows recomputed, "
                   f"{len(_DEP_CEILING_BINDS)} binds match")
         if "est_next_1y" in final.columns:
-            check("est_floor",
-                  bool((final["est_next_1y"] >= args.min_est - 1e-9).all()),
-                  f"min_est={args.min_est}")
+            _etf_floor = getattr(args, "min_est_etf", 0.0)
+            if "kind" in final.columns:
+                _floor_ok = bool(all(
+                    float(r["est_next_1y"]) >=
+                    ((_etf_floor if str(r.get("kind")) == "etf"
+                      else args.min_est) - 1e-9)
+                    for _, r in final.iterrows()))
+            else:
+                _floor_ok = bool(
+                    (final["est_next_1y"] >= args.min_est - 1e-9).all())
+            check("est_floor", _floor_ok,
+                  f"min_est={args.min_est}, min_est_etf={_etf_floor}")
         if "stability" in final.columns:
             check("stability_gate",
                   bool(final["stability"].isin(["A", "B"]).all()),
                   "all picks B-or-better (gate added 2026-10-16)")
         if "risk_strike_count" in final.columns:
-            check("risk_flag_gate",
-                  bool((final["risk_strike_count"] <
-                        RISK_GATE_MIN_STRIKES).all()),
-                  "all picks <2 risk strikes (gate added 2026-10-30)")
+            _gate_ok = bool((final["risk_strike_count"] <
+                             RISK_GATE_MIN_STRIKES).all())
+            # ETF eligibility gate (2026-11-06, tiered): every ETF pick
+            # must be tier-1 or tier-2 eligible, and tier-2 picks must
+            # respect the slot cap.
+            if "kind" in final.columns:
+                _n_tier2 = 0
+                for _, _r in final[final["kind"] == "etf"].iterrows():
+                    _tier, _why = _etf_tier_of(_r)
+                    if _tier is None:
+                        _gate_ok = False
+                    elif _tier == 2:
+                        _n_tier2 += 1
+                if _n_tier2 > ETF_TIER2_MAX_PICKS:
+                    _gate_ok = False
+                # Stock eligibility gate (2026-11-06): every stock pick
+                # must have implied upside >= 0 (when recorded) and
+                # dep_used < STOCK_GATE_MAX_DEP.
+                for _, _r in final[final["kind"] == "stock"].iterrows():
+                    _iu = _safe(_r.get("implied_upside"))
+                    if _iu is not None and _iu < 0:
+                        _gate_ok = False
+                    _du = _safe(_dep_used_of(_r))
+                    if _du is not None and _du >= STOCK_GATE_MAX_DEP:
+                        _gate_ok = False
+            check("risk_flag_gate", _gate_ok,
+                  "all picks <2 risk strikes (gate added 2026-10-30); "
+                  "ETF picks tier-eligible, tier-2 within slot cap; "
+                  "stock picks pass the iu/dep eligibility gate "
+                  "(2026-11-06)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
     if _FRAME_SNAPSHOT is not None:
@@ -3697,6 +4167,40 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     edf, ecap = winsorize_base(edf)
     edf["base_cap"] = ecap
     log(f"ETF gates: {egate['gated_total']} excluded; winsorize cap={ecap:+.2f}")
+    # ETF POOL-PRIORITY DEMOTION (2026-11-06, winner-detection rec 4):
+    # base_score has zero ETF winner/loser separation (d +0.03) yet
+    # decides the research pool, and it ranks extended funds IN. ETFs
+    # that would fail both eligibility tiers on the run leg (beyond the
+    # tier-2 run cap, or extended without proven-strength drawdown
+    # credentials) are demoted below eligible names in pool order
+    # (base_score order preserved within each group) — they can still
+    # be researched if pool slots remain, they just stop crowding out
+    # eligible funds. Only the run leg applies here: dep does not
+    # exist until the research layer scores it.
+    _run_col = ("ret_6m_skip1m" if "ret_6m_skip1m" in edf.columns
+                else ("ret_6m" if "ret_6m" in edf.columns else None))
+    if _run_col is not None and len(edf):
+        # demote only names that would fail BOTH tiers on the run leg:
+        # run beyond the tier-2 cap, or extended with a deep/frequent
+        # drawdown record (tier-2 credentials missing)
+        _run = edf[_run_col].fillna(0)
+        _ext = (_run > ETF_TIER2_MAX_RUN)
+        if "maxdd" in edf.columns:
+            _ext = _ext | ((_run > ETF_GATE_MAX_RUN)
+                           & (edf["maxdd"].fillna(-1)
+                              < ETF_TIER2_MIN_MAXDD))
+        if "dd_freq" in edf.columns:
+            _ext = _ext | ((_run > ETF_GATE_MAX_RUN)
+                           & (edf["dd_freq"].fillna(1)
+                              > ETF_TIER2_MAX_DDFREQ))
+        _ext = _ext.astype(int)
+        if int(_ext.sum()):
+            edf = edf.assign(_etf_ext=_ext).sort_values(
+                ["_etf_ext", "base_score"], ascending=[True, False],
+                kind="mergesort").drop(columns=["_etf_ext"])
+            log(f"etf pool demotion: {int(_ext.sum())} ETFs failing "
+                f"both eligibility tiers on the run leg demoted in "
+                f"research-pool priority")
     return edf
 
 
@@ -3769,12 +4273,18 @@ def add_research_columns(df, llm_path=True):
     # (human or LLM) can re-derive every estimate from the log alone ---
     log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
         "(cont x upside - (1-cont) x downside - dep x 0.20); "
-        "upside = first 25% of 6m run SKIPPING the most recent month at full "
-        "weight, beyond at half weight (cap 50%); downside = max(|maxDD| x 0.5, "
-        "10%) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
+        "upside (stocks, 2026-11-06 steep dampener) = first 15% of 6m run "
+        "SKIPPING the most recent month at full weight, beyond at 1/3 "
+        "weight (run capped at 30%); upside (ETF momentum figure) = first "
+        "25% at full weight, beyond at half (cap 50%); downside = max(|maxDD| x 0.5, "
+        "15% stocks / 10% ETFs) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
         "move when earnings are within 30d (2026-10-30); "
         "character = quality/entry-timing/structure z-sum, clamped [-2, 2]; "
-        "dep = dep_used (diversified-ETF ceiling 0.15 applied, 2026-10-30)")
+        "dep = dep_used (diversified-ETF ceiling 0.15 applied, 2026-10-30); "
+        "ETFs (2026-11-06): upside = constant 0.08 (no-momentum EV; "
+        "recalibrated from 0.1115 by the 2021-2026 historical study) — "
+        "for ETF rows the bracketed upside is the constant and r6 is "
+        "shown for the eligibility gate, not as an EV input)")
     for (_, r), d, c, f in zip(sub.iterrows(), dep_used, cont, conf):
         p = est_parts(r, d, c, f)
         _gap = ""
@@ -3810,6 +4320,16 @@ def pick_final(adj, args, llm_path):
     # reset per-run risk-gate record (ticker -> {count, strikes})
     global _RISK_GATED
     _RISK_GATED = {}
+    # reset per-run ETF eligibility-gate record (ticker -> reason)
+    global _ETF_GATED
+    _ETF_GATED = {}
+    global _ETF_TIER2
+    _ETF_TIER2 = {}
+    global _ETF_TIER2_CAPPED
+    _ETF_TIER2_CAPPED = {}
+    # reset per-run stock eligibility-gate record (ticker -> reason)
+    global _STOCK_GATED
+    _STOCK_GATED = {}
     # reset per-run dedupe record (auditability frame snapshot)
     global _FRAME_DEDUPE_DROPS
     _FRAME_DEDUPE_DROPS = {}
@@ -3925,12 +4445,86 @@ def pick_final(adj, args, llm_path):
         else:
             log(f"WARNING: risk-flag gate skipped for {label} — no "
                 f"'risk_strike_count' column on ranked frame")
-        # expected-value floor first: never pick a negative-EV name
-        cut = ranked[ranked["est_next_1y"] < args.min_est]
+        # STOCK ELIGIBILITY GATE (2026-11-06, Dan shipped on the stock
+        # test battery): stocks only. A stock cannot be picked when
+        # analyst implied upside is negative (targets below price —
+        # October's strongest single separator: iu>=0 picks +3.2% vs
+        # iu<0 picks -18.1%) or when dep_used >= 0.30 (the blowup
+        # carrier: sub-0.30 cohorts ran ~1-2% deep-loss rates vs
+        # ~15-19% above). Validation-half reconstructions: the iu leg
+        # alone flipped picks -2.0% -> +1.1%; both legs -> +2.9% kept
+        # picks / +3.0% reconstructed, deep-loss ~1.5%. Missing
+        # implied upside never bars (it is computed pre-selection for
+        # every candidate; absence is a data gap, not a verdict).
+        # Barred names keep their EVs and can appear as honorable
+        # mentions.
+        if label == "stocks":
+            _sfails = {}
+            for _, r in ranked.iterrows():
+                _iu = _safe(r.get("implied_upside"))
+                _du = _safe(_dep_used_of(r))
+                _why = []
+                if _iu is not None and _iu < 0:
+                    _why.append(f"implied upside {_iu:+.1%} < 0")
+                if _du is not None and _du >= STOCK_GATE_MAX_DEP:
+                    _why.append(f"dep {_du:.2f} >= "
+                                f"{STOCK_GATE_MAX_DEP:.2f}")
+                if _why:
+                    _sfails[str(r["ticker"])] = ", ".join(_why)
+            if _sfails:
+                log(f"stock eligibility gate (implied upside >= 0, "
+                    f"dep < {STOCK_GATE_MAX_DEP:.2f}): {len(_sfails)} "
+                    f"stocks barred from picks: "
+                    f"{[t + ' (' + w + ')' for t, w in _sfails.items()]}")
+                for t, w in _sfails.items():
+                    _STOCK_GATED[t] = f"stock eligibility gate ({w})"
+                ranked = ranked[~ranked["ticker"].astype(str)
+                                .isin(set(_sfails))].copy()
+        # ETF ELIGIBILITY GATE, TIERED (2026-11-06: R7 core + tier-2
+        # proven-strength lane — see _etf_tier_of): ETFs only. Tier 1 is
+        # the validated R7 (run <= +15%, dep <= 0.20). Tier 2 admits
+        # extended/higher-dep names whose drawdown record is shallow
+        # and rare (the October winners' profile), slot-capped after
+        # selection. Barred names keep their EVs and can appear as
+        # honorable mentions.
+        if label == "ETFs":
+            _fails = {}
+            _tier2_names = []
+            for _, r in ranked.iterrows():
+                _tier, _why = _etf_tier_of(r)
+                if _tier is None:
+                    _fails[str(r["ticker"])] = _why
+                elif _tier == 2:
+                    _tier2_names.append(str(r["ticker"]))
+            if _tier2_names:
+                log(f"etf tier-2 lane (run <= "
+                    f"+{ETF_TIER2_MAX_RUN:.0%}, dep <= "
+                    f"{ETF_TIER2_MAX_DEP:.2f}, maxdd >= "
+                    f"{ETF_TIER2_MIN_MAXDD:.0%}, dd_freq <= "
+                    f"{ETF_TIER2_MAX_DDFREQ:.2f}): {len(_tier2_names)} "
+                    f"ETFs eligible via proven strength: {_tier2_names}")
+                for t in _tier2_names:
+                    _ETF_TIER2[t] = True
+            if _fails:
+                log(f"etf eligibility gate: {len(_fails)} ETFs barred "
+                    f"from picks: "
+                    f"{[t + ' (' + w + ')' for t, w in _fails.items()]}")
+                for t, w in _fails.items():
+                    _ETF_GATED[t] = (f"etf eligibility gate ({w})")
+                ranked = ranked[~ranked["ticker"].astype(str)
+                                .isin(set(_fails))].copy()
+        # expected-value floor first: never pick a negative-EV name.
+        # ETFs use their own floor (2026-11-06): in no-momentum EV units
+        # the validated floor is 0% — the gate and the dep/downside
+        # terms do the protective work the old +3% did in momentum
+        # units. Stocks keep --min-est.
+        _floor = (getattr(args, "min_est_etf", 0.0) if label == "ETFs"
+                  else args.min_est)
+        cut = ranked[ranked["est_next_1y"] < _floor]
         if len(cut):
-            log(f"est floor ({args.min_est:+.1%}): {len(cut)} {label} excluded: "
+            log(f"est floor ({_floor:+.1%}): {len(cut)} {label} excluded: "
                 f"{cut['ticker'].tolist()}")
-        est_ok = ranked[ranked["est_next_1y"] >= args.min_est]
+        est_ok = ranked[ranked["est_next_1y"] >= _floor]
         # EV shortlist: final_score's job is the quality floor (min_score);
         # among floor-passers, expected value ranks and selects. The number
         # the chart shows is the number that awards places.
@@ -3972,6 +4566,11 @@ def pick_final(adj, args, llm_path):
                                        max_overlap=args.max_etf_overlap,
                                        cap=cap, min_score=args.min_score,
                                        veto_dep=veto)
+            # tier-2 proven-strength picks are slot-capped so the page
+            # cannot refill with extended names (2026-11-06)
+            first = enforce_etf_tier2_cap(first, est_ok, cap=cap,
+                                          min_score=args.min_score,
+                                          veto_dep=veto)
         # divergence self-check (informational, not a gate): how much does
         # final_score-ordered selection disagree with pure EV ordering?
         # Flags high-EV unpicked names (e.g. HPE) for the monthly audit.
@@ -4052,6 +4651,7 @@ def _watchlist_cand(r, headlines):
         "base_score": float(r["base_score"]),
         "base_w": float(r["base_w"]) if "base_w" in r and pd.notna(r["base_w"]) else float(r["base_score"]),
         "base_cap": _safe(r.get("base_cap")),
+        "z": _z_of(r),
         "earnings_in_days": _safe(r.get("earnings_in_days")),
         "earn_soon": bool(r.get("earn_soon", 0.0)),
         "insider_ratio": _safe(r.get("insider_ratio")),
@@ -4487,6 +5087,10 @@ _LAST_DATA_COMPLETENESS = {}
 _LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
 _STABILITY_GATED = {}  # ticker -> grade; C/D names barred from pick slots (2026-10-16)
 _RISK_GATED = {}  # ticker -> {count, strikes}; >=2-strike names barred from pick slots (2026-10-30)
+_ETF_GATED = {}  # ticker -> reason; ETFs barred by the extension/dep eligibility gate (2026-11-06)
+_STOCK_GATED = {}  # ticker -> reason; stocks barred by the iu/dep eligibility gate (2026-11-06)
+_ETF_TIER2 = {}  # ticker -> True; ETFs eligible only via the tier-2 proven-strength lane (2026-11-06)
+_ETF_TIER2_CAPPED = {}  # ticker -> reason; tier-2 ETFs that lost the tier-2 slot cap (2026-11-06)
 _FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
 _FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
 
@@ -4662,6 +5266,7 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "dd_freq": _safe(r.get("dd_freq")),
             "base_score": _safe(r.get("base_score")),
             "final_score": _safe(r.get("final_score")),
+            "z": _z_of(r),
             # Fuse cross-check fields (audit instrumentation, added
             # 2026-10-05): dual_confirm True/False/None (None = could not
             # be determined); sue = most recent earnings surprise
@@ -4721,10 +5326,19 @@ def record_picks_ledger(final, ranked, args, cache=None):
             extra = {"risk_strikes": list(_rg["strikes"]),
                      "risk_strike_count": int(_rg["count"]),
                      **extra}
+        elif t in _ETF_GATED:
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            reason = _STOCK_GATED[t]
+        elif t in _ETF_TIER2_CAPPED:
+            reason = _ETF_TIER2_CAPPED[t]
         elif d is not None and d_used > veto:
             reason = f"event-dependence veto (dep={d_used:.2f} > {veto})"
-        elif p["est"] < args.min_est:
-            reason = f"expected-value floor (est={p['est']:+.1%} < {args.min_est:+.0%})"
+        elif p["est"] < (getattr(args, "min_est_etf", 0.0)
+                         if r.get("kind") == "etf" else args.min_est):
+            _fl2 = (getattr(args, "min_est_etf", 0.0)
+                    if r.get("kind") == "etf" else args.min_est)
+            reason = f"expected-value floor (est={p['est']:+.1%} < {_fl2:+.0%})"
         else:
             continue  # sector cap / score rank — not audit-interesting
         ledger_append(REJECTED_LEDGER, {
@@ -4807,6 +5421,10 @@ def _record_spell_exits(final_set, ranked, args, today):
             reason = "risk_flag_gate"
         elif t in _STABILITY_GATED:
             reason = "gate_trip"
+        elif t in _ETF_GATED:
+            reason = "gate_trip"
+        elif t in _STOCK_GATED:
+            reason = "gate_trip"
         elif r is None:
             reason = "pool_exit"
         elif bool(r.get("llm_excluded")):
@@ -4826,7 +5444,9 @@ def _record_spell_exits(final_set, ranked, args, today):
                 p = est_parts(r, d_used,
                               c if c is not None else 0.5,
                               f_ if f_ is not None else 1.0)
-                reason = ("ev_below_floor" if p["est"] < args.min_est
+                _xfl = (getattr(args, "min_est_etf", 0.0)
+                        if r.get("kind") == "etf" else args.min_est)
+                reason = ("ev_below_floor" if p["est"] < _xfl
                           else "cap")
         ledger_append(THESIS_LEDGER, {
             "event": "exit", "ticker": t, "date": today,
@@ -4987,8 +5607,10 @@ def main():
                     help="final stock picks (default 10)")
     ap.add_argument("--n-etfs", type=int, default=10,
                     help="final ETF picks (default 10)")
-    ap.add_argument("--min-est", type=float, default=0.03,
-                    help="expected-value floor: picks must have est_next_1y >= this (default 0.03; every pick earns its place)")
+    ap.add_argument("--min-est", type=float, default=0.015,
+                    help="stock expected-value floor in steep-dampener EV units (default 0.015 since 2026-11-06; the +3% floor was denominated in the retired dampener's units — it admitted 48% of evaluated names there vs 26% in V6 units; +1.5% restores slightly-stricter-than-original selectivity while the iu/dep eligibility gate does the protective work; every pick still earns its place)")
+    ap.add_argument("--min-est-etf", type=float, default=0.0,
+                    help="ETF expected-value floor in no-momentum EV units (default 0.0 since 2026-11-06; the ETF eligibility gate does the protective work)")
     ap.add_argument("--us-only", dest="us_only", action="store_true", default=True,
                     help="US-domiciled stocks and US-focused ETFs only (default on)")
     ap.add_argument("--no-us-only", dest="us_only", action="store_false",
@@ -5406,11 +6028,27 @@ def main():
     # 6d) ETF leg: separate universe + scorer (different fundamentals)
     edf = run_etf_pipeline(args, cache, etf_bench_ret, _eb)
 
-    # research pool: top N stocks + top N ETFs
-    _pool_stocks = df.head(args.n_stock_research).copy()
-    _pool_etfs = edf.head(args.n_etf_research).copy() if not edf.empty else edf
+    # research pool: core top-N by base_score + persistence seats +
+    # ret_1y overflow lane (2026-11-06 pool package — see _build_pool);
+    # the scored tail (ranks N+1..N+100 unseated) is recorded into the
+    # bundle meta and onward into the run manifest for the audit.
+    _persist = _persistence_tickers()
+    _pool_stocks, _tail_s = _build_pool(df, args.n_stock_research,
+                                        "stock", _persist)
+    if not edf.empty:
+        _pool_etfs, _tail_e = _build_pool(edf, args.n_etf_research,
+                                          "etf", _persist)
+    else:
+        _pool_etfs, _tail_e = edf, []
+    _pool_tail = _tail_s + _tail_e
     pool = pd.concat([_pool_stocks, _pool_etfs], ignore_index=True)
-    log(f"research pool: {len(_pool_stocks)} stocks + {len(_pool_etfs)} ETFs")
+    _lane_counts = (pool["_pool_lane"].value_counts().to_dict()
+                    if "_pool_lane" in pool.columns else {})
+    log(f"research pool: {len(_pool_stocks)} stocks + "
+        f"{len(_pool_etfs)} ETFs (lanes: {_lane_counts}); "
+        f"persistence seats: "
+        f"{[t for t in _persist if t in set(pool['ticker'].astype(str))]}; "
+        f"tail logged: {len(_pool_tail)} names")
 
     # Surge candidates: fast movers (10d return >= threshold) outside the
     # quant pool get pulled in for fresh assessment. This is the "good news,
@@ -5493,12 +6131,16 @@ def main():
                 "base_score": float(r["base_score"]),
                 "base_w": float(r["base_w"]) if "base_w" in r and pd.notna(r["base_w"]) else float(r["base_score"]),
                 "base_cap": _safe(r.get("base_cap")),
+                "z": _z_of(r),
                 "earnings_in_days": _safe(r.get("earnings_in_days")),
                 "earn_soon": bool(r.get("earn_soon", 0.0)),
                 "insider_ratio": _safe(r.get("insider_ratio")),
                 "headlines": headlines[:12],
                 "news_trigger": _trig,
                 "surge": _is_surge,
+                "pool_lane": (r.get("_pool_lane")
+                              if isinstance(r.get("_pool_lane"), str)
+                              else ("surge" if _is_surge else "core")),
             }
             if r.get("kind") == "etf":
                 cand["expense_ratio"] = _safe(r.get("expense_ratio"))
@@ -5512,6 +6154,10 @@ def main():
                 cands, market_headlines,
                 {"benchmark": args.benchmark,
                  "etf_benchmark": _eb,
+                 "pool_tail": _pool_tail,
+                 "pool_lane_counts": {str(k): int(v) for k, v in
+                                      Counter(c.get("pool_lane")
+                                              for c in cands).items()},
                  "phase_a_log": os.path.abspath(LOG_FILE) if LOG_FILE else None,
                  "note": "quant base scores included; LLM decides event_dependence/continuation. "
                          "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark. "
