@@ -1122,7 +1122,30 @@ def est_parts(row, dep, cont, conf=1.0):
             earn_gap_applied = True
     # character: the Composure parts est doesn't already see (quality, entry
     # timing, structure/cost) adjust the whole estimate up/down by up to ~50%.
-    est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep * 0.20)
+    # DIVERSIFIED-ETF DEP CHARGE — REMOVED (2026-11-06, Dan's delegated
+    # judgment: "do your best recommendations so that the best naturally
+    # get picked"). The -dep x 20% term prices single-name event risk:
+    # the chance a thesis hangs on events outside the company's control.
+    # A diversified basket has no single-name thesis — its event risk is
+    # already fully inside its price history, which the downside term
+    # charges from the same row — so diversified ETFs paid for the same
+    # risk twice (~1.4 EV points at the 0.15 ceiling), pinning the whole
+    # diversified complex just below the 0% floor (2026-11-06: XMHQ,
+    # JQUA, COWZ at -0.2/-0.2/-0.3% with cont 0.65-0.70 and maxdd -7/-8%).
+    # The charge is removed for diversified ETFs ONLY (classification
+    # via category-or-sector: ETF rows carry the Morningstar category in
+    # 'sector'). dep itself is unchanged and still drives the 0.7 veto,
+    # the eligibility gates, and watchlist ratings. Concentrated,
+    # sector, and theme funds keep the charge — their event risk is
+    # real and not fully visible in a short drawdown window. Rehearsed
+    # 2026-11-06 on the Nov 6 bundle: ETF slate 3 -> 6 picks, stock
+    # slate identical, self-check 18/18. Judged by the Nov 30 audit
+    # with the C3 constant (validation agenda item 2).
+    dep_ev = dep
+    if is_etf and classify_etf_category(
+            row.get("category") or row.get("sector")) == "diversified":
+        dep_ev = 0.0
+    est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep_ev * 0.20)
     return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
             "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
             "downside": downside, "downside_base": downside_base,
@@ -1131,7 +1154,8 @@ def est_parts(row, dep, cont, conf=1.0):
             "earn_move_fallback": earn_move_fallback,
             "earnings_in_days": earnings_in_days,
             "character": char,
-            "dep": dep, "cont": cont, "conf": conf, "est": est}
+            "dep": dep, "dep_ev": dep_ev, "cont": cont, "conf": conf,
+            "est": est}
 
 
 def estimate_next_year(row, dep, cont, conf=1.0):
@@ -1714,8 +1738,10 @@ def compute_risk_strikes(df, llm_path=True):
 
 def watchlist_quality_summary(ratings, evs, tickers=None):
     """One-sentence verdict on the watchlist as a whole — computed, not
-    written. Keys the quality word off the average expected value, names the
-    drag when sells pull it below the +3% bar, and calls out the leader and
+    written. Keys the quality word off the buy/sell mix (ratings are
+    literal since 2026-11-06, no longer keyed to expected value), names
+    the drag when sells pull the average expected value below zero, and
+    calls out the leader and
     the biggest drag by name."""
     n = len(ratings)
     if not n:
@@ -1728,13 +1754,14 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
         avg = sum(evf) / n
     except Exception:
         evf, avg = [], 0.0
-    if avg >= 0.08:
+    score = b - s
+    if score >= 5:
         q = "strong"
-    elif avg >= 0.05:
+    elif score >= 2:
         q = "solid"
-    elif avg >= 0.03:
+    elif score >= 0:
         q = "decent"
-    elif avg >= 0.0:
+    elif score >= -3:
         q = "mixed"
     else:
         q = "weak"
@@ -1743,9 +1770,10 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
         return f"{k} {w}" if k == 1 else f"{k} {w}s"
     out = (f"A {q} list — {_pl(b, 'buy')}, {_pl(h, 'hold')}, {_pl(s, 'sell')}, "
            f"averaging {avg:+.1%} expected value")
-    if s and avg < 0.03:
-        out += ("; the sell pulls the average below the +3% bar" if s == 1
-                else "; the sells pull the average below the +3% bar")
+    if s and avg < 0.0:
+        out += ("; the sell drags the average expected value below zero"
+                if s == 1 else
+                "; the sells drag the average expected value below zero")
     if tickers and evf and n > 1:
         try:
             order = sorted(range(n), key=lambda i: evf[i], reverse=True)
@@ -1758,16 +1786,42 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
 
 
 def add_ratings(df):
-    """Attach deterministic Buy/Hold/Sell columns ('what Mint would do').
+    """Attach literal Buy/Hold/Sell columns ('what Mint would do').
 
-    Uses compute_rating() on the pipeline outputs already present
-    (est_next_1y, llm_event_dependence, llm_confidence, vol60, maxdd).
+    Ratings come from compute_rating() — the pick test, not the expected
+    value (Dan's design, 2026-11-06). Gathers the inputs the verdict
+    keys off: dep_used, continuation, confidence, stability, risk
+    strikes, ETF gate eligibility, and the latest thesis-check status
+    per ticker from the ledger (same source the spell-exit logic uses).
     Logs each rating for the audit trail.
     """
+    import json as _json
+    latest_check = {}
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "check" and e.get("ticker"):
+                    latest_check[e["ticker"]] = e.get("status")
+    except FileNotFoundError:
+        pass
     sub = df.copy()
-    _rats = [compute_rating(r.get("est_next_1y"), _dep_used_of(r),
-                            r.get("llm_confidence"), r.get("vol60"),
-                            r.get("maxdd")) for _, r in sub.iterrows()]
+    _rats = []
+    for _, r in sub.iterrows():
+        etf_barred = False
+        if str(r.get("kind")) == "etf":
+            try:
+                etf_barred = _etf_tier_of(r)[0] is None
+            except Exception:
+                etf_barred = False
+        _rats.append(compute_rating(
+            _dep_used_of(r), r.get("llm_continuation"),
+            r.get("llm_confidence"), r.get("stability"),
+            r.get("risk_strike_count"), etf_barred,
+            latest_check.get(str(r.get("ticker")))))
     sub["rating"] = [x[0] for x in _rats]
     sub["rating_reason"] = [x[1] for x in _rats]
     for _, r in sub.iterrows():
@@ -1775,69 +1829,92 @@ def add_ratings(df):
     return sub
 
 
-def compute_rating(ev, dep, conf, vol, maxdd):
-    """Buy/Hold/Sell from pipeline outputs — 'what Mint would do'.
+def compute_rating(dep, cont, conf, stability, strike_count,
+                   etf_barred=False, check_status=None):
+    """Literal Buy/Hold/Sell — 'what Mint would do' (Dan's design,
+    shipped 2026-11-06; replaces the EV-threshold design).
 
-    Deterministic and auditable (no LLM vibes). Philosophy mapping:
-    - SELL: doesn't earn its place (EV below the +3% floor) or fails the
-      event-driven veto (dep >= 0.7) — the two ways the main pipeline
-      rejects a name outright.
-    - HOLD: earns its place (EV >= +3%) but Mint wouldn't buy it as-is:
-      fails a risk gate (too volatile / too deeply scarred — downside
-      protection first), leans on outside events (dep >= 0.5), or the
-      read isn't trusted (conf < 0.6).
-    - BUY: clears the bar with margin (EV >= +8%), durable thesis
-      (dep < 0.5), trusted read (conf >= 0.6), passes the risk gates.
-    Returns (rating, reason) with the reason in plain words.
+    The verdict never reads the expected value: EV units change when
+    the formula is recalibrated, and thresholds denominated in them
+    silently broke (2026-11-06: every watchlist name rated SELL under
+    the legacy +3%/+8% cutoffs in V6/C3 units). Instead the rating
+    applies the same plain tests a Mint pick must pass:
+
+    - SELL: any hard fail — the thesis is broken on the record (latest
+      ledger check), the thesis hangs on outside events (dep >= 0.70,
+      the standing veto line), the researcher thinks the run is over
+      (continuation < 0.40), or the name is a proven crumbler
+      (stability grade D).
+    - BUY: passes the pick test — dep < 0.50, continuation >= 0.60,
+      confidence >= 0.60, stability A/B, at most one risk strike, ETFs
+      gate-eligible, and no open watch/broken thesis flag. A Mint pick
+      therefore always rates BUY here — the two pages cannot disagree.
+    - HOLD: everything between — story intact, but something (a watch
+      flag, stacked strikes, a C grade, an event lean, a middling
+      outlook) says don't add, and nothing says get out.
+
+    Returns (rating, reason), the reason in plain words naming the
+    deciding factor.
     """
     import math
-    try:
-        ev = float(ev)
-    except Exception:
-        return ("HOLD", "no estimate available")
-    try:
-        dep = float(dep)
-    except Exception:
-        dep = 0.3
-    try:
-        conf = float(conf)
-    except Exception:
-        conf = 0.7
-    if math.isnan(ev):
-        return ("HOLD", "no estimate available")
-    if ev < 0.03:
-        return ("SELL", "expected value below the +3% bar — doesn't earn its place")
-    if dep >= 0.7:
-        return ("SELL", "event-driven — the thesis depends on things outside its control")
 
-    def _missing(x):
-        if x is None:
-            return True
+    def _f(x, default=None):
         try:
-            return math.isnan(float(x))
+            v = float(x)
         except Exception:
-            return True
+            return default
+        return default if math.isnan(v) else v
 
-    # Fail-closed on missing risk data: an unverifiable name can't be a BUY.
-    if _missing(vol) or _missing(maxdd):
-        return ("HOLD", "clears the bar, but risk couldn't be verified")
-    try:
-        if float(vol) > 0.80:
-            return ("HOLD", "clears the bar, but too volatile for a buy")
-    except Exception:
-        pass
-    try:
-        if float(maxdd) < -0.40:
-            return ("HOLD", "clears the bar, but too deeply scarred for a buy")
-    except Exception:
-        pass
-    if dep >= 0.5:
-        return ("HOLD", "clears the bar, but the thesis leans on outside events")
-    if conf < 0.6:
-        return ("HOLD", "clears the bar, but confidence in the read is low")
-    if ev >= 0.08:
-        return ("BUY", "clears the bar with margin — durable thesis, trusted read")
-    return ("HOLD", "earns its place, but not with conviction")
+    dep = _f(dep, 0.3)
+    cont = _f(cont)
+    conf = _f(conf)
+    strikes = _f(strike_count, 0)
+    stab = stability if isinstance(stability, str) else None
+
+    # SELL — hard fails first.
+    if check_status == "broken":
+        return ("SELL", "thesis broken on the record — the story that "
+                "justified holding it no longer holds")
+    if dep >= 0.7:
+        return ("SELL", "event-driven — the thesis depends on things "
+                "outside its control")
+    if cont is not None and cont < 0.40:
+        return ("SELL", "the run looks over — the researcher no longer "
+                "expects it to keep doing well")
+    if stab == "D":
+        return ("SELL", "fragile — it has shown it can fall hard and fast")
+
+    # BUY — the full pick test.
+    if (dep < 0.50
+            and cont is not None and cont >= 0.60
+            and conf is not None and conf >= 0.60
+            and stab in ("A", "B", None)
+            and strikes <= 1
+            and not etf_barred
+            and check_status != "watch"):
+        return ("BUY", "passes the pick test — durable thesis, trusted "
+                "read, clean risk profile")
+
+    # HOLD — name the main blocker.
+    if check_status == "watch":
+        return ("HOLD", "story intact, but on watch — a warning flag "
+                "is open")
+    if etf_barred:
+        return ("HOLD", "story intact, but the fund is beyond its "
+                "proven-strength limits right now")
+    if strikes >= 2:
+        return ("HOLD", "story intact, but risk flags are stacked "
+                "against it")
+    if stab == "C":
+        return ("HOLD", "story intact, but the name is fragile — "
+                "hold, don't add")
+    if dep >= 0.50:
+        return ("HOLD", "story intact, but it leans on outside events")
+    if cont is not None and cont < 0.60:
+        return ("HOLD", "story intact, but the outlook is only middling")
+    if conf is not None and conf < 0.60:
+        return ("HOLD", "story intact, but confidence in the read is low")
+    return ("HOLD", "story intact — hold")
 
 
 # ---------------- ETF pipeline ----------------
@@ -3393,7 +3470,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
         except Exception:
             pass
         contenders.append(r)
-    caps = {"stock": getattr(args, "max_per_sector", 2),
+    caps = {"stock": getattr(args, "max_per_sector", 3),
             "etf": getattr(args, "max_per_etf_category", 2)}
     sec_counts = {}
     for _, r in final.iterrows():
@@ -3438,7 +3515,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
     return out
 
 
-def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
+def pick_top_with_sector_cap(df, n=10, max_per_sector=3, min_score=0.0,
                              veto_dep=None, initial_counts=None):
     """Pick top n with sector cap. Never fills slots with sub-floor or
     vetoed stocks: fewer strong picks beats 10 diluted ones.
@@ -3740,7 +3817,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         for _, r in final.iterrows():
             k = (str(r.get("kind", "")), str(r.get("sector", "")))
             sec_counts[k] = sec_counts.get(k, 0) + 1
-    caps = {"stock": getattr(args, "max_per_sector", 2),
+    caps = {"stock": getattr(args, "max_per_sector", 3),
             "etf": getattr(args, "max_per_etf_category", 2)}
     rows = []
     for _, r0 in pre_gate.iterrows():
@@ -5577,7 +5654,7 @@ def main():
     ap.add_argument("--max-outperformers", type=int, default=800,
                     help="safety cap on outperformers to score (default 800)")
     ap.add_argument("--top-n", type=int, default=10)
-    ap.add_argument("--max-per-sector", type=int, default=2)
+    ap.add_argument("--max-per-sector", type=int, default=3)
     ap.add_argument("--with-llm", action="store_true",
                     help="use the 3-layer LLM research stack instead of the rules news layer")
     ap.add_argument("--llm-backend", default="agent", choices=["agent", "auto"],
