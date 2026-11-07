@@ -1145,7 +1145,14 @@ def est_parts(row, dep, cont, conf=1.0):
     if is_etf and classify_etf_category(
             row.get("category") or row.get("sector")) == "diversified":
         dep_ev = 0.0
-    est = conf * (1 + 0.25 * char) * (cont * upside - (1 - cont) * downside - dep_ev * 0.20)
+    # BASE-ONLY EV CORE (2026-11-07; see EV_BASE_STOCK / EV_BASE_ETF):
+    # the fitted price coefficients are zero, so the bracket is the
+    # per-kind base rate less the dep charge. cont carries no EV
+    # weight (it still drives the gates and the watchlist ratings);
+    # upside and downside remain computed above and recorded below
+    # for the gates and the audit trail.
+    base_rate = EV_BASE_ETF if is_etf else EV_BASE_STOCK
+    est = conf * (1 + 0.25 * char) * (base_rate - dep_ev * 0.20)
     return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
             "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
             "downside": downside, "downside_base": downside_base,
@@ -1153,7 +1160,7 @@ def est_parts(row, dep, cont, conf=1.0):
             "earn_move_typ": earn_move_typ,
             "earn_move_fallback": earn_move_fallback,
             "earnings_in_days": earnings_in_days,
-            "character": char,
+            "character": char, "base_rate": base_rate,
             "dep": dep, "dep_ev": dep_ev, "cont": cont, "conf": conf,
             "est": est}
 
@@ -1161,25 +1168,26 @@ def est_parts(row, dep, cont, conf=1.0):
 def estimate_next_year(row, dep, cont, conf=1.0):
     """Heuristic expected value, for display and ranking — NOT a prediction.
 
-    EV = conf x (1 + 0.25 x character) x
-         (cont x upside - (1 - cont) x downside - dep x event_unwind)
-      upside      = last-6m run with a mean-reversion dampener: the first 25%
-                    counts in full, anything beyond counts at half weight
-                    (capped at 50%): monster half-years fade, so the estimate
-                    must not let a historic run repeat at full weight;
-      downside    = half the historical 1y max-drawdown magnitude (floor 10%),
-                    scaled by (1 + drawdown frequency): names that dip 10%+
-                    often hurt more than names with one deep dip;
+    EV = conf x (1 + 0.25 x character) x (BASE[kind] - dep_ev x 0.20)
+      BASE        = per-kind base rate (EV_BASE_STOCK / EV_BASE_ETF),
+                    fitted on the 2021-2026 historical snapshots by
+                    the 2026-11-07 design study: sign-constrained fits
+                    put both price coefficients (upside, downside) at
+                    zero, so the bracket is the base rate less the dep
+                    charge. est_parts still computes and records
+                    upside/downside (the gates and the audit consume
+                    them); they carry no EV weight.
       character   = the Composure parts this formula doesn't already see
                     (quality, entry timing, structure/cost), as a z-sum:
                     high-character names get their estimate lifted, low-
                     character names get it cut. Momentum and volatility are
                     deliberately excluded (ret_6m/maxdd already cover them);
-      event_unwind= 20% haircut scaled by event_dependence;
+      event_unwind= 20% haircut scaled by event_dependence (dep_ev is 0
+                    for diversified ETFs — see est_parts);
       conf        = researcher's confidence in the assessment (0..1): low
                     confidence shrinks the estimate toward zero (neutral).
-    Strong, stable continuation -> clearly positive; unstable -> near zero;
-    obvious decliners -> negative.
+    Names differ only through the research layer: higher confidence and
+    character lift the estimate, higher event dependence cuts it.
     """
     return est_parts(row, dep, cont, conf)["est"]
     raw = cont * upside - (1 - cont) * downside - dep * 0.20
@@ -1297,6 +1305,28 @@ ETF_EV_UPSIDE_CONST = 0.08
 # pooled 0.088; by year 0.060-0.107 with 2026 the highest). 0.08 is
 # the long-history central value. The Nov 30 audit re-derives it again
 # from live data.
+# 6) BASE-ONLY EV CORE (shipped 2026-11-07, Dan's directive; design
+#    study: ev_formula_study_2026-11-07/results.md + formula_spec.md).
+#    Sign-constrained fits of EV = base + b x upside - c x downside on
+#    the 2021-2026 historical snapshots put BOTH price coefficients at
+#    their zero bound, for both kinds, on both validation splits:
+#    under the formula's own sign conventions the price terms carry
+#    no supported level content (the unconstrained fits want upside
+#    negative and downside positive — the survivor-population
+#    artifact). The EV bracket is therefore the per-kind base rate
+#    less the dep charge (see est_parts). These constants are the
+#    study's DISCOVERY-window fits (2021-2023), the pair validated on
+#    untouched 2024-2026 data (bucket MAE 13.9pp stocks / 13.8pp ETFs
+#    vs the retired skeleton's 19.4 / 16.6pp). The full-window refits
+#    (+12.56% / +9.34%) were NOT shipped: fitted partly on the
+#    validation years, they carry the survivor population's flattery
+#    at full strength. Constants are frozen between audits; the
+#    monthly audit re-derives them from the extended snapshot
+#    dataset and Dan approves any change (spec section 5 guardrail
+#    governs any future nonzero price coefficient). Judged by the
+#    Nov 30 audit, agenda item 13 (ADOPTED branch).
+EV_BASE_STOCK = 0.0822
+EV_BASE_ETF = 0.0620
 DOWNSIDE_FLOOR = 0.15       # stocks (raised from 0.10, see est_parts)
 ETF_DOWNSIDE_FLOOR = 0.10   # ETFs: 10% already calibrated historically
 _ETF_SECTOR_KEYWORDS = (
@@ -3708,6 +3738,7 @@ def _frame_row(r, outcome, reason):
         "base_score": _safe(r.get("base_score")),
         "final_score": _safe(r.get("final_score")),
         "est_next_1y": _safe(r.get("est_next_1y")),
+        "base_rate": _safe(r.get("base_rate")),
         "dep": dep_raw,
         "dep_used": dep_used,
         "dep_capped": dep_capped,
@@ -4427,11 +4458,17 @@ def add_research_columns(df, llm_path=True):
                 f"dep {float(d):.2f} -> {float(u):.2f}")
     sub["est_next_1y"] = [estimate_next_year(r, d, c, f)
                           for r, d, c, f in zip(recs, dep_used, cont, conf)]
+    sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
+                         else EV_BASE_STOCK) for r in recs]
     sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep_used)]
     # --- est audit trail: formula + per-ticker components, so any reviewer
     # (human or LLM) can re-derive every estimate from the log alone ---
     log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
-        "(cont x upside - (1-cont) x downside - dep x 0.20); "
+        "(BASE[kind] - dep_ev x 0.20) — BASE-ONLY CORE (2026-11-07): "
+        "BASE = 8.22% stocks / 6.20% ETFs (discovery-window fits from "
+        "the 2021-2026 design study; the fitted upside/downside "
+        "coefficients are zero, so both are computed and shown for the "
+        "gates and the record but carry no EV weight); "
         "upside (stocks, 2026-11-06 steep dampener) = first 15% of 6m run "
         "SKIPPING the most recent month at full weight, beyond at 1/3 "
         "weight (run capped at 30%); upside (ETF momentum figure) = first "
@@ -4439,11 +4476,8 @@ def add_research_columns(df, llm_path=True):
         "15% stocks / 10% ETFs) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
         "move when earnings are within 30d (2026-10-30); "
         "character = quality/entry-timing/structure z-sum, clamped [-2, 2]; "
-        "dep = dep_used (diversified-ETF ceiling 0.15 applied, 2026-10-30); "
-        "ETFs (2026-11-06): upside = constant 0.08 (no-momentum EV; "
-        "recalibrated from 0.1115 by the 2021-2026 historical study) — "
-        "for ETF rows the bracketed upside is the constant and r6 is "
-        "shown for the eligibility gate, not as an EV input)")
+        "dep_ev = dep_used (diversified-ETF ceiling 0.15 applied, "
+        "2026-10-30; charge removed for diversified ETFs, 2026-11-06)")
     for (_, r), d, c, f in zip(sub.iterrows(), dep_used, cont, conf):
         p = est_parts(r, d, c, f)
         _gap = ""
@@ -4455,10 +4489,10 @@ def add_research_columns(df, llm_path=True):
                     f"earnings in {p['earnings_in_days']:.0f}d)")
         log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
             f"{1 + 0.25 * p['character']:.2f}char x "
-            f"({p['cont']:.2f} x {p['upside']:.3f} - {1 - p['cont']:.2f} x "
-            f"{p['downside']:.3f} - {p['dep']:.2f} x 0.20) "
-            f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%}; "
-            f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%}; "
+            f"({p['base_rate']:.3f} base - {p['dep_ev']:.2f} x 0.20) "
+            f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%} (record only); "
+            f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%} (record only); "
+            f"cont={p['cont']:.2f} (gates/ratings only); "
             f"char={p['character']:+.2f}]{_gap}")
     return sub
 
@@ -4664,6 +4698,22 @@ def pick_final(adj, args, llm_path):
                     f"ETFs eligible with one strike: {_tier2_names}")
                 for t in _tier2_names:
                     _ETF_TIER2[t] = True
+            # BENCHMARK SELF-EXCLUSION (2026-11-07, shipped with the
+            # base-only EV): the ETF benchmark is this leg's yardstick,
+            # not a pick candidate — a fund cannot beat itself. Under
+            # the retired price-term EV its estimate never topped the
+            # list; the base-rate core ranks it first on research
+            # scores alone (Nov 6 bundle rehearsal: VOO +5.0%, the top
+            # ETF), so the structural ineligibility is now explicit.
+            # VGT remains eligible in this leg: it is the STOCK
+            # benchmark and is measured here against VOO, not itself.
+            _bench = etf_benchmark(args)
+            if _bench:
+                for _, r in ranked.iterrows():
+                    if str(r["ticker"]) == str(_bench):
+                        _fails[str(r["ticker"])] = (
+                            f"benchmark fund {_bench} is the ETF "
+                            f"yardstick, not a pick candidate")
             if _fails:
                 log(f"etf eligibility gate: {len(_fails)} ETFs barred "
                     f"from picks: "
