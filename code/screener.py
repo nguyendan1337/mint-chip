@@ -2281,23 +2281,25 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 (titles[1] if titles else "Top 10 ETFs (most confident)", etfs_df)]
     # Bar scales: the 1y-return bar keeps a FIXED reference (full bar =
     # +150%, a monster year) so return bars stay comparable across days.
-    # The EV bar is RELATIVE with an anchor (Dan's directives,
-    # 2026-11-06 late — this reverses the fixed +20% EV scale): in
-    # V6/C3 units the strongest expected values run only a few percent,
-    # so a fixed +20% scale left every EV bar a sliver, while a pure
-    # page-relative scale crowns the top pick with a full bar even at
-    # +4.4%. The full-bar mark is therefore the LARGER of the page's
-    # strongest expected value or the +10% anchor (Dan's own bar for
-    # what the best picks should carry): a full bar always means a
-    # genuinely strong expected value, bars stay comparable across
-    # soft days, and the scale only stretches past the anchor when a
-    # truly strong slate appears. The printed percentage beside each
-    # bar carries the absolute value. The scale is two-sided where a
-    # page carries negative EVs (the watchlist), each side anchored
-    # the same way, so one outlier on one side cannot squash the
-    # other side's bars.
+    # The EV bar scale is DYNAMIC (Dan's directives, 2026-11-06 late —
+    # this reverses the fixed +20% EV scale): in V6/C3 units the
+    # strongest expected values run only a few percent, so a fixed
+    # +20% scale left every EV bar a sliver, while a pure page-relative
+    # scale crowns the top pick with a full bar even at +4.4%, which
+    # Dan rejected. The full-bar mark is therefore the page's
+    # strongest expected value stretched by EV_BAR_STRETCH (1.5x),
+    # generated from the day's own EVs rather than a hardcoded level:
+    # the strongest bar fills two-thirds of its track, never all of
+    # it, and the scale adapts across EV eras (if top EVs run at +14%
+    # again, the mark becomes +21% and nothing saturates). A brief
+    # hardcoded +10% anchor shipped first the same evening and was
+    # replaced within the hour at Dan's direction. The printed
+    # percentage beside each bar carries the absolute value. The
+    # scale is two-sided where a page carries negative EVs (the
+    # watchlist), each side stretched from its own strongest value,
+    # so one outlier on one side cannot squash the other side's bars.
     REF_1Y = 1.50
-    EV_BAR_ANCHOR = 0.10
+    EV_BAR_STRETCH = 1.5
     _ev_signed = []
     for _df in (stocks_df, etfs_df):
         if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
@@ -2314,8 +2316,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 pass
     _pos = [v for v in _ev_signed if v > 0]
     _neg = [-v for v in _ev_signed if v < 0]
-    REF_EV_POS = max([EV_BAR_ANCHOR] + _pos)
-    REF_EV_NEG = max([EV_BAR_ANCHOR] + _neg)
+    REF_EV_POS = EV_BAR_STRETCH * max(_pos) if _pos else 0.10
+    REF_EV_NEG = EV_BAR_STRETCH * max(_neg) if _neg else 0.10
 
     def bar(val, gold=False):
         try:
