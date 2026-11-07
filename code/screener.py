@@ -1768,7 +1768,7 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
 
     def _pl(k, w):
         return f"{k} {w}" if k == 1 else f"{k} {w}s"
-    out = (f"A {q} list — {_pl(b, 'buy')}, {_pl(h, 'hold')}, {_pl(s, 'sell')}, "
+    out = (f"A {q} list: {_pl(b, 'buy')}, {_pl(h, 'hold')}, {_pl(s, 'sell')}, "
            f"averaging {avg:+.1%} expected value")
     if s and avg < 0.0:
         out += ("; the sell drags the average expected value below zero"
@@ -2238,8 +2238,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         except Exception:
             return "n/a"
 
-    sections = [(titles[0] if titles else "Top 10 stocks — most confident", stocks_df),
-                (titles[1] if titles else "Top 10 ETFs — most confident", etfs_df)]
+    sections = [(titles[0] if titles else "Top 10 stocks (most confident)", stocks_df),
+                (titles[1] if titles else "Top 10 ETFs (most confident)", etfs_df)]
     # Fixed reference scales, stated honestly in the note: a full bar means
     # something absolute, not "best of today's list." Full 1y bar = +150%
     # (a monster year); full EV bar = +20% (an exceptional expected value).
@@ -2568,7 +2568,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
 {_hblurb_html}</div>""")
         hm_html = (
-            '<h2>Honorable mentions — cleared the bar, didn\u2019t make the cut</h2>\n'
+            '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
             '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
             '<button class="sbtn" data-k="r1y">1-year return</button>'
             '<button class="sbtn on" data-k="ev">Expected value</button></div>\n'
@@ -2799,7 +2799,7 @@ a.navbtn:hover {{ background:
 <body>
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
-<div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") } — { _html.escape(now) }</div>
+<div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") }, { _html.escape(now) }</div>
 { '<div class="navwrap"><a class="navbtn" href="index.html">&larr; Mint picks</a></div>' if meta.get("mode") == "watchlist" else '<div class="navwrap"><a class="navbtn" href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>' }
 {rows_html}
 {wl_html}
@@ -3486,7 +3486,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
             reason = (f"risk-flag gate ({_rg['count']} strikes: "
                       f"{', '.join(_rg['strikes'])})")
         elif t in _STABILITY_GATED:
-            reason = (f"stability {_STABILITY_GATED[t]} — below the "
+            reason = (f"stability {_STABILITY_GATED[t]}, below the "
                       f"B-or-better pick bar")
         elif t in _ETF_GATED:
             reason = _ETF_GATED[t]
@@ -3843,7 +3843,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
                       f"{', '.join(_rg['strikes'])})")
         elif t in _STABILITY_GATED:
             outcome = "honorable" if contender else "rejected"
-            reason = (f"stability {_STABILITY_GATED[t]} — below the "
+            reason = (f"stability {_STABILITY_GATED[t]}, below the "
                       f"B-or-better pick bar")
         elif t in _ETF_GATED:
             outcome = "honorable" if contender else "rejected"
@@ -5075,9 +5075,9 @@ def run_watchlist_apply(args):
     chart_path = f"watchlist_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     make_chart_html(sfinal, efinal, chart_path,
                     {"benchmark": "", "mode": "watchlist",
-                     "heading": "Watchlist — by est. next 1y",
+                     "heading": "Watchlist: by est. next 1y",
                      "asof": run_stamp()},
-                    titles=("Stocks — by est. next 1y", "ETFs — by est. next 1y"),
+                    titles=("Stocks: by est. next 1y", "ETFs: by est. next 1y"),
                     watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
     checks = []
