@@ -729,13 +729,13 @@ def log_levers(args):
         f"{ETF_EV_UPSIDE_CONST:.4f} (no-momentum EV, calibration candidate "
         f"C3) — a fund's own 6m run does not enter its EV; ETF floor "
         f"--min-est-etf={getattr(args, 'min_est_etf', 0.0):+.1%}")
-    log(f"ETF eligibility gate (2026-11-06, tiered): tier 1 needs 6m "
-        f"run <= +{ETF_GATE_MAX_RUN:.0%} and dep_used <= "
-        f"{ETF_GATE_MAX_DEP:.2f}; tier 2 (proven strength, max "
-        f"{ETF_TIER2_MAX_PICKS} picks) admits run <= "
-        f"+{ETF_TIER2_MAX_RUN:.0%} / dep <= {ETF_TIER2_MAX_DEP:.2f} "
-        f"with maxdd >= {ETF_TIER2_MIN_MAXDD:.0%} and dd_freq <= "
-        f"{ETF_TIER2_MAX_DDFREQ:.2f}; barred names stay "
+    log(f"ETF eligibility gate (2026-11-06 late, strike design): "
+        f"strikes counted at 6m run > +{ETF_STRIKE_MAX_RUN:.0%}, "
+        f"dep_used > {ETF_STRIKE_MAX_DEP:.2f}, maxdd < "
+        f"{ETF_STRIKE_MIN_MAXDD:.0%}, dd_freq > "
+        f"{ETF_STRIKE_MAX_DDFREQ:.2f}; 0 strikes = tier 1, 1 strike "
+        f"= tier 2 (no slot cap), "
+        f"{ETF_STRIKE_BAR}+ strikes = barred; barred names stay "
         f"honorable-mention eligible")
     log(f"stock eligibility gate (2026-11-06): implied upside >= 0 "
         f"and dep_used < {STOCK_GATE_MAX_DEP:.2f}; barred names stay "
@@ -1245,7 +1245,31 @@ ETF_TIER2_MAX_RUN = 0.35
 ETF_TIER2_MAX_DEP = 0.30
 ETF_TIER2_MIN_MAXDD = -0.12
 ETF_TIER2_MAX_DDFREQ = 0.05
-ETF_TIER2_MAX_PICKS = 3
+# (ETF_TIER2_MAX_PICKS was 3 under the tiered gate; see 4c and 4d.)
+# 4c) STRIKE GATE (2026-11-06 late, Dan's directive: "ship the strike
+#    design using your best design" — shipped over Muse's stated
+#    recommendation to wait for the Nov 30 audit). The tiered hard caps
+#    of 4b are replaced by strikes, mirroring the stock two-strike
+#    gate: each of the four tier-2 lines becomes a strike. Zero
+#    strikes = tier 1 (clean, uncapped); exactly one strike = tier 2
+#    (eligible; at ship it kept the old tier-2 slot cap of 3 picks,
+#    REMOVED later the same evening at Dan's directive — see 4d);
+#    two or more strikes = barred. The thresholds ARE the
+#    tier-2 constants (aliased below) — no new fitted numbers; the
+#    change is combinational only: any one line may fail, two may
+#    not. Judged by the Nov 30 audit head-to-head against the
+#    hard-tier design it replaced (agenda item 10).
+# 4d) ONE-STRIKE SLOT CAP REMOVED (2026-11-06 late, Dan's directive:
+#    "remove the limit of 3 picks with one strike"). None = no cap:
+#    enforce_etf_tier2_cap() returns the selection unchanged and the
+#    self-check's tier-2 count test is skipped. The constant is kept
+#    (value None) so manifests record the uncapped state explicitly.
+ETF_TIER2_MAX_PICKS = None
+ETF_STRIKE_MAX_RUN = ETF_TIER2_MAX_RUN
+ETF_STRIKE_MAX_DEP = ETF_TIER2_MAX_DEP
+ETF_STRIKE_MIN_MAXDD = ETF_TIER2_MIN_MAXDD
+ETF_STRIKE_MAX_DDFREQ = ETF_TIER2_MAX_DDFREQ
+ETF_STRIKE_BAR = 2
 # STOCK SELECTION (2026-11-06, Dan shipped on the stock test battery —
 # stock_winner_detection_2026-11-06): eligibility gate (implied_upside
 # >= 0 and dep_used < STOCK_GATE_MAX_DEP) and the steep upside dampener
@@ -1478,53 +1502,68 @@ def _build_pool(frame, n, kind, persist):
     return pool, tail
 
 
-def _etf_tier_of(r):
-    """ETF pick-eligibility tier for a candidate row (2026-11-06, tiered
-    gate — Dan: 'winners should absolutely not be barred').
-
-    Tier 1 (core, the validated R7): 6m run <= +15% and dep_used <= 0.20.
-    Tier 2 (proven strength): run <= +35%, dep_used <= 0.30, worst
-    drawdown no deeper than -12%, and drawdown frequency <= 0.05 — the
-    profile every October winner shared (all 26 winner tickers had
-    dd_freq 0 and maxdd >= -10.6%). The tier-2-only cohort replayed at
-    -1.29% / +2.70% vs VOO / zero -15% drawdowns on the validation half,
-    vs the still-barred cohort's -6.46% / -2.86% / 8.0%. Tier-2 picks
-    are slot-capped (ETF_TIER2_MAX_PICKS).
-    Returns (tier, fail_reason): tier is 1, 2, or None (barred)."""
+def _etf_strikes_of(r):
+    """Strike list for an ETF candidate row under the strike gate
+    (2026-11-06 late). Returns (strikes, missing): strikes is a list of
+    plain-language strike descriptions, one per failed proven-strength
+    line; missing is True when any metric needed to count strikes is
+    unavailable (fail-safe: unverifiable names are barred, as they
+    were under the tiered gate)."""
     r6 = _safe(r.get("ret_6m_skip1m"))
     if r6 is None:
         r6 = _safe(r.get("ret_6m"))
     du = _safe(_dep_used_of(r))
-    if (r6 is not None and r6 <= ETF_GATE_MAX_RUN
-            and du is not None and du <= ETF_GATE_MAX_DEP):
-        return 1, None
     mdd = _safe(r.get("maxdd"))
     ddf = _safe(r.get("dd_freq"))
-    if (r6 is not None and r6 <= ETF_TIER2_MAX_RUN
-            and du is not None and du <= ETF_TIER2_MAX_DEP
-            and mdd is not None and mdd >= ETF_TIER2_MIN_MAXDD
-            and ddf is not None and ddf <= ETF_TIER2_MAX_DDFREQ):
+    if r6 is None or du is None or mdd is None or ddf is None:
+        return [], True
+    strikes = []
+    if r6 > ETF_STRIKE_MAX_RUN:
+        strikes.append(f"6m run {r6:+.0%} > +{ETF_STRIKE_MAX_RUN:.0%}")
+    if du > ETF_STRIKE_MAX_DEP:
+        strikes.append(f"dep {du:.2f} > {ETF_STRIKE_MAX_DEP:.2f}")
+    if mdd < ETF_STRIKE_MIN_MAXDD:
+        strikes.append(f"max drawdown {mdd:.0%} deeper than "
+                       f"{ETF_STRIKE_MIN_MAXDD:.0%}")
+    if ddf > ETF_STRIKE_MAX_DDFREQ:
+        strikes.append(f"drawdown frequency {ddf:.2f} > "
+                       f"{ETF_STRIKE_MAX_DDFREQ:.2f}")
+    return strikes, False
+
+
+def _etf_strike_count(r):
+    """Strike count for frame recording: an int, or None when the
+    strikes cannot be verified from the row's data."""
+    try:
+        strikes, missing = _etf_strikes_of(r)
+    except Exception:
+        return None
+    return None if missing else len(strikes)
+
+
+def _etf_tier_of(r):
+    """ETF pick-eligibility tier for a candidate row (strike gate,
+    2026-11-06 late — Dan's directive; replaces the tiered hard caps
+    shipped earlier the same day).
+
+    Strikes are counted against the four proven-strength lines (6m
+    run +35%, dep_used 0.30, maxdd -12%, dd_freq 0.05 — the profile
+    every October winner shared: all 26 winner tickers had dd_freq 0
+    and maxdd >= -10.6%). Zero strikes = tier 1 (clean). Exactly one
+    strike = tier 2 (eligible, no slot cap since 2026-11-06 late).
+    Two or more strikes = barred, and the fail reason names the
+    strikes. Mirrors the stock two-strike gate: one flaw warns, two
+    flaws bar. Judged by the Nov 30 audit head-to-head against the
+    hard-tier design (agenda item 10).
+    Returns (tier, fail_reason): tier is 1, 2, or None (barred)."""
+    strikes, missing = _etf_strikes_of(r)
+    if missing:
+        return None, "insufficient data for strike verification"
+    if not strikes:
+        return 1, None
+    if len(strikes) < ETF_STRIKE_BAR:
         return 2, None
-    bits = []
-    if r6 is not None and r6 > ETF_TIER2_MAX_RUN:
-        bits.append(f"6m run {r6:+.0%} > +{ETF_TIER2_MAX_RUN:.0%}")
-    elif r6 is not None and r6 > ETF_GATE_MAX_RUN:
-        bits.append(f"6m run {r6:+.0%} > +{ETF_GATE_MAX_RUN:.0%} "
-                    f"without proven-strength credentials")
-    if du is not None and du > ETF_TIER2_MAX_DEP:
-        bits.append(f"dep {du:.2f} > {ETF_TIER2_MAX_DEP:.2f}")
-    elif du is not None and du > ETF_GATE_MAX_DEP:
-        bits.append(f"dep {du:.2f} > {ETF_GATE_MAX_DEP:.2f} "
-                    f"without proven-strength credentials")
-    if mdd is not None and mdd < ETF_TIER2_MIN_MAXDD:
-        bits.append(f"max drawdown {mdd:.0%} deeper than "
-                    f"{ETF_TIER2_MIN_MAXDD:.0%}")
-    if ddf is not None and ddf > ETF_TIER2_MAX_DDFREQ:
-        bits.append(f"drawdown frequency {ddf:.2f} > "
-                    f"{ETF_TIER2_MAX_DDFREQ:.2f}")
-    if not bits:
-        bits.append("insufficient data for tier-2 verification")
-    return None, "; ".join(bits)
+    return None, f"{len(strikes)} strikes: " + "; ".join(strikes)
 
 
 def _earnings_dates_one(t):
@@ -2240,20 +2279,47 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 
     sections = [(titles[0] if titles else "Top 10 stocks (most confident)", stocks_df),
                 (titles[1] if titles else "Top 10 ETFs (most confident)", etfs_df)]
-    # Fixed reference scales, stated honestly in the note: a full bar means
-    # something absolute, not "best of today's list." Full 1y bar = +150%
-    # (a monster year); full EV bar = +20% (an exceptional expected value).
-    # Per-column max scaling made the top pick look godly (100% fill) even
-    # when its EV was merely good; fixed scales keep every bar an absolute
-    # gauge — and comparable across days, since the scale never moves.
-    REF_1Y, REF_EV = 1.50, 0.20
+    # Bar scales: the 1y-return bar keeps a FIXED reference (full bar =
+    # +150%, a monster year) so return bars stay comparable across days.
+    # The EV bar is RELATIVE (Dan's directive, 2026-11-06 late — this
+    # reverses the fixed +20% EV scale): in V6/C3 units the strongest
+    # expected values run only a few percent, so a fixed +20% scale left
+    # every EV bar a sliver. The strongest expected value on the page
+    # fills its bar and every other EV bar is proportional to it; the
+    # printed percentage beside each bar carries the absolute value.
+    # The scale is two-sided where a page carries negative EVs (the
+    # watchlist): positives scale to the page's strongest positive,
+    # negatives to its deepest negative, so one outlier on one side
+    # cannot squash the other side's bars.
+    REF_1Y = 1.50
+    _ev_signed = []
+    for _df in (stocks_df, etfs_df):
+        if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
+            for _v in _df["est_next_1y"]:
+                try:
+                    _ev_signed.append(float(_v))
+                except Exception:
+                    pass
+    if honorable:
+        for _h in honorable:
+            try:
+                _ev_signed.append(float(_h.get("est_next_1y")))
+            except Exception:
+                pass
+    _pos = [v for v in _ev_signed if v > 0]
+    _neg = [-v for v in _ev_signed if v < 0]
+    REF_EV_POS = max(_pos) if _pos else 0.20
+    REF_EV_NEG = max(_neg) if _neg else 0.20
 
     def bar(val, gold=False):
         try:
             v = float(val)
         except Exception:
             return ""
-        ref = REF_EV if gold else REF_1Y
+        if gold:
+            ref = REF_EV_NEG if v < 0 else REF_EV_POS
+        else:
+            ref = REF_1Y
         w = max(2, min(100, abs(v) / ref * 100))
         cls = "neg" if v < 0 else ("est" if gold else "pos")
         return (f'<div class="track"><div class="bar {cls}" style="width:{w:.1f}%">'
@@ -3377,9 +3443,11 @@ def enforce_etf_tier2_cap(selected, pool, cap=2, min_score=0.0,
     portfolio at max_tier2: evict the lowest-EV excess tier-2 picks and
     refill from tier-1 candidates that respect the category cap and the
     holdings-overlap cap against survivors. Evicted names are recorded
-    in _ETF_TIER2_CAPPED so frames/ledgers state the real reason."""
+    in _ETF_TIER2_CAPPED so frames/ledgers state the real reason.
+    Since 2026-11-06 late max_tier2 is None (Dan removed the one-strike
+    slot cap): the function then returns the selection unchanged."""
     sel = selected.copy().reset_index(drop=True)
-    if not len(sel):
+    if not len(sel) or max_tier2 is None:
         return sel
 
     def _tier(r):
@@ -3662,6 +3730,9 @@ def _frame_row(r, outcome, reason):
                       "barred" if str(r.get("ticker")) in _ETF_GATED
                       else "tier1")
                      if str(r.get("kind", "")) == "etf" else None),
+        "dd_freq": _safe(r.get("dd_freq")),
+        "etf_strikes": (_etf_strike_count(r)
+                        if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
         "outcome_reason": reason,
         "rating": None,
@@ -3714,6 +3785,12 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     "self_check": None,
                     "counts": counts,
                     "etf_selection": {
+                        "gate_design": "strikes",
+                        "strike_max_run": ETF_STRIKE_MAX_RUN,
+                        "strike_max_dep": ETF_STRIKE_MAX_DEP,
+                        "strike_min_maxdd": ETF_STRIKE_MIN_MAXDD,
+                        "strike_max_ddfreq": ETF_STRIKE_MAX_DDFREQ,
+                        "strike_bar": ETF_STRIKE_BAR,
                         "gate_max_run": ETF_GATE_MAX_RUN,
                         "gate_max_dep": ETF_GATE_MAX_DEP,
                         "tier2_max_run": ETF_TIER2_MAX_RUN,
@@ -4065,7 +4142,8 @@ def run_self_check(final, args, out_csv):
                         _gate_ok = False
                     elif _tier == 2:
                         _n_tier2 += 1
-                if _n_tier2 > ETF_TIER2_MAX_PICKS:
+                if (ETF_TIER2_MAX_PICKS is not None
+                        and _n_tier2 > ETF_TIER2_MAX_PICKS):
                     _gate_ok = False
                 # Stock eligibility gate (2026-11-06): every stock pick
                 # must have implied upside >= 0 (when recorded) and
@@ -4079,7 +4157,7 @@ def run_self_check(final, args, out_csv):
                         _gate_ok = False
             check("risk_flag_gate", _gate_ok,
                   "all picks <2 risk strikes (gate added 2026-10-30); "
-                  "ETF picks tier-eligible, tier-2 within slot cap; "
+                  "ETF picks strike-eligible (tier 1 or 2); "
                   "stock picks pass the iu/dep eligibility gate "
                   "(2026-11-06)")
         check("has_stability_grade", "stability" in final.columns)
@@ -4244,40 +4322,36 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     edf, ecap = winsorize_base(edf)
     edf["base_cap"] = ecap
     log(f"ETF gates: {egate['gated_total']} excluded; winsorize cap={ecap:+.2f}")
-    # ETF POOL-PRIORITY DEMOTION (2026-11-06, winner-detection rec 4):
-    # base_score has zero ETF winner/loser separation (d +0.03) yet
-    # decides the research pool, and it ranks extended funds IN. ETFs
-    # that would fail both eligibility tiers on the run leg (beyond the
-    # tier-2 run cap, or extended without proven-strength drawdown
-    # credentials) are demoted below eligible names in pool order
-    # (base_score order preserved within each group) — they can still
-    # be researched if pool slots remain, they just stop crowding out
-    # eligible funds. Only the run leg applies here: dep does not
-    # exist until the research layer scores it.
+    # ETF POOL-PRIORITY DEMOTION (2026-11-06, winner-detection rec 4;
+    # strike form 2026-11-06 late): base_score has zero ETF
+    # winner/loser separation (d +0.03) yet decides the research pool,
+    # and it ranks extended funds IN. ETFs already carrying two or
+    # more of the three price-side strikes (run, maxdd, dd_freq) are
+    # barred no matter what dep the research layer later assigns, so
+    # they are demoted below eligible names in pool order (base_score
+    # order preserved within each group) — they can still be
+    # researched if pool slots remain, they just stop crowding out
+    # eligible funds. Only the price-side strikes apply here: dep
+    # does not exist until the research layer scores it.
     _run_col = ("ret_6m_skip1m" if "ret_6m_skip1m" in edf.columns
                 else ("ret_6m" if "ret_6m" in edf.columns else None))
     if _run_col is not None and len(edf):
-        # demote only names that would fail BOTH tiers on the run leg:
-        # run beyond the tier-2 cap, or extended with a deep/frequent
-        # drawdown record (tier-2 credentials missing)
         _run = edf[_run_col].fillna(0)
-        _ext = (_run > ETF_TIER2_MAX_RUN)
+        _pstrikes = (_run > ETF_STRIKE_MAX_RUN).astype(int)
         if "maxdd" in edf.columns:
-            _ext = _ext | ((_run > ETF_GATE_MAX_RUN)
-                           & (edf["maxdd"].fillna(-1)
-                              < ETF_TIER2_MIN_MAXDD))
+            _pstrikes = _pstrikes + (edf["maxdd"].fillna(-1)
+                                     < ETF_STRIKE_MIN_MAXDD).astype(int)
         if "dd_freq" in edf.columns:
-            _ext = _ext | ((_run > ETF_GATE_MAX_RUN)
-                           & (edf["dd_freq"].fillna(1)
-                              > ETF_TIER2_MAX_DDFREQ))
-        _ext = _ext.astype(int)
+            _pstrikes = _pstrikes + (edf["dd_freq"].fillna(1)
+                                     > ETF_STRIKE_MAX_DDFREQ).astype(int)
+        _ext = (_pstrikes >= ETF_STRIKE_BAR).astype(int)
         if int(_ext.sum()):
             edf = edf.assign(_etf_ext=_ext).sort_values(
                 ["_etf_ext", "base_score"], ascending=[True, False],
                 kind="mergesort").drop(columns=["_etf_ext"])
-            log(f"etf pool demotion: {int(_ext.sum())} ETFs failing "
-                f"both eligibility tiers on the run leg demoted in "
-                f"research-pool priority")
+            log(f"etf pool demotion: {int(_ext.sum())} ETFs already "
+                f"carrying {ETF_STRIKE_BAR}+ price-side strikes "
+                f"demoted in research-pool priority")
     return edf
 
 
@@ -4574,12 +4648,12 @@ def pick_final(adj, args, llm_path):
                 elif _tier == 2:
                     _tier2_names.append(str(r["ticker"]))
             if _tier2_names:
-                log(f"etf tier-2 lane (run <= "
-                    f"+{ETF_TIER2_MAX_RUN:.0%}, dep <= "
-                    f"{ETF_TIER2_MAX_DEP:.2f}, maxdd >= "
-                    f"{ETF_TIER2_MIN_MAXDD:.0%}, dd_freq <= "
-                    f"{ETF_TIER2_MAX_DDFREQ:.2f}): {len(_tier2_names)} "
-                    f"ETFs eligible via proven strength: {_tier2_names}")
+                log(f"etf strike lane (exactly 1 strike against the "
+                    f"lines: run +{ETF_STRIKE_MAX_RUN:.0%}, dep "
+                    f"{ETF_STRIKE_MAX_DEP:.2f}, maxdd "
+                    f"{ETF_STRIKE_MIN_MAXDD:.0%}, dd_freq "
+                    f"{ETF_STRIKE_MAX_DDFREQ:.2f}): {len(_tier2_names)} "
+                    f"ETFs eligible with one strike: {_tier2_names}")
                 for t in _tier2_names:
                     _ETF_TIER2[t] = True
             if _fails:
@@ -4643,8 +4717,9 @@ def pick_final(adj, args, llm_path):
                                        max_overlap=args.max_etf_overlap,
                                        cap=cap, min_score=args.min_score,
                                        veto_dep=veto)
-            # tier-2 proven-strength picks are slot-capped so the page
-            # cannot refill with extended names (2026-11-06)
+            # tier-2 (one-strike) picks were slot-capped under the
+            # tiered gate; the cap was removed 2026-11-06 late, so this
+            # call is now a no-op kept for the eviction bookkeeping path
             first = enforce_etf_tier2_cap(first, est_ok, cap=cap,
                                           min_score=args.min_score,
                                           veto_dep=veto)
