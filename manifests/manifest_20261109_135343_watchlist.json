@@ -1,0 +1,46 @@
+{
+ "date": "2026-11-09",
+ "flow": "watchlist",
+ "bundle": "watchlist_bundle_20261109_134740.json",
+ "screener_sha256": "84d4df00edf991aaa10c42c48ad6ccd4ea5061667fa755d40d253f2ca4807544",
+ "self_check": "4/4",
+ "counts": {
+  "candidates": 23,
+  "picks": 4,
+  "gate_bars": 0,
+  "stability_bars": 0,
+  "dep_binds": 1,
+  "vetoes": 2
+ },
+ "etf_selection": {
+  "gate_design": "strikes",
+  "strike_max_run": 0.35,
+  "strike_max_dep": 0.3,
+  "strike_min_maxdd": -0.12,
+  "strike_max_ddfreq": 0.05,
+  "strike_bar": 2,
+  "gate_max_run": 0.15,
+  "gate_max_dep": 0.2,
+  "tier2_max_run": 0.35,
+  "tier2_max_dep": 0.3,
+  "tier2_min_maxdd": -0.12,
+  "tier2_max_ddfreq": 0.05,
+  "tier2_max_picks": null,
+  "ev_upside_const": 0.08
+ },
+ "stock_selection": {
+  "gate_max_dep": 0.3,
+  "gate_implied_upside_min": 0.0,
+  "ranking": "offense_score (Variant A, 2026-11-07)",
+  "offense_z_weights": {
+   "z_6m": 0.08,
+   "z_3m": 0.06
+  },
+  "vol_budget_eligible_pct": 0.95,
+  "up_t1": 0.15,
+  "up_factor": 0.3333333333333333,
+  "up_cap": 0.3
+ },
+ "pool_tail": null,
+ "git_commit_of_pages_at_publish": null
+}
