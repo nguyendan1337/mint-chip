@@ -5903,12 +5903,32 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
         if len(s) == 0:
             continue
         pp = float(e["pick_price"])
-        ret = float(s.iloc[-1] / pp - 1)
+        # Measure the return INSIDE the fetched series (fix 2026-11-10,
+        # Dan-approved): download_prices returns split/dividend-adjusted
+        # closes, while the ledger's pick_price is the raw price recorded
+        # on pick day. Dividing the adjusted series by the raw pick price
+        # mixed two bases and manufactured phantom losses after a split
+        # (MTUM, 4:1 on 2026-11-05, printed -79% against a true -17%).
+        # The series' own pick-date bar is the same-basis anchor; the raw
+        # pick_price stays in the record, alongside pick_price_adj.
+        pp_adj = float(s.iloc[0])
+        ret = float(s.iloc[-1] / pp_adj - 1)
         dd = float(((s - s.cummax()) / s.cummax()).min())
         days = (datetime.now() - datetime.fromisoformat(e["date"])).days
         status = "intact"
         reason = "price-based: within tolerance"
-        if dd <= -0.15 or ret <= -0.15:
+        # Guardrail: a return worse than the spell's own max drawdown is
+        # arithmetically impossible on a single price basis. If it ever
+        # appears, the data (not the thesis) is the problem: flag it as a
+        # watch for review instead of recording a broken status.
+        data_suspect = ret < dd - 0.02
+        if data_suspect:
+            status, reason = "watch", (
+                f"data suspect: return {ret:+.0%} is worse than the max "
+                f"dip {dd:+.0%} since pick, which cannot happen on one "
+                f"price basis (possible split or bad price data); flagged "
+                f"for review, not treated as broken")
+        elif dd <= -0.15 or ret <= -0.15:
             status, reason = "broken", f"price-based: {dd:+.0%} max dip since pick"
         elif dd <= -0.08 or ret <= -0.08:
             status, reason = "watch", f"price-based: {dd:+.0%} dip since pick"
@@ -5916,8 +5936,11 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
             continue  # identical check already recorded today
         rec = {"event": "check", "ticker": t, "date": today, "status": status,
                "days_held": days, "ret_since_pick": round(ret, 4),
-               "dd_since_pick": round(dd, 4), "pick_price": pp, "reason": reason,
+               "dd_since_pick": round(dd, 4), "pick_price": pp,
+               "pick_price_adj": round(pp_adj, 4), "reason": reason,
                "pick_date": e["date"]}
+        if data_suspect:
+            rec["data_suspect"] = True
         ledger_append(THESIS_LEDGER, rec)
         out.append(rec)
     nb = sum(1 for r in out if r["status"] == "broken")
