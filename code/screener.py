@@ -2718,11 +2718,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # strongest expected values run only a few percent, so a fixed
     # +20% scale left every EV bar a sliver, while a pure page-relative
     # scale crowns the top pick with a full bar even at +4.4%, which
-    # Dan rejected. The full-bar mark is therefore the strongest
-    # value of the SAME KIND on the page (stocks size against stocks,
-    # ETFs against ETFs — per-kind scaling, Dan 2026-11-11, matching
-    # the per-kind labels "Expected return" / "ETF score") stretched
-    # by EV_BAR_STRETCH (1.5x),
+    # Dan rejected. The full-bar mark is therefore the page's
+    # strongest expected value stretched by EV_BAR_STRETCH (1.5x),
     # generated from the day's own EVs rather than a hardcoded level:
     # the strongest bar fills two-thirds of its track, never all of
     # it, and the scale adapts across EV eras (if top EVs run at +14%
@@ -2731,43 +2728,43 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # replaced within the hour at Dan's direction. The printed
     # percentage beside each bar carries the absolute value. The
     # scale is two-sided where a page carries negative EVs (the
-    # watchlist), each side stretched from its own strongest value
-    # within its kind, so one outlier on one side cannot squash the
-    # other side's bars.
+    # watchlist), each side stretched from its own strongest value,
+    # so one outlier on one side cannot squash the other side's bars.
+    # The scale is SHARED across kinds (one page, one mark for stocks
+    # and ETFs alike): per-kind scaling shipped 2026-11-11 with the
+    # "Expected return" / "ETF score" renames and was reverted the
+    # same day at Dan's direction — a top ETF bar filling two-thirds
+    # of its track beside an equal-length top stock bar invited the
+    # misreading that a +5 fund score matches a +15 stock return.
+    # The renames stay; only the scaling reverted.
     REF_1Y = 1.50
     EV_BAR_STRETCH = 1.5
-    _ev_by_kind = {"stock": [], "etf": []}
-    for _kind, _df in (("stock", stocks_df), ("etf", etfs_df)):
+    _ev_signed = []
+    for _df in (stocks_df, etfs_df):
         if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
             for _v in _df["est_next_1y"]:
                 try:
-                    _ev_by_kind[_kind].append(float(_v))
+                    _ev_signed.append(float(_v))
                 except Exception:
                     pass
     if honorable:
         for _h in honorable:
-            _hk = str(_h.get("kind", "")).strip().lower()
-            if _hk not in ("stock", "etf"):
-                _hk = "stock"
             try:
-                _ev_by_kind[_hk].append(float(_h.get("est_next_1y")))
+                _ev_signed.append(float(_h.get("est_next_1y")))
             except Exception:
                 pass
-    REF_EV = {}
-    for _kind, _vals in _ev_by_kind.items():
-        _pos = [v for v in _vals if v > 0]
-        _neg = [-v for v in _vals if v < 0]
-        REF_EV[_kind] = (EV_BAR_STRETCH * max(_pos) if _pos else 0.10,
-                         EV_BAR_STRETCH * max(_neg) if _neg else 0.10)
+    _pos = [v for v in _ev_signed if v > 0]
+    _neg = [-v for v in _ev_signed if v < 0]
+    REF_EV_POS = EV_BAR_STRETCH * max(_pos) if _pos else 0.10
+    REF_EV_NEG = EV_BAR_STRETCH * max(_neg) if _neg else 0.10
 
-    def bar(val, gold=False, kind="stock"):
+    def bar(val, gold=False):
         try:
             v = float(val)
         except Exception:
             return ""
         if gold:
-            _pos_ref, _neg_ref = REF_EV.get(kind, REF_EV["stock"])
-            ref = _neg_ref if v < 0 else _pos_ref
+            ref = REF_EV_NEG if v < 0 else REF_EV_POS
         else:
             ref = REF_1Y
         w = max(2, min(100, abs(v) / ref * 100))
@@ -2872,7 +2869,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
-  <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True, kind=_kk)}</div>
+  <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
   {_blurb_html}
@@ -3084,7 +3081,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
   <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
-  <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True, kind=_hk)}</div>
+  <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
 {_hblurb_html}</div>""")
