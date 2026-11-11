@@ -1435,6 +1435,12 @@ RESEARCH_SCORE_W = {"dividend_up": 0.499, "buyback": 0.172,
                     "beat_streak": 0.081, "big_acquisition": -0.253}
 _EV_MODE = "legacy"
 
+# THEME RECORDING (2026-11-10): category -> theme entry, populated from
+# the research store's "themes" block by _adapt_research_store_outputs
+# whenever a store is adapted. Recording only: frame rows stamp these
+# onto ETF rows; no EV, gate, or rating code reads them.
+_THEME_FACTS = {}
+
 
 def _facts_of(row):
     """Normalized 14-fact dict for a row, or None when facts were not
@@ -1462,6 +1468,31 @@ def _facts_of(row):
         return normalize_facts(nf)
     except Exception:
         return nf if isinstance(nf, dict) else None
+
+
+def _theme_entry_of(r):
+    """The stored theme entry for this row's category, or None. ETF
+    rows only; the category is the Morningstar category the row
+    carries in its 'sector' field."""
+    if str(r.get("kind", "")) != "etf":
+        return None
+    entry = _THEME_FACTS.get(str(r.get("sector") or ""))
+    return entry if isinstance(entry, dict) else None
+
+
+def _theme_facts_of(r):
+    """The coded theme facts for this ETF row's category, or None
+    (stocks, unknown categories, uncoded themes)."""
+    entry = _theme_entry_of(r)
+    if entry is None:
+        return None
+    facts = entry.get("facts")
+    return facts if isinstance(facts, dict) else None
+
+
+def _theme_coded_date_of(r):
+    entry = _theme_entry_of(r)
+    return entry.get("coded_date") if entry is not None else None
 
 
 def _fact_components(facts, dep_used):
@@ -3937,6 +3968,13 @@ def _frame_row(r, outcome, reason):
         "dep_override": bool(r.get("dep_override") or False),
         "ev_mode": _EV_MODE,
         "facts": _facts_of(r),
+        # THEME RECORDING (2026-11-10): this ETF row's category theme
+        # facts, stamped for the audit's live record (the February
+        # 2027 audit judges them; sunset if nothing graduates).
+        # Nothing computes with these; None for stocks and for
+        # categories with no coding in the store.
+        "theme_facts": _theme_facts_of(r),
+        "theme_coded_date": _theme_coded_date_of(r),
         "offense_score": (_offense_score_of(r)
                           if str(r.get("kind", "")) == "stock" else None),
         "dep": dep_raw,
@@ -5182,6 +5220,9 @@ def _adapt_research_store_outputs(raw, what, flow=None):
         from research_store import adapt_if_store
     except ImportError:
         return raw
+    global _THEME_FACTS
+    if isinstance(raw, dict) and isinstance(raw.get("themes"), dict):
+        _THEME_FACTS = raw["themes"]
     adapted = adapt_if_store(raw, flow)
     if adapted is not raw:
         log(f"{what}: unified research_store.json detected "

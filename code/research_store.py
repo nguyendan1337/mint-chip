@@ -66,7 +66,8 @@ def _today_str():
 def blank_store():
     return {"meta": {"version": STORE_VERSION, "updated": _today_str()},
             "tickers": {},
-            "worlds": {}}
+            "worlds": {},
+            "themes": {}}
 
 
 def is_store(obj):
@@ -260,6 +261,75 @@ def get_world(store, flow):
     return entry.get("world")
 
 
+# ---------------------------------------------------------------------
+# Theme layer (2026-11-10, record-only hybrid, Dan-approved): checkable
+# facts coded per ETF category (the Morningstar category), shared across
+# flows, next to the world layer. RECORDING ONLY: nothing in the EV
+# formula, the gates, or the ratings reads themes; Phase B stamps them
+# onto ETF frame rows so a future audit can judge them on the live
+# record. Sunset: judged at the February 2027 audit against the same
+# graduation standards as the 2026-11-10 studies; if no theme fact has
+# graduated by then, recording stops.
+
+THEME_SIGNED_KEYS = ("theme_flows", "earnings_revisions",
+                     "policy_event", "industry_shock")
+THEME_FACT_KEYS = THEME_SIGNED_KEYS + ("theme_hype",)
+
+
+def normalize_theme_facts(facts):
+    """Clamp a theme-facts dict to the study rubric: the four signed
+    facts in {-1, 0, 1}, theme_hype in {0, 1}, missing keys default to
+    0. Mirrors llm_research.normalize_facts for stock facts."""
+    src = facts if isinstance(facts, dict) else {}
+    out = {}
+    for k in THEME_SIGNED_KEYS:
+        try:
+            v = int(src.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        out[k] = max(-1, min(1, v))
+    try:
+        h = int(src.get("theme_hype") or 0)
+    except (TypeError, ValueError):
+        h = 0
+    out["theme_hype"] = 1 if h else 0
+    return out
+
+
+def put_theme(store, category, theme_dict, by):
+    """Store one category's coded theme facts. Overwrites
+    unconditionally (the writer has the latest coding in hand), like
+    put_world. Facts are normalized on the way in. Returns True."""
+    payload = dict(theme_dict or {})
+    store.setdefault("themes", {})[str(category)] = {
+        "facts": normalize_theme_facts(payload.get("facts")),
+        "facts_evidence": payload.get("facts_evidence") or {},
+        "coded_date": payload.get("coded_date") or _today_str(),
+        "news_checked_through": payload.get("news_checked_through"),
+        "by": by,
+    }
+    return True
+
+
+def get_theme(store, category):
+    """Return the stored theme entry for CATEGORY, or None if absent."""
+    if not category:
+        return None
+    return (store.get("themes") or {}).get(str(category))
+
+
+def is_theme_fresh(entry, today_str):
+    """Fresh iff coded_date is within the last 7 days (inclusive) —
+    the same freshness rule assessments use."""
+    try:
+        d0 = datetime.strptime(str((entry or {}).get("coded_date")
+                                   or ""), "%Y-%m-%d").date()
+        d1 = datetime.strptime(str(today_str), "%Y-%m-%d").date()
+        return 0 <= (d1 - d0).days <= 7
+    except (ValueError, TypeError):
+        return False
+
+
 def _world_written_date(data):
     """Provenance date for a migrated world layer: the max assessed_date
     among the file's stock assessments; if none are stamped, fall back to
@@ -387,6 +457,16 @@ def _parse_args(argv):
     g.add_argument("--flow", required=True,
                    choices=[BY_DAILY, BY_WATCHLIST])
 
+    g = sub.add_parser("put-theme", help="store a category's theme facts")
+    g.add_argument("category")
+    g.add_argument("--json", required=True, help="theme JSON object")
+    g.add_argument("--by", required=True,
+                   choices=[BY_DAILY, BY_WATCHLIST],
+                   help="which flow produced the coding")
+
+    g = sub.add_parser("get-theme", help="print a category's theme entry")
+    g.add_argument("category")
+
     g = sub.add_parser("migrate", help="merge legacy files into a store")
     g.add_argument("--llm", default="llm_outputs.json")
     g.add_argument("--watchlist", default="watchlist_outputs.json")
@@ -437,6 +517,28 @@ def main(argv=None):
             put_world(store, args.flow, payload)
             save_store(store, args.store)
         print(json.dumps({"flow": args.flow, "stored": True}))
+        return 0
+
+    if args.cmd == "get-theme":
+        store = load_store(args.store)
+        t = get_theme(store, args.category)
+        print(json.dumps(t, indent=1) if t is not None else "null")
+        return 0 if t is not None else 1
+
+    if args.cmd == "put-theme":
+        try:
+            payload = json.loads(args.json)
+        except json.JSONDecodeError as e:
+            print(f"bad --json: {e}", file=sys.stderr)
+            return 2
+        if not isinstance(payload, dict):
+            print("--json must be a JSON object", file=sys.stderr)
+            return 2
+        with locked_store(args.store):
+            store = load_store(args.store)
+            put_theme(store, args.category, payload, args.by)
+            save_store(store, args.store)
+        print(json.dumps({"category": args.category, "stored": True}))
         return 0
 
     if args.cmd == "get-assessment":
