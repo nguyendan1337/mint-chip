@@ -1169,6 +1169,7 @@ def est_parts(row, dep, cont, conf=1.0):
     _f4_buy = None
     _exec_only = None
     conf_adj = conf
+    conf_used = conf
     if not is_etf:
         _facts = _facts_of(row)
         try:
@@ -1200,7 +1201,10 @@ def est_parts(row, dep, cont, conf=1.0):
         # est_v2 for ETFs = the flat form; effective in live mode via
         # the same switch as stocks. dep keeps its gate, tier, veto and
         # ratings jobs untouched.
-        conf_adj = 0.5 + 0.5 * conf
+        # ETF CONFIDENCE PIN (2026-11-11; see ETF_CONF_PIN): est_v2
+        # uses the pinned 0.65 for every fund, not the assessed conf.
+        conf_used = ETF_CONF_PIN
+        conf_adj = 0.5 + 0.5 * conf_used
         est_v2 = conf_adj * (1 + 0.25 * char) * base_rate
     est_legacy = est
     if _EV_MODE == "live" and est_v2 is not None:
@@ -1224,6 +1228,7 @@ def est_parts(row, dep, cont, conf=1.0):
             "exec_only": _exec_only,
             "exec_evidence": (str(row.get("exec_evidence") or "")
                               if not is_etf else ""),
+            "conf_used": conf_used,
             "conf_adj": conf_adj, "ev_mode": _EV_MODE}
 
 
@@ -1428,6 +1433,19 @@ EV_BASE_ETF = 0.0620
 #    pre-registered adoption rule (this shipped state is what runs).
 EV_GAMMA_STOCK = 0.0
 EV_GAMMA_ETF = 0.0177
+# 7b) ETF CONFIDENCE PIN (2026-11-11, Dan approved; FUND RESEARCH TRIM):
+#    fund confidence is pinned at a flat 0.65 inside the ETF v2 score.
+#    Evidence (etf_research_2026-11-10 + the overnight stage audit):
+#    researcher confidence for FUNDS carries no 1y return signal, and
+#    high-confidence funds blew up MORE often than low-confidence ones
+#    (57.1% vs 43.5%) — yet as the only judgment inside the flat ETF
+#    form it moved every fund's score. The pin removes that noise
+#    term; fund ordering now comes from character (the composure
+#    z-sum) alone. Research writes 0.65 for funds so the stored
+#    record matches the computation; frames record both the assessed
+#    "confidence" and the "conf_used" the EV actually used, mirroring
+#    the dep/dep_used pair. Judged by the Nov 30 audit (item 16(c)).
+ETF_CONF_PIN = 0.65
 # 8) RESEARCH REDESIGN — FACT-BASED EV, STOCKS ONLY (approved by Dan
 #    2026-11-10 after the research_backtest + research_redesign +
 #    research_ultimate studies of 2026-11-10 and the verification
@@ -1571,6 +1589,16 @@ _ETF_STYLEBOX_THEMES = {
     "Mid-Cap Growth": "Mid-cap",
     "Small Blend": "Small-cap", "Small Value": "Small-cap",
     "Small Growth": "Small-cap",
+    # DERIVATIVE INCOME MERGE (2026-11-11, Dan's directive): the
+    # covered-call / option-overlay funds in this category hold broad
+    # large-cap equity under the overlay, so for the theme cap they
+    # ARE the Large-cap theme — left separate, the slate could stack
+    # two of them on top of two large-cap funds, four slots riding
+    # one underlying exposure. The raw category still records as
+    # "Derivative Income" on every row; only the theme changes. The
+    # Nov 30 audit verifies no swept-in fund lacks broad large-cap
+    # equity as its underlying.
+    "Derivative Income": "Large-cap",
 }
 
 
@@ -3122,8 +3150,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         about_html = ""
 
     if honorable:
-        hm_rows = []
-        for i, h in enumerate(honorable, 1):
+        def _hm_row(i, h):
             _hk = str(h.get("kind", "")).strip().lower()
             if _hk not in ("stock", "etf"):
                 _hk = "stock"
@@ -3146,7 +3173,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                     f'<div class="blurb"><div class="mc-what">'
                     f'{_html.escape(_hb[1])}</div>'
                     f'<div class="mc-why">{_html.escape(_hb[2])}</div></div>')
-            hm_rows.append(f"""
+            return f"""
 <div class="row hm k-{_hk}{_extra}{_hhasb}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
@@ -3157,20 +3184,44 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
-{_hblurb_html}</div>""")
+{_hblurb_html}</div>"""
+
+        def _hm_group(rows, title, plid, toggle_id, ev_word):
+            if not rows:
+                return ""
+            _body = "\n".join(_hm_row(i, h)
+                              for i, h in enumerate(rows, 1))
+            _toggle = (
+                f'<div class="hm-more"><button class="sbtn hm-toggle" '
+                f'id="{toggle_id}" data-pl="{plid}" '
+                f'data-n="{len(rows)}">Show all {len(rows)} \u2193</button></div>\n'
+                if len(rows) > 5 else "")
+            return (
+                f'<h3 class="hm-sub">{title}</h3>\n'
+                f'<div class="sortctl" data-pl="{plid}"><span>Sort by:</span> '
+                '<button class="sbtn" data-k="r1y">1-year return</button>'
+                f'<button class="sbtn on" data-k="ev">{ev_word}</button></div>\n'
+                '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
+                f'<div>1-year return</div><div>{ev_word}</div>'
+                '<div>Confidence</div><div>Why not picked</div></div>\n'
+                f'<div class="picklist" id="{plid}">\n'
+                + _body + "\n</div>\n" + _toggle)
+
+        # HM SPLIT RENDER (2026-11-11): two labeled groups matching
+        # the per-kind selection in honorable_mentions() — stocks
+        # under their expected-return label, funds under the ETF
+        # score. The stocks list keeps the pl2 id the page's JS has
+        # always used; the funds list is pl3 with its own toggle.
+        _hm_stocks = [h for h in honorable
+                      if str(h.get("kind", "")).strip().lower() != "etf"]
+        _hm_etfs = [h for h in honorable
+                    if str(h.get("kind", "")).strip().lower() == "etf"]
         hm_html = (
             '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
-            '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
-            '<button class="sbtn" data-k="r1y">1-year return</button>'
-            '<button class="sbtn on" data-k="ev">Expected return / ETF score</button></div>\n'
-            '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
-            '<div>1-year return</div><div>Expected return / ETF score</div>'
-            '<div>Confidence</div><div>Why not picked</div></div>\n'
-            '<div class="picklist" id="pl2">\n'
-            + "\n".join(hm_rows) + "\n</div>\n"
-            + (f'<div class="hm-more"><button class="sbtn" id="hm-toggle" '
-                f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\n'
-                if len(honorable) > 5 else ""))
+            + _hm_group(_hm_stocks, "Stocks, by expected return",
+                        "pl2", "hm-toggle", "Expected return")
+            + _hm_group(_hm_etfs, "Funds, by ETF score",
+                        "pl3", "hm-toggle-3", "ETF score"))
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -3300,6 +3351,9 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 .row.hm {{ opacity: 0.88; }}
 .hm-extra {{ display: none; }}
 #pl2.showall .hm-extra {{ display: grid; }}
+#pl3.showall .hm-extra {{ display: grid; }}
+.hm-sub {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; margin: 24px 0 10px; color: #d9f2e2; }}
 .hm-more {{ margin: 4px 0 6px; }}
 .row.k-stock .tick {{ color: #7dd3fc; }}
 .row.k-etf .tick {{ color: #c4b5fd; }}
@@ -3420,29 +3474,31 @@ document.querySelectorAll('.sortctl').forEach(function(ctl){{
         var rk = r.querySelector('.rank');
         if(rk) rk.textContent = i + 1;
       }});
-      if(pl.id === 'pl2'){{ applyHmLimit(); }}
+      if(pl.id === 'pl2' || pl.id === 'pl3'){{ applyHmLimit(); }}
     }});
   }});
 }});
 function applyHmLimit(){{
-  var pl2 = document.getElementById('pl2');
-  if(!pl2) return;
-  var open = pl2.classList.contains('showall');
-  Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){{
-    r.classList.toggle('hm-extra', !open && i >= 5);
+  ['pl2', 'pl3'].forEach(function(pid){{
+    var pl = document.getElementById(pid);
+    if(!pl) return;
+    var open = pl.classList.contains('showall');
+    Array.prototype.forEach.call(pl.querySelectorAll('.row'), function(r, i){{
+      r.classList.toggle('hm-extra', !open && i >= 5);
+    }});
   }});
 }}
 applyHmLimit();
-var hmt = document.getElementById('hm-toggle');
-if(hmt){{
-  hmt.addEventListener('click', function(){{
-    var pl2 = document.getElementById('pl2');
-    var open = pl2.classList.toggle('showall');
+document.querySelectorAll('.hm-toggle').forEach(function(btn){{
+  btn.addEventListener('click', function(){{
+    var pl = document.getElementById(btn.getAttribute('data-pl'));
+    if(!pl) return;
+    var open = pl.classList.toggle('showall');
     applyHmLimit();
-    hmt.textContent = open ? 'Show fewer \u2191'
-      : 'Show all ' + hmt.getAttribute('data-n') + ' \u2193';
+    btn.textContent = open ? 'Show fewer \u2191'
+      : 'Show all ' + btn.getAttribute('data-n') + ' \u2193';
   }});
-}}
+}});
 // Expandable pick rows: tap a row to reveal its blurb (delegated, so it
 // survives re-sorting). Only rows with a story get the affordance.
 document.querySelectorAll('.picklist').forEach(function(pl){{
@@ -4036,10 +4092,14 @@ def enforce_etf_tier2_cap(selected, pool, cap=2, min_score=0.0,
     return sel
 
 
-def honorable_mentions(ranked, final, args, top_k=30):
+def honorable_mentions(ranked, final, args, top_k=15):
     """Near-miss table: researched names that cleared the EV floor but didn't
     make the chart — alternatives worth a look, each with the reason it
-    missed (overlap, cap, or final-score order). Sorted by EV, descending."""
+    missed (overlap, cap, or final-score order). Selected PER KIND
+    (2026-11-11 split): the top top_k stocks by expected return and
+    the top top_k funds by ETF score, stocks first, each sorted by
+    EV descending — one combined list under the redesigned scales
+    was all stocks, so no fund could ever appear."""
     if ranked is None or ranked.empty or final is None:
         return []
     if "est_next_1y" not in ranked.columns:
@@ -4073,9 +4133,14 @@ def honorable_mentions(ranked, final, args, top_k=30):
     for _, r in final.iterrows():
         k = (str(r.get("kind", "")), _cap_key_of(r))
         sec_counts[k] = sec_counts.get(k, 0) + 1
+    _by_ev = sorted(contenders, key=lambda r: float(r["est_next_1y"]),
+                    reverse=True)
+    _selected = ([r for r in _by_ev
+                  if str(r.get("kind", "stock")) != "etf"][:top_k]
+                 + [r for r in _by_ev
+                    if str(r.get("kind", "stock")) == "etf"][:top_k])
     out = []
-    for r in sorted(contenders, key=lambda r: float(r["est_next_1y"]),
-                    reverse=True)[:top_k]:
+    for r in _selected:
         t = str(r["ticker"])
         kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
         ckey = _cap_key_of(r)
@@ -4287,6 +4352,10 @@ def _frame_row(r, outcome, reason):
         "dep_capped": dep_capped,
         "continuation": _safe(r.get("llm_continuation")),
         "confidence": _safe(r.get("llm_confidence")),
+        # ETF CONF PIN (2026-11-11): the confidence the EV actually
+        # used — a flat 0.65 for ETFs, the assessed value for stocks —
+        # mirroring dep/dep_used so frames replay the pin exactly.
+        "conf_used": _safe(r.get("conf_used")),
         "character": _safe(r.get("character")),
         # Scorer z-components (2026-11-06): recorded so future scorer
         # variants are replayable from frames alone (the special audit
@@ -5027,6 +5096,7 @@ def add_research_columns(df, llm_path=True):
     # variant _EV_MODE makes effective (legacy unless live).
     sub["est_legacy"] = [p["est_legacy"] for p in _parts]
     sub["est_v2"] = [p["est_v2"] for p in _parts]
+    sub["conf_used"] = [p["conf_used"] for p in _parts]
     sub["fact_tilt"] = [p["fact_tilt"] for p in _parts]
     sub["research_score"] = [p["research_score"] for p in _parts]
     sub["no_signal"] = [p["no_signal"] for p in _parts]
