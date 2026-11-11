@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Mint (Chip)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root { color-scheme: dark;
+  --green: #4ade80; --green-deep: #22c55e; --gold: #ffd54f; --gold-deep: #f59e0b;
+  --red: #f87171; }
+body { font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  max-width: 980px; margin: 24px auto; padding: 0 16px 40px; color: #f2f5f1;
+  background:
+    radial-gradient(1000px 420px at 50% -8%, rgba(125,211,252,0.10), transparent 60%),
+    radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.14), transparent 60%),
+    radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.12), transparent 60%),
+    radial-gradient(600px 400px at 55% 45%, rgba(74,222,128,0.05), transparent 65%),
+    #070b09; background-attachment: fixed; }
+h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
+  color: #a7f3c7;
+  text-shadow: 0 2px 24px rgba(74,222,128,0.25); margin-bottom: 4px; }
+h1 span.chip { -webkit-text-fill-color: var(--gold); color: var(--gold); }
+.tagline { font-size: 15px; font-style: italic; letter-spacing: 0.06em;
+  color: var(--gold); margin: 2px 0 2px; text-shadow: 0 0 14px rgba(255,213,79,0.3); }
+.subhead { font-size: 16px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }
+h1 span { -webkit-text-fill-color: #8a938a; color: #8a938a; }
+h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; margin: 30px 0 12px; color: var(--green);
+  text-shadow: 0 0 18px rgba(74,222,128,0.35); }
+.row { display: grid; grid-template-columns: 290px 160px 1fr 1fr 80px 70px;
+  gap: 10px; align-items: center; padding: 12px 16px; margin-bottom: 10px;
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }
+.row::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
+    var(--sheen2, rgba(255,255,255,0.03)) 30%, transparent 58%); }
+.row.head::before { display: none; }
+.row.k-stock { --sheen: rgba(125,211,252,0.22); --sheen2: rgba(125,211,252,0.07); }
+.row.k-etf { --sheen: rgba(196,181,253,0.22); --sheen2: rgba(196,181,253,0.07); }
+.row.head { background: none; border: none; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
+  color: #93a093; padding: 4px 16px 8px; margin-bottom: 2px; }
+.row > div { min-width: 0; overflow: hidden; }
+.row.head > div { overflow: visible; }
+@media (hover: hover) {
+  .row { transition: border-color 0.25s ease, box-shadow 0.25s ease; }
+  .row:hover { border-color: rgba(255,255,255,0.22);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }
+}
+.id { display: flex; align-items: center; min-width: 0; }
+.id .nm { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.id .rank, .id .tick, .id .rchip, .id .chev { flex: 0 0 auto; }
+.sec { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.id .rank { display:inline-block; width:22px; color: var(--gold); font-weight: 600; }
+.id .tick { font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }
+.id .nm { color:#a8b3a8; font-size: 16px; }
+.sec { font-size: 16px; color:#a8b3a8; }
+.lbl { font-size: 16px; margin-bottom: 4px; color: #93a093; }
+.lbl.r1y { color: var(--green); font-weight: 600; }
+.lbl.est { color: var(--gold); font-weight: 700; }
+.lbl.neg { color: var(--red) !important; }
+.track { background: rgba(255,255,255,0.07); height: 10px; border-radius: 6px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); overflow: hidden; }
+.bar { height: 10px; border-radius: 6px; position: relative; overflow: hidden; }
+.bar::after { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.14) 42%, rgba(255,255,255,0) 62%);
+  pointer-events: none; }
+.bar.pos { background: linear-gradient(90deg, var(--green-deep), var(--green));
+  box-shadow: 0 0 12px rgba(74,222,128,0.55); }
+.bar.est { background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  box-shadow: 0 0 12px rgba(255,213,79,0.55); }
+.bar.neg { background: linear-gradient(90deg, #dc2626, var(--red));
+  box-shadow: 0 0 12px rgba(248,113,113,0.5); }
+.stab { font-size: 16px; color:#a8b3a8; text-align: right; }
+.cf { font-size: 16px; font-weight: 600; text-align: right; color: var(--gold); }
+.nonus { display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
+  background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
+  border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+.note { position: relative; overflow: hidden; margin-top: 26px; font-size: 16px;
+  color: #9aa79a; line-height: 1.6; padding: 16px 20px;
+  background: rgba(255,255,255,0.025);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px rgba(0,0,0,0.38); }
+.note::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,213,79,0.16) 0%,
+    rgba(255,213,79,0.05) 30%, transparent 58%); }
+.note b { color: var(--gold); }
+.note p { margin: 0 0 13px; }
+.note p:last-child { margin-bottom: 0; }
+.note .stages-head { font-weight: 700; color: #cfd6cf;
+  margin-top: 18px; }
+.note .fineprint { font-size: 11px; color: #7d887d; }
+
+.tledger a { color: #9aa79a; font-size: 16px;
+  text-decoration: underline; text-underline-offset: 2px; }
+.sortctl { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+  font-size: 12px; color: #93a093; letter-spacing: 0.06em; }
+.sbtn { font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
+  color: #cfd6cf;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 999px;
+  padding: 4px 14px; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }
+.sbtn.on { color: #0a0f0c; font-weight: 700;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(0,0,0,0.14) 100%),
+    linear-gradient(90deg, var(--gold-deep), var(--gold));
+  border-color: rgba(255,213,79,0.8);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }
+.why { font-size: 16px; color: #a8b3a8; text-align: right; line-height: 1.4; }
+.row.hm { opacity: 0.88; }
+.hm-extra { display: none; }
+#pl2.showall .hm-extra { display: grid; }
+.hm-more { margin: 4px 0 6px; }
+.row.k-stock .tick { color: #7dd3fc; }
+.row.k-etf .tick { color: #c4b5fd; }
+.kchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.kchip.stock { color: #7dd3fc; background: rgba(125,211,252,0.12);
+  border: 1px solid rgba(125,211,252,0.35); }
+.kchip.etf { color: #c4b5fd; background: rgba(196,181,253,0.12);
+  border: 1px solid rgba(196,181,253,0.35); }
+.mc-sec { position: relative; overflow: hidden; margin-bottom: 10px;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }
+.mc-sec::before { content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.07) 0%, transparent 48%); }
+.mc-sec > summary { position: relative; cursor: pointer; padding: 13px 18px;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #cfd6cf;
+  list-style: none; }
+.mc-sec > summary::-webkit-details-marker { display: none; }
+.mc-sec > summary::before { content: "▸  "; color: var(--gold); }
+.mc-sec[open] > summary::before { content: "▾  "; }
+.mc-body { position: relative; padding: 0 18px 14px; font-size: 16px;
+  color: #a8b3a8; line-height: 1.65; }
+.mc-body p { margin: 0 0 12px; }
+.mc-item { margin: 12px 0; }
+.mc-tick { font-weight: 700; letter-spacing: 0.03em; }
+.mc-tick.stock { color: #7dd3fc; }
+.mc-tick.etf { color: #c4b5fd; }
+.note.mc-overview { font-size: 16px; margin-bottom: 14px; }
+.rchip { display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid; vertical-align: 2px; margin-right: 7px; }
+.rchip.buy { color: #4ade80; border-color: rgba(74,222,128,0.40);
+  background: rgba(74,222,128,0.10); }
+.row.has-blurb { cursor: pointer; }
+.row .blurb { display: none; grid-column: 1 / -1;
+  font-size: 16px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 8px; padding: 8px 4px 6px 34px; }
+.row.open .blurb { display: block; }
+.row .blurb .mc-what { margin-bottom: 5px; }
+.chev { display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
+  border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
+  margin-left: 9px; vertical-align: 1px;
+  transition: transform 0.18s ease, background 0.18s ease; }
+.row.open .chev { transform: rotate(90deg);
+  background: rgba(255,255,255,0.09); }
+.rchip.hold { color: #ffd54f; border-color: rgba(255,213,79,0.40);
+  background: rgba(255,213,79,0.10); }
+.rchip.sell { color: #f87171; border-color: rgba(248,113,113,0.40);
+  background: rgba(248,113,113,0.10); }
+.wl-blurb { margin: 14px 0; }
+.wl-rate-why { color: #8a938a; font-style: italic; }
+.navwrap { text-align: center; margin: 2px 0 14px; }
+a.navbtn { display: inline-block; font-size: 16px; letter-spacing: 0.05em;
+  font-weight: 600; color: #ffd54f; text-decoration: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.08);
+  border: 1px solid rgba(255,213,79,0.35); border-radius: 999px;
+  padding: 6px 18px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }
+a.navbtn:hover { background:
+    linear-gradient(180deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.14); }
+.mc-nm { color: #cfd6cf; font-weight: 600; }
+.mc-what { color: #8a938a; }
+.mc-why { color: #a8b3a8; }
+@media (max-width: 700px) {
+  h1 { font-size: 20px; }
+  .row { grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }
+  .row.head { display: none; }
+  .id, .sec { grid-column: 1 / -1; }
+  .cell::before, .cf::before, .stab::before {
+    content: attr(data-cap); display: block;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #93a093; margin-bottom: 3px; }
+  .cf, .stab { text-align: left; font-size: 16px; }
+}
+</style></head>
+<body><div style="background:#7c2d12;color:#fff;padding:14px 18px;font-family:system-ui,sans-serif;font-size:15px;line-height:1.45;border-bottom:3px solid #f59e0b"><strong>SHADOW REHEARSAL, Nov 10, 2026.</strong> Hypothetical picks under the redesigned fact-based formula, calculated alongside the official run. In this rehearsal, facts were coded for a subset of names only; the live shadow runs (Nov 11-13) code them for every researched stock. The official picks are on the <a href="index.html" style="color:#fcd34d">main page</a>.</div>
+<h1>Mint <span class="chip">(Chip)</span></h1>
+<div class="tagline">Straight from the Mint.</div>
+<div class="subhead">Top picks vs VGT (stocks) / VOO (ETFs), 2026-11-10 6:17pm PT</div>
+<div class="navwrap"><a class="navbtn" href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>
+<h2>Top 10 stocks (most confident)</h2>
+<div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
+
+<div class="row head">
+  <div># / Ticker / Name</div><div>Sector / Category</div>
+  <div>1-year return</div><div>Expected value</div>
+  <div>Confidence</div><div>Stability</div>
+</div>
+<div class="picklist" id="pl0">
+
+<div class="row k-stock" data-ev="0.15332769715532274" data-r1y="0.3646645914231843">
+  <div class="id"><span class="rank">1</span>
+    <span class="tick">CAH</span>
+    <span class="nm">Cardinal Health, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+36.5%</div><div class="track"><div class="bar pos" style="width:24.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+15.3%</div><div class="track"><div class="bar est" style="width:66.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">B</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.15314434691062168" data-r1y="0.24181668986376548">
+  <div class="id"><span class="rank">2</span>
+    <span class="tick">EHC</span>
+    <span class="nm">Encompass Health Corporation</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+24.2%</div><div class="track"><div class="bar pos" style="width:16.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+15.3%</div><div class="track"><div class="bar est" style="width:66.6%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.11268675300688125" data-r1y="0.44955331030606027">
+  <div class="id"><span class="rank">3</span>
+    <span class="tick">AIZ</span>
+    <span class="nm">Assurant, Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+45.0%</div><div class="track"><div class="bar pos" style="width:30.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.3%</div><div class="track"><div class="bar est" style="width:49.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.1116613933650732" data-r1y="0.25806358506893234">
+  <div class="id"><span class="rank">4</span>
+    <span class="tick">V</span>
+    <span class="nm">Visa Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+25.8%</div><div class="track"><div class="bar pos" style="width:17.2%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.2%</div><div class="track"><div class="bar est" style="width:48.6%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.1097919936442941" data-r1y="1.2009048988308781">
+  <div class="id"><span class="rank">5</span>
+    <span class="tick">CON</span>
+    <span class="nm">Concentra Group Holdings Parent, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+120.1%</div><div class="track"><div class="bar pos" style="width:80.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+11.0%</div><div class="track"><div class="bar est" style="width:47.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.10661998861733457" data-r1y="0.5977130877310652">
+  <div class="id"><span class="rank">6</span>
+    <span class="tick">IDT</span>
+    <span class="nm">IDT Corporation</span></div>
+  <div class="sec">Communication Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+59.8%</div><div class="track"><div class="bar pos" style="width:39.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+10.7%</div><div class="track"><div class="bar est" style="width:46.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.10504868575803523" data-r1y="0.9092847394585437">
+  <div class="id"><span class="rank">7</span>
+    <span class="tick">FTDR</span>
+    <span class="nm">Frontdoor, Inc.</span></div>
+  <div class="sec">Consumer Cyclical</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+90.9%</div><div class="track"><div class="bar pos" style="width:60.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+10.5%</div><div class="track"><div class="bar est" style="width:45.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">60%</div>
+  <div class="stab" data-cap="Stability">B</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.09420075023453305" data-r1y="0.3611593508876325">
+  <div class="id"><span class="rank">8</span>
+    <span class="tick">MSI</span>
+    <span class="nm">Motorola Solutions, Inc.</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+36.1%</div><div class="track"><div class="bar pos" style="width:24.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+9.4%</div><div class="track"><div class="bar est" style="width:41.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">80%</div>
+  <div class="stab" data-cap="Stability">B</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.08552533938582971" data-r1y="0.2146877338582731">
+  <div class="id"><span class="rank">9</span>
+    <span class="tick">VLTO</span>
+    <span class="nm">Veralto Corporation</span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+21.5%</div><div class="track"><div class="bar pos" style="width:14.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+8.6%</div><div class="track"><div class="bar est" style="width:37.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">B</div>
+  
+</div>
+
+<div class="row k-stock" data-ev="0.06637359642728295" data-r1y="0.6810277330833259">
+  <div class="id"><span class="rank">10</span>
+    <span class="tick">PK</span>
+    <span class="nm">Park Hotels &amp; Resorts Inc.</span></div>
+  <div class="sec">Real Estate</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+68.1%</div><div class="track"><div class="bar pos" style="width:45.4%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+6.6%</div><div class="track"><div class="bar est" style="width:28.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">60%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+</div>
+<h2>Top 10 ETFs (most confident)</h2>
+<div class="sortctl" data-pl="pl1"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
+
+<div class="row head">
+  <div># / Ticker / Name</div><div>Sector / Category</div>
+  <div>1-year return</div><div>Expected value</div>
+  <div>Confidence</div><div>Stability</div>
+</div>
+<div class="picklist" id="pl1">
+
+<div class="row k-etf" data-ev="0.05159382098457106" data-r1y="0.1827897121848996">
+  <div class="id"><span class="rank">1</span>
+    <span class="tick">RSP</span>
+    <span class="nm">Invesco S&amp;P 500 Equal Weight ETF</span></div>
+  <div class="sec">Large Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+18.3%</div><div class="track"><div class="bar pos" style="width:12.2%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.2%</div><div class="track"><div class="bar est" style="width:22.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.051179930597576695" data-r1y="0.2100332628560322">
+  <div class="id"><span class="rank">2</span>
+    <span class="tick">DGRO</span>
+    <span class="nm">iShares Core Dividend Growth ETF</span></div>
+  <div class="sec">Large Value</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+21.0%</div><div class="track"><div class="bar pos" style="width:14.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.1%</div><div class="track"><div class="bar est" style="width:22.3%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.05016894688784688" data-r1y="0.1586509481077618">
+  <div class="id"><span class="rank">3</span>
+    <span class="tick">VOOV</span>
+    <span class="nm">Vanguard S&amp;P 500 Value Index Fund ETF </span></div>
+  <div class="sec">Large Value</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+15.9%</div><div class="track"><div class="bar pos" style="width:10.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+5.0%</div><div class="track"><div class="bar est" style="width:21.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.047235774257639175" data-r1y="0.394704929288489">
+  <div class="id"><span class="rank">4</span>
+    <span class="tick">VFLO</span>
+    <span class="nm">Victoryshares Free Cash Flow ETF</span></div>
+  <div class="sec">Mid-Cap Value</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+39.5%</div><div class="track"><div class="bar pos" style="width:26.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.7%</div><div class="track"><div class="bar est" style="width:20.5%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.0458193969565016" data-r1y="0.16597109997051018">
+  <div class="id"><span class="rank">5</span>
+    <span class="tick">MOAT</span>
+    <span class="nm">VanEck Morningstar Wide Moat ETF</span></div>
+  <div class="sec">Large Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+16.6%</div><div class="track"><div class="bar pos" style="width:11.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.6%</div><div class="track"><div class="bar est" style="width:19.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.044897464149257396" data-r1y="0.2103466199385864">
+  <div class="id"><span class="rank">6</span>
+    <span class="tick">SPYD</span>
+    <span class="nm">State Street SPDR Portfolio S&amp;P 500 Hi</span></div>
+  <div class="sec">Mid-Cap Value</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+21.0%</div><div class="track"><div class="bar pos" style="width:14.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.5%</div><div class="track"><div class="bar est" style="width:19.5%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.04313503755363434" data-r1y="0.18110425932268415">
+  <div class="id"><span class="rank">7</span>
+    <span class="tick">XMHQ</span>
+    <span class="nm">Invesco S&amp;P MidCap Quality ETF</span></div>
+  <div class="sec">Mid-Cap Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+18.1%</div><div class="track"><div class="bar pos" style="width:12.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.3%</div><div class="track"><div class="bar est" style="width:18.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.04276760333262282" data-r1y="0.16136183111088043">
+  <div class="id"><span class="rank">8</span>
+    <span class="tick">IWR</span>
+    <span class="nm">iShares Russell Mid-Cap ETF</span></div>
+  <div class="sec">Mid-Cap Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+16.1%</div><div class="track"><div class="bar pos" style="width:10.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.3%</div><div class="track"><div class="bar est" style="width:18.6%"></div></div></div>
+  <div class="cf" data-cap="Confidence">64%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.04184886211458989" data-r1y="0.16045957205328132">
+  <div class="id"><span class="rank">9</span>
+    <span class="tick">IWM</span>
+    <span class="nm">iShares Russell 2000 ETF</span></div>
+  <div class="sec">Small Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+16.0%</div><div class="track"><div class="bar pos" style="width:10.7%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.2%</div><div class="track"><div class="bar est" style="width:18.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+
+<div class="row k-etf" data-ev="0.04168384022978926" data-r1y="0.1956066794141571">
+  <div class="id"><span class="rank">10</span>
+    <span class="tick">SCHA</span>
+    <span class="nm">Schwab U.S. Small-Cap ETF</span></div>
+  <div class="sec">Small Blend</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+19.6%</div><div class="track"><div class="bar pos" style="width:13.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+4.2%</div><div class="track"><div class="bar est" style="width:18.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="stab" data-cap="Stability">A</div>
+  
+</div>
+</div>
+
+
+
+<h2>Honorable mentions: cleared the bar, didn’t make the cut</h2>
+<div class="sortctl" data-pl="pl2"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected value</button></div>
+<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div><div>1-year return</div><div>Expected value</div><div>Confidence</div><div>Why not picked</div></div>
+<div class="picklist" id="pl2">
+
+<div class="row hm k-stock" data-ev="0.07899887209659275" data-r1y="0.2696045362554014">
+  <div class="id"><span class="rank">1</span>
+    <span class="tick">AAPL</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Apple Inc.</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+27.0%</div><div class="track"><div class="bar pos" style="width:18.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.9%</div><div class="track"><div class="bar est" style="width:34.3%"></div></div></div>
+  <div class="cf" data-cap="Confidence">80%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -2.2% &lt; 0, dep 0.30 &gt;= 0.30)</div>
+</div>
+
+<div class="row hm k-stock" data-ev="0.0762875718702588" data-r1y="0.8328497250561855">
+  <div class="id"><span class="rank">2</span>
+    <span class="tick">CXW</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">CoreCivic, Inc.</span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+83.3%</div><div class="track"><div class="bar pos" style="width:55.5%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.6%</div><div class="track"><div class="bar est" style="width:33.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">55%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock" data-ev="0.07614205670070519" data-r1y="0.3460033123438464">
+  <div class="id"><span class="rank">3</span>
+    <span class="tick">TPR</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Tapestry, Inc.</span></div>
+  <div class="sec">Consumer Cyclical</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+34.6%</div><div class="track"><div class="bar pos" style="width:23.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.6%</div><div class="track"><div class="bar est" style="width:33.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock" data-ev="0.07577097280888151" data-r1y="1.6967683576564783">
+  <div class="id"><span class="rank">4</span>
+    <span class="tick">RNG</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">RingCentral, Inc.</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+169.7%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.6%</div><div class="track"><div class="bar est" style="width:32.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">volatility budget (vol60 0.472 &gt; 0.358, the 95th percentile of the eligible set) — Variant A pain budget</div>
+</div>
+
+<div class="row hm k-stock" data-ev="0.07518544773197623" data-r1y="0.26365723593955903">
+  <div class="id"><span class="rank">5</span>
+    <span class="tick">CL</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Colgate-Palmolive Company</span></div>
+  <div class="sec">Consumer Defensive</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+26.4%</div><div class="track"><div class="bar pos" style="width:17.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:32.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 30 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07517762244000825" data-r1y="0.45867783330974565">
+  <div class="id"><span class="rank">6</span>
+    <span class="tick">LLY</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Eli Lilly and Company</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+45.9%</div><div class="track"><div class="bar pos" style="width:30.6%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:32.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (dep 0.30 &gt;= 0.30)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07470547658488892" data-r1y="0.3266314189905255">
+  <div class="id"><span class="rank">7</span>
+    <span class="tick">SPG</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Simon Property Group, Inc.</span></div>
+  <div class="sec">Real Estate</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+32.7%</div><div class="track"><div class="bar pos" style="width:21.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:32.5%"></div></div></div>
+  <div class="cf" data-cap="Confidence">72%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -0.9% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.0745450849097799" data-r1y="0.4705647311393253">
+  <div class="id"><span class="rank">8</span>
+    <span class="tick">MANH</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Manhattan Associates, Inc.</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+47.1%</div><div class="track"><div class="bar pos" style="width:31.4%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.5%</div><div class="track"><div class="bar est" style="width:32.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07447786440548854" data-r1y="0.4684159046065639">
+  <div class="id"><span class="rank">9</span>
+    <span class="tick">HALO</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Halozyme Therapeutics, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+46.8%</div><div class="track"><div class="bar pos" style="width:31.2%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (dep 0.35 &gt;= 0.30)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07443295090731702" data-r1y="0.6421592038803052">
+  <div class="id"><span class="rank">10</span>
+    <span class="tick">EXEL</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Exelixis, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+64.2%</div><div class="track"><div class="bar pos" style="width:42.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">risk-flag gate (2 strikes: implied upside -13%, dep 0.45)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07443052770979512" data-r1y="0.8326805546384357">
+  <div class="id"><span class="rank">11</span>
+    <span class="tick">PSX</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Phillips 66</span></div>
+  <div class="sec">Energy</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+83.3%</div><div class="track"><div class="bar pos" style="width:55.5%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.4%"></div></div></div>
+  <div class="cf" data-cap="Confidence">60%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07437166988779291" data-r1y="0.5695076031521888">
+  <div class="id"><span class="rank">12</span>
+    <span class="tick">GWW</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">W.W. Grainger, Inc.</span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+57.0%</div><div class="track"><div class="bar pos" style="width:38.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.3%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -2.6% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07426844016938429" data-r1y="0.43184061866625134">
+  <div class="id"><span class="rank">13</span>
+    <span class="tick">CNO</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">CNO Financial Group, Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+43.2%</div><div class="track"><div class="bar pos" style="width:28.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.3%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -1.8% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07394923230359444" data-r1y="0.389206988640173">
+  <div class="id"><span class="rank">14</span>
+    <span class="tick">KO</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">The Coca-Cola Company</span></div>
+  <div class="sec">Consumer Defensive</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+38.9%</div><div class="track"><div class="bar pos" style="width:25.9%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.2%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 22 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07378099511587623" data-r1y="0.4221141156144417">
+  <div class="id"><span class="rank">15</span>
+    <span class="tick">TRV</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">The Travelers Companies, Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+42.2%</div><div class="track"><div class="bar pos" style="width:28.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.1%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -6.0% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07363417280518184" data-r1y="0.4149524930242596">
+  <div class="id"><span class="rank">16</span>
+    <span class="tick">COKE</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Coca-Cola Consolidated, Inc.</span></div>
+  <div class="sec">Consumer Defensive</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+41.5%</div><div class="track"><div class="bar pos" style="width:27.7%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">offense rank 17 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07355057055938868" data-r1y="0.40952906217272345">
+  <div class="id"><span class="rank">17</span>
+    <span class="tick">THG</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">The Hanover Insurance Group, Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+41.0%</div><div class="track"><div class="bar pos" style="width:27.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -1.7% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07353742359944247" data-r1y="3.8134680177544826">
+  <div class="id"><span class="rank">18</span>
+    <span class="tick">CDNA</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">CareDx, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+381.3%</div><div class="track"><div class="bar pos" style="width:100.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.4%</div><div class="track"><div class="bar est" style="width:32.0%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07342458375173934" data-r1y="0.5243451932713754">
+  <div class="id"><span class="rank">19</span>
+    <span class="tick">JXN</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Jackson Financial Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+52.4%</div><div class="track"><div class="bar pos" style="width:35.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">offense rank 25 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07341692102748262" data-r1y="0.4921138511665488">
+  <div class="id"><span class="rank">20</span>
+    <span class="tick">WST</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">West Pharmaceutical Services, Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+49.2%</div><div class="track"><div class="bar pos" style="width:32.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">Healthcare cap full</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07334207700797343" data-r1y="0.47936330096946134">
+  <div class="id"><span class="rank">21</span>
+    <span class="tick">MAR</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Marriott International, Inc.</span></div>
+  <div class="sec">Consumer Cyclical</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+47.9%</div><div class="track"><div class="bar pos" style="width:32.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -2.3% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07333842568814246" data-r1y="0.35738930600460495">
+  <div class="id"><span class="rank">22</span>
+    <span class="tick">ETSY</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Etsy, Inc.</span></div>
+  <div class="sec">Consumer Cyclical</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+35.7%</div><div class="track"><div class="bar pos" style="width:23.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">65%</div>
+  <div class="why" data-cap="Why not picked">stability C, below the B-or-better pick bar</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07332204044607951" data-r1y="0.3906837642274632">
+  <div class="id"><span class="rank">23</span>
+    <span class="tick">HLT</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Hilton Worldwide Holdings Inc.</span></div>
+  <div class="sec">Consumer Cyclical</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+39.1%</div><div class="track"><div class="bar pos" style="width:26.0%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.9%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -2.7% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07320481928835737" data-r1y="0.39164271439457266">
+  <div class="id"><span class="rank">24</span>
+    <span class="tick">DGX</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Quest Diagnostics Incorporated</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+39.2%</div><div class="track"><div class="bar pos" style="width:26.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -0.5% &lt; 0)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07317641754502033" data-r1y="1.227067854840957">
+  <div class="id"><span class="rank">25</span>
+    <span class="tick">AAMI</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Acadian Asset Management Inc.</span></div>
+  <div class="sec">Financial Services</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+122.7%</div><div class="track"><div class="bar pos" style="width:81.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">offense rank 19 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07313284570880467" data-r1y="0.4667136826657452">
+  <div class="id"><span class="rank">26</span>
+    <span class="tick">WAB</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Westinghouse Air Brake Technologies Co</span></div>
+  <div class="sec">Industrials</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+46.7%</div><div class="track"><div class="bar pos" style="width:31.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 33 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07303419556780587" data-r1y="0.5813121182612531">
+  <div class="id"><span class="rank">27</span>
+    <span class="tick">CPAY</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Corpay, Inc.</span></div>
+  <div class="sec">Technology</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+58.1%</div><div class="track"><div class="bar pos" style="width:38.8%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.8%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 15 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07287065638306367" data-r1y="0.5292859194623323">
+  <div class="id"><span class="rank">28</span>
+    <span class="tick">RHP</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Ryman Hospitality Properties, Inc.</span></div>
+  <div class="sec">Real Estate</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+52.9%</div><div class="track"><div class="bar pos" style="width:35.3%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.7%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 16 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07255657691995096" data-r1y="0.4127214139653226">
+  <div class="id"><span class="rank">29</span>
+    <span class="tick">AMGN</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Amgen Inc.</span></div>
+  <div class="sec">Healthcare</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+41.3%</div><div class="track"><div class="bar pos" style="width:27.5%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.3%</div><div class="track"><div class="bar est" style="width:31.5%"></div></div></div>
+  <div class="cf" data-cap="Confidence">70%</div>
+  <div class="why" data-cap="Why not picked">stock eligibility gate (implied upside -7.6% &lt; 0, dep 0.30 &gt;= 0.30)</div>
+</div>
+
+<div class="row hm k-stock hm-extra" data-ev="0.07242956998531115" data-r1y="0.3017985833358261">
+  <div class="id"><span class="rank">30</span>
+    <span class="tick">WELL</span>
+    <span class="kchip stock">STOCK</span>
+    <span class="nm">Welltower Inc.</span></div>
+  <div class="sec">Real Estate</div>
+  <div class="cell" data-cap="1-year return"><div class="lbl r1y">+30.2%</div><div class="track"><div class="bar pos" style="width:20.1%"></div></div></div>
+  <div class="cell" data-cap="Expected value"><div class="lbl est">+7.2%</div><div class="track"><div class="bar est" style="width:31.5%"></div></div></div>
+  <div class="cf" data-cap="Confidence">75%</div>
+  <div class="why" data-cap="Why not picked">offense rank 31 of 39 eligible — below the pick line (Variant A momentum-ranked selection)</div>
+</div>
+</div>
+<div class="hm-more"><button class="sbtn" id="hm-toggle" data-n="30">Show all 30 ↓</button></div>
+
+
+<div class="note">
+<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already
+proven themselves &mdash; names that beat their benchmark over the past year.
+For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,
+which tracks the S&amp;P 500. Then Mint asks the harder question: which are most
+likely to keep winning without stumbling right after you buy?</p>
+<p>The philosophy is simple: avoid losses first. We look past recent gains to the
+business behind each name, the risks that could derail it, and whether its
+success looks durable or depends on hype, headlines, or a one-time event.
+Strong recent performance gets a name noticed. Strong evidence earns it a spot.
+If nothing clears the bar, we leave the slot empty &mdash; every pick earns its
+place.</p>
+<p class="stages-head">How it works, in three stages:</p>
+<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark
+over the past year, then scored on the quality of the business, the timing of
+entry, and the steadiness of the ride. Hard risk gates throw out anything too
+volatile or too deeply scarred.</p>
+<p><b>Question the story.</b> Survivors get researched &mdash; we read the news
+behind each name, not just the numbers. How much does the story depend on things
+outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and
+it&apos;s out on the spot. For the rest: how likely is the strength to continue,
+and how much do we trust our own read?</p>
+<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those
+judgments become one number &mdash; expected value: the likely gains if it holds,
+minus the likely pain if it turns, adjusted for how much we trust our own
+read.</p>
+<p>Mint is built around a simple idea: find strength, question the story, weigh
+the odds, and only make room for what earns it.</p>
+<p class="fineprint">Not financial advice. Past performance doesn&apos;t predict
+future returns. Also: there are gremlins that have control over the markets &mdash;
+they hate you personally, and they do the exact opposite of your buys and sells
+purely to spite you. Invest accordingly.</p>
+</div>
+<script>
+document.querySelectorAll('.sortctl').forEach(function(ctl){
+  var pl = document.getElementById(ctl.getAttribute('data-pl'));
+  if(!pl) return;
+  ctl.querySelectorAll('.sbtn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      ctl.querySelectorAll('.sbtn').forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      var k = btn.getAttribute('data-k');
+      var rows = Array.prototype.slice.call(pl.querySelectorAll('.row'));
+      rows.sort(function(a, b){
+        var va = parseFloat(a.getAttribute('data-' + k));
+        var vb = parseFloat(b.getAttribute('data-' + k));
+        va = isNaN(va) ? -Infinity : va;
+        vb = isNaN(vb) ? -Infinity : vb;
+        return vb - va;
+      });
+      rows.forEach(function(r, i){
+        pl.appendChild(r);
+        var rk = r.querySelector('.rank');
+        if(rk) rk.textContent = i + 1;
+      });
+      if(pl.id === 'pl2'){ applyHmLimit(); }
+    });
+  });
+});
+function applyHmLimit(){
+  var pl2 = document.getElementById('pl2');
+  if(!pl2) return;
+  var open = pl2.classList.contains('showall');
+  Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){
+    r.classList.toggle('hm-extra', !open && i >= 5);
+  });
+}
+applyHmLimit();
+var hmt = document.getElementById('hm-toggle');
+if(hmt){
+  hmt.addEventListener('click', function(){
+    var pl2 = document.getElementById('pl2');
+    var open = pl2.classList.toggle('showall');
+    applyHmLimit();
+    hmt.textContent = open ? 'Show fewer ↑'
+      : 'Show all ' + hmt.getAttribute('data-n') + ' ↓';
+  });
+}
+// Expandable pick rows: tap a row to reveal its blurb (delegated, so it
+// survives re-sorting). Only rows with a story get the affordance.
+document.querySelectorAll('.picklist').forEach(function(pl){
+  pl.addEventListener('click', function(e){
+    var row = e.target.closest ? e.target.closest('.row.has-blurb') : null;
+    if(!row || !pl.contains(row)) return;
+    row.classList.toggle('open');
+  });
+});
+</script>
+</body></html>
