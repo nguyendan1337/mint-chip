@@ -1,0 +1,7070 @@
+#!/usr/bin/env python3
+"""
+Stock screener: EVERY stock beating your benchmark (full yfinance universe),
+fundamentals pulled for all outperformers, trash filtered, scored for
+continuation + low drawdown risk, top scorers researched via dynamic news
+risk layer. Presents top 10 (max 2 per sector).
+
+Free APIs only: yfinance (screener + prices + fundamentals + news),
+Google News RSS. No API keys required.
+
+Universe source: yfinance's screener (Yahoo Finance data), paged in full —
+US-listed (NYSE/Nasdaq), market cap >= $2B, price >= $5 by default.
+
+Usage:
+  python3 screener.py --benchmark SPMO
+  python3 screener.py --benchmark VGT --test   (quick test, 60 outperformers max)
+  python3 screener.py --compare-benchmarks     (show SPMO vs VGT vs DIVB vs VFLO)
+  python3 screener.py --min-mcap 1000000000    (include smaller caps)
+
+Stored in: ~/workspace/stock-screener/
+Run whenever you want fresh results.
+"""
+import argparse
+import os
+import re
+import sys
+import time
+import warnings
+# Pin the process timezone to the user's timezone (America/Los_Angeles).
+# datetime.now() follows the ambient TZ, which varies between execution
+# contexts (interactive shells, cron workers, subagents) — without this pin,
+# evening runs produced UTC-dated cache partitions, log files, and bundle
+# names (e.g. cache/20261004 for an Oct 3 run), splitting the warm cache
+# and mislabeling research provenance. All pipeline dates are user-local.
+os.environ["TZ"] = "America/Los_Angeles"
+time.tzset()
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
+
+def run_stamp():
+    """Human page stamp: '2026-10-05 1:30pm PT' (TZ pinned above)."""
+    return datetime.now().strftime("%Y-%m-%d %-I:%M%p").lower() + " PT"
+
+
+def pipeline_today():
+    """Cache-partition date: user-local, rewound to Friday on weekends.
+
+    Markets are closed Sat/Sun, so a weekend run would refetch Friday's
+    closes into a new partition. Rewinding to Friday lets weekend runs reuse
+    the warm partition instead. Log/bundle/chart filenames keep the true
+    date — only the cache partition rewinds."""
+    d = datetime.now().date()
+    if d.weekday() == 5:      # Saturday -> Friday
+        d -= timedelta(days=1)
+    elif d.weekday() == 6:    # Sunday -> Friday
+        d -= timedelta(days=2)
+    return d.strftime("%Y%m%d")
+
+warnings.filterwarnings("ignore")
+
+try:
+    import yfinance as yf
+    import pandas as pd
+    import numpy as np
+    import requests
+    import feedparser
+except ImportError as e:
+    print(f"Missing dependency: {e}")
+    print("Run: pip3 install --break-system-packages yfinance pandas numpy requests feedparser")
+    sys.exit(1)
+
+CACHE_DIR = "cache"
+BENCHMARK_CHOICES = ["SPMO", "VGT", "DIVB", "VFLO", "VOO"]
+
+# ETF portfolio dedupe aliases: tickers mapping to the same underlying
+# portfolio (different wrappers). Surfaced by research; extend as found.
+_ETF_PORTFOLIO_ALIASES = {
+    "qqq": "nasdaq100",
+    "qqqm": "nasdaq100",
+}
+
+# Generic negative sentiment words (not event-specific, just tone)
+NEGATIVE_WORDS = {
+    "downgrade", "downgraded", "miss", "misses", "warning", "lawsuit",
+    "investigation", "probe", "cut", "cuts", "layoff", "fraud",
+    "default", "bankruptcy", "recall", "fine", "penalty", "concern",
+    "fear", "risk", "fall", "falls", "drop", "drops", "plunge",
+    "slump", "weak", "disappoint", "scandal", "resign"
+}
+
+# Fundamental good-news words only: earnings/contract/approval milestones.
+# Deliberately EXCLUDES analyst upgrades, price targets, and social-media
+# chatter — those are noise, not thesis-changing developments.
+POSITIVE_WORDS = {
+    "raised guidance", "raises guidance", "beat estimates", "beats estimates",
+    "topped estimates", "record revenue", "record earnings", "record profit",
+    "contract win", "contract awarded", "wins contract", "deal signed",
+    "fda approval", "approved by fda", "regulatory approval",
+    "dividend increase", "raises dividend", "dividend raised",
+    "buyback", "share repurchase",
+}
+
+STOPWORDS = set("""
+a an the and or but if then else when at by for with about into through during
+before after above below to from up down in out on off over under again further
+once here there all any both each few more most other some such no nor not only
+own same so than too very can will just don should now of as is are was were be
+been being have has had having do does did doing would could ought i'm you he she
+it we they them his her its our their this that these those i me my we us what
+which who whom whose where why how stock market stocks shares price trading
+global economy economic economies market markets wall street finance financial
+reuters yahoo bloomberg cnbc wsj barron's investing business news today
+""".split())
+
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+    if LOG_FILE:
+        try:
+            with open(LOG_FILE, "a") as f:
+                f.write(f"{datetime.now().isoformat()} [INFO] {msg}\n")
+        except Exception:
+            pass
+
+
+def log_error(msg):
+    """Log an error with traceback to console and log file."""
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: {msg}", flush=True)
+    if LOG_FILE:
+        try:
+            with open(LOG_FILE, "a") as f:
+                f.write(f"{datetime.now().isoformat()} [ERROR] {msg}\n")
+                if tb and "NoneType: None" not in tb:
+                    f.write(tb + "\n")
+        except Exception:
+            pass
+
+
+def _load_philosophy():
+    """Investor philosophy text, stamped into every log and run summary so any
+    reviewer (human or LLM) gets the values the mechanism serves."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "PHILOSOPHY.md")) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def setup_logging():
+    """Create logs/ dir and a timestamped log file for this run."""
+    global LOG_FILE
+    try:
+        os.makedirs("logs", exist_ok=True)
+        LOG_FILE = os.path.join(
+            "logs", f"screener_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        with open(LOG_FILE, "w") as f:
+            f.write(f"=== screener run started {datetime.now().isoformat()} ===\n")
+            f.write(f"args: {' '.join(sys.argv)}\n")
+            f.write(f"cwd: {os.getcwd()}\n")
+            phil = _load_philosophy()
+            if phil:
+                f.write("--- investor philosophy ---\n" + phil + "\n")
+                f.write("--- end philosophy ---\n")
+    except Exception as e:
+        print(f"WARNING: could not set up log file: {e}", flush=True)
+        LOG_FILE = None
+    return LOG_FILE
+
+
+def continue_logging(path):
+    """Continue a previous phase's log file so one pipeline run = one log.
+
+    Phase A writes its log path into the research bundle meta; Phase B picks
+    it up and appends. An auditor (human or LLM) reads a single file and sees
+    every stage: universe -> cuts -> research -> selection."""
+    global LOG_FILE
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        LOG_FILE = path
+        with open(LOG_FILE, "a") as f:
+            f.write(f"\n=== continuing log {datetime.now().isoformat()} ===\n")
+            f.write(f"args: {' '.join(sys.argv)}\n")
+    except Exception as e:
+        print(f"WARNING: could not continue log file {path}: {e}", flush=True)
+        LOG_FILE = None
+    return LOG_FILE
+
+
+LOG_FILE = None
+
+
+def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
+    """Pull the FULL US-listed universe from yfinance's screener (paged).
+
+    Returns list of dicts: ticker / name / pct_52w (52-week % change).
+    No cap — this is the broad pool we then filter down to outperformers.
+    """
+    log("Paging yfinance screener for full US universe (mcap>=${:.0f}B, price>=${:.0f})...".format(
+        min_mcap / 1e9, min_price))
+    try:
+        from yfinance.screener.query import EquityQuery as EqyQy
+        q = EqyQy('and', [
+            EqyQy('eq', ['region', 'us']),
+            EqyQy('is-in', ['exchange', 'NMS', 'NYQ', 'ASE', 'NGM', 'NCM', 'BTS']),
+            # NMS/NYQ/ASE + NGM (Nasdaq Global Market) + NCM (Nasdaq Capital
+            # Market) + BTS (CBOE BZX). 2026-10-03 audit: NGM/NCM/BTS were
+            # missing, silently dropping ~105 US-listed stocks >=$2B including
+            # AAOI (+242% 52w%), SITM (+126%), PTGX (+118%) — same bug class as
+            # the ETF PCX/BTS fixes. OTC (PNK/OQX/OQB) stays excluded by design
+            # (not exchange-listed).
+            EqyQy('gte', ['intradaymarketcap', min_mcap]),
+            EqyQy('gte', ['intradayprice', min_price]),
+        ])
+        quotes = []
+        offset = 0
+        while True:
+            # Per-page retry: a 429 on page 6 must not discard pages 1-5.
+            # 3 attempts with backoff; accumulated quotes are kept either way.
+            batch, total = None, 0
+            for attempt in (1, 2, 3):
+                try:
+                    res = yf.screen(q, size=250, offset=offset,
+                                    sortField='intradaymarketcap', sortAsc=False)
+                    batch = res.get('quotes', []) or []
+                    total = res.get('total', 0)
+                    break
+                except Exception as e:
+                    log(f"  screener page offset {offset}: attempt {attempt} "
+                        f"failed ({e})")
+                    time.sleep(2 * attempt)
+            if batch is None:
+                log(f"  screener page offset {offset}: giving up after 3 "
+                    f"attempts — keeping {len(quotes)} quotes fetched so far")
+                break
+            quotes.extend(batch)
+            total = total or 0
+            log(f"  page offset {offset}: {len(quotes)}/{total} fetched")
+            if len(batch) < 250 or (total and len(quotes) >= total):
+                break
+            offset += 250
+            time.sleep(0.4)
+        out, seen = [], set()
+        _exchanges = {}
+        for x in quotes:
+            sym = x.get('symbol')
+            pct = x.get('fiftyTwoWeekChangePercent')
+            if sym and pct is not None and sym not in seen:
+                seen.add(sym)
+                _exchanges[x.get('exchange')] = \
+                    _exchanges.get(x.get('exchange'), 0) + 1
+                out.append({
+                    "ticker": sym,
+                    "name": x.get('longName') or x.get('shortName') or sym,
+                    "pct_52w": float(pct),
+                })
+        log(f"Universe: {len(out)} stocks from yfinance screener")
+        log(f"Universe exchanges: {dict(sorted(_exchanges.items(), key=lambda kv: -kv[1]))}")
+        return out
+    except Exception as e:
+        log(f"yfinance screener failed ({e})")
+        return []
+
+
+def get_fundamentals(tickers, workers=6):
+    """Fetch fundamentals via yfinance info for ALL tickers (threaded)."""
+    log(f"Fetching fundamentals for {len(tickers)} tickers ({workers} threads)...")
+    infos = {}
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch(t):
+        try:
+            info = yf.Ticker(t).info
+            if info and info.get("regularMarketPrice") is not None:
+                return t, info
+        except Exception:
+            pass
+        return t, None
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for t, info in ex.map(fetch, tickers):
+            done += 1
+            if done % 50 == 0:
+                log(f"  fundamentals {done}/{len(tickers)}...")
+            if info:
+                infos[t] = info
+            time.sleep(0.05)
+    log(f"Got fundamentals for {len(infos)}/{len(tickers)} tickers")
+    return infos
+
+
+def apply_trash_filters(rows, closes, infos, us_only=True):
+    """Hard filters to drop obvious trash BEFORE scoring, using fundamentals.
+
+    Transparent rules (tune as needed):
+    - price history >= 120 trading days
+    - 10-day avg dollar volume >= $2M (illiquid = trash)
+    - 1y max drawdown not worse than -70% (blown-up behavior)
+    - market cap >= $2B and price >= $5 already enforced at screener level
+    - us_only: drop companies not domiciled in the United States (yfinance
+      'country'; names with no country data are kept, not dropped)
+    Everything subtler is handled by the scorer's z-scores.
+    Returns (kept_rows, report_dict).
+    """
+    report = {}
+    dropped_names = {}
+    def _drop(reason, t):
+        report[reason] = report.get(reason, 0) + 1
+        dropped_names.setdefault(reason, []).append(t)
+    kept = []
+    for r in rows:
+        t = r["ticker"]
+        s = closes.get(t)
+        if s is None or len(s) < 120:
+            _drop("no_price_history", t)
+            continue
+        if _religious_theme(r.get("name", ""), t):
+            _drop("religious_theme", t)
+            continue
+        dd = max_drawdown(s)
+        if not pd.isna(dd) and dd < -0.70:
+            _drop("drawdown_worse_than_-70%", t)
+            continue
+        info = infos.get(t, {})
+        if us_only:
+            ctry = info.get("country")
+            if ctry and ctry != "United States":
+                _drop("foreign_domicile", t)
+                continue
+        try:
+            adv = info.get("averageDailyVolume10Day") or info.get("averageVolume") or 0
+            px = info.get("regularMarketPrice") or s.iloc[-1]
+            if float(adv) * float(px) < 2_000_000:
+                _drop("dollar_volume_lt_$2M", t)
+                continue
+        except Exception:
+            pass
+        kept.append(r)
+    report["kept"] = len(kept)
+    report["dropped_total"] = len(rows) - len(kept)
+    report["dropped_names"] = dropped_names
+    return kept, report
+
+
+def get_sp500_tickers(limit=None):
+    """Fetch S&P 500 list from Wikipedia, fallback to datahub, then static."""
+    tickers = None
+    try:
+        log("Fetching S&P 500 ticker list from Wikipedia...")
+        # Use requests with user-agent to avoid 403
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; stock-screener/1.0)"}
+        req = requests.Request("GET", "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=headers)
+        prepped = req.prepare()
+        s = requests.Session()
+        resp = s.send(prepped, timeout=15)
+        tables = pd.read_html(resp.text)
+        tickers = tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
+        tickers = [t.strip() for t in tickers if isinstance(t, str)]
+        log(f"Got {len(tickers)} tickers from Wikipedia")
+    except Exception as e:
+        log(f"Wikipedia fetch failed ({e}), trying datahub...")
+    if not tickers:
+        try:
+            df = pd.read_csv("https://datahub.io/core/s-and-p-500-companies/r/constituents.csv")
+            col = "Symbol" if "Symbol" in df.columns else df.columns[0]
+            tickers = df[col].str.replace(".", "-", regex=False).tolist()
+            log(f"Got {len(tickers)} tickers from datahub")
+        except Exception as e:
+            log(f"Datahub fetch failed ({e}), using fallback list")
+    if not tickers:
+        tickers = [
+            "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "BRK-B", "LLY",
+            "AVGO", "JPM", "XOM", "UNH", "V", "MA", "TSLA", "COST", "JNJ",
+            "HD", "PG", "WMT", "BAC", "ABBV", "CRM", "ORCL", "NFLX",
+            "KO", "AMD", "PEP", "TMO", "LIN", "DIS", "ABT", "ACN",
+            "ADBE", "MRK", "CSCO", "VZ", "INTC", "PFE", "CMCSA",
+            "NEE", "XEL", "F", "GM", "CAT", "BA", "GE", "IBM", "T",
+        ]
+    if limit:
+        return tickers[:limit]
+    return tickers
+
+
+def download_prices(tickers, period="1y", batch_size=80, min_rows=50):
+    """Batch download adjusted closes, in chunks with retry.
+
+    Yahoo rate-limits big batches (shows up as bogus 'possibly delisted'
+    errors), so we go chunk by chunk and retry misses individually.
+
+    min_rows is the sanity floor on returned history length. It defaults to
+    50 (the 1y use case); short-window callers (e.g. the 5d ledger fetch) must
+    pass a smaller floor, or every result is discarded — 5 rows never clears
+    a 50-row bar. (This exact bug silently zeroed the ledger price fetch.)
+    """
+    tickers = list(dict.fromkeys(tickers))  # dedupe, keep order
+    log(f"Downloading {period} prices for {len(tickers)} tickers (this takes a bit)...")
+    closes = {}
+
+    def extract(data, batch):
+        got = 0
+        if isinstance(data.columns, pd.MultiIndex):
+            for t in batch:
+                try:
+                    s = data[t]["Close"].dropna()
+                    if len(s) >= min_rows and t not in closes:
+                        closes[t] = s
+                        got += 1
+                except Exception:
+                    continue
+        else:
+            try:
+                s = data["Close"].dropna()
+                if len(s) >= min_rows and batch[0] not in closes:
+                    closes[batch[0]] = s
+                    got += 1
+            except Exception:
+                pass
+        return got
+
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        try:
+            data = yf.download(
+                batch, period=period, auto_adjust=True, progress=False,
+                threads=True, group_by="ticker"
+            )
+            extract(data, batch)
+        except Exception as e:
+            log(f"  batch {i}-{i + len(batch)} failed ({e}), will retry individually")
+        missing = [t for t in batch if t not in closes]
+        if missing:
+            time.sleep(2)
+            for t in missing:
+                try:
+                    d = yf.download(t, period=period, auto_adjust=True,
+                                    progress=False, threads=False)
+                    close = d["Close"].dropna() if "Close" in d else pd.Series(dtype=float)
+                    # handle single-ticker multiindex quirk
+                    if isinstance(close, pd.DataFrame):
+                        close = close.iloc[:, 0].dropna()
+                    if len(close) >= min_rows:
+                        closes[t] = close
+                except Exception:
+                    continue
+                time.sleep(0.3)
+        log(f"  progress: {len(closes)}/{len(tickers)}")
+        time.sleep(1)
+    log(f"Got price history for {len(closes)}/{len(tickers)} tickers")
+    return closes
+
+
+def calc_return(series, days=None):
+    if series is None or len(series) < 2:
+        return np.nan
+    s = series.dropna()
+    if days:
+        s = s.iloc[-days:] if len(s) >= days else s
+    if len(s) < 2:
+        return np.nan
+    return float(s.iloc[-1] / s.iloc[0] - 1)
+
+
+def max_drawdown(series):
+    s = series.dropna()
+    if len(s) < 2:
+        return np.nan
+    roll_max = s.cummax()
+    dd = (s - roll_max) / roll_max
+    return float(dd.min())  # negative number, e.g. -0.25
+
+
+def drawdown_frequency(series, window=21, thresh=-0.10):
+    """Fraction of rolling 1-month windows that lost more than 10%.
+
+    Depth-only drawdown misses 'death by a thousand cuts': a name that dips
+    15% every other month has the same maxdd as one with a single 15% dip,
+    but very different post-buy pain risk. Used to scale the EV downside.
+    """
+    s = series.dropna()
+    if len(s) < window + 1:
+        return 0.0
+    rets = s.pct_change(window).dropna()
+    if len(rets) == 0:
+        return 0.0
+    return float((rets < thresh).mean())
+
+
+def zscore(series):
+    s = pd.Series(series, dtype=float)
+    mu = s.mean(skipna=True)
+    sd = s.std(skipna=True)
+    if pd.isna(sd) or sd == 0:
+        return pd.Series([0.0] * len(s), index=s.index)
+    # missing values -> neutral 0, not NaN (NaN would poison the whole score)
+    return ((s - mu) / sd).fillna(0)
+
+
+def build_scores(closes, infos, min_rows=120):
+    """Score for: continue to do well + minimize chance of going negative after buying.
+
+    Heavily weights: persistent momentum + trend + quality + LOW risk
+    (low vol, shallow drawdown, low leverage, reasonable valuation).
+
+    min_rows: benchmark mode needs 120d+ of history; watchlist mode passes 60
+    so short-history names (recent IPOs) are scored, not silently dropped.
+    """
+    rows = []
+    for t, info in infos.items():
+        px = closes.get(t)
+        if px is None or len(px) < min_rows:
+            continue
+        daily_ret = px.pct_change().dropna()
+        row = {"ticker": t}
+        row["sector"] = info.get("sector", "Unknown")
+        row["name"] = info.get("longName", t) or t
+
+        # --- momentum / trend ---
+        row["ret_1y"] = calc_return(px)
+        row["ret_6m"] = calc_return(px, 126)
+        # momentum skip: 6m run EXCLUDING the most recent month (21 trading
+        # days) — standard academic treatment for short-term reversal.
+        # The upside component of EV uses this, not ret_6m.
+        row["ret_6m_skip1m"] = (calc_return(px.iloc[:-21], 126)
+                               if px is not None and len(px.dropna()) > 21
+                               else np.nan)
+        row["ret_3m"] = calc_return(px, 63)
+        row["ret_1m"] = calc_return(px, 21)
+        row["ret_2w"] = calc_return(px, 10)
+        sma50 = px.rolling(50).mean().iloc[-1] if len(px) >= 50 else np.nan
+        sma200 = px.rolling(200).mean().iloc[-1] if len(px) >= 200 else np.nan
+        sma20 = px.rolling(20).mean().iloc[-1] if len(px) >= 20 else np.nan
+        last = px.iloc[-1]
+        row["above50"] = 1.0 if not pd.isna(sma50) and last > sma50 else 0.0
+        row["above200"] = 1.0 if not pd.isna(sma200) and last > sma200 else 0.0
+        row["dist_20dma"] = float(last / sma20 - 1) if sma20 and not pd.isna(sma20) and sma20 > 0 else 0.0
+        hi252 = px.rolling(252).max().iloc[-1] if len(px) >= 60 else np.nan
+        # avoid buying extremely extended into 52w high (reversal risk)
+        row["dist_high"] = float(last / hi252) if hi252 and hi252 > 0 else np.nan
+
+        # --- quality ---
+        row["roe"] = info.get("returnOnEquity", np.nan)
+        row["margin"] = info.get("profitMargins", np.nan)
+        row["earn_growth"] = info.get("earningsGrowth", np.nan)
+        row["rev_growth"] = info.get("revenueGrowth", np.nan)
+        fcf = info.get("freeCashflow", np.nan)
+        row["fcf_pos"] = 1.0 if isinstance(fcf, (int, float)) and fcf > 0 else 0.0
+        dte = info.get("debtToEquity", np.nan)
+        row["dte"] = float(dte) if isinstance(dte, (int, float)) else np.nan
+
+        # --- value (avoid overpaying for momentum) ---
+        fpe = info.get("forwardPE", np.nan)
+        row["fpe"] = float(fpe) if isinstance(fpe, (int, float)) and fpe > 0 else np.nan
+        ptb = info.get("priceToBook", np.nan)
+        row["ptb"] = float(ptb) if isinstance(ptb, (int, float)) and ptb > 0 else np.nan
+
+        # --- risk (the "don't go negative right after I buy" part) ---
+        row["vol60"] = float(daily_ret.iloc[-60:].std() * np.sqrt(252)) if len(daily_ret) >= 60 else np.nan
+        row["maxdd"] = max_drawdown(px)  # negative
+        row["dd_freq"] = drawdown_frequency(px)  # how often it hurts, not just how deep
+        beta = info.get("beta", np.nan)
+        row["beta"] = float(beta) if isinstance(beta, (int, float)) else np.nan
+
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # Z-scores (higher = better). Invert bad metrics.
+    df["z_6m"] = zscore(df["ret_6m"].fillna(0))
+    df["z_3m"] = zscore(df["ret_3m"].fillna(0))
+    # blowoff-top penalty: vertical 2-week spike or extended far above 20DMA
+    # (buying the spike = the classic "goes negative right after buying")
+    spike = (df["ret_2w"].fillna(0) - 0.15).clip(lower=0) + \
+            (df["dist_20dma"].fillna(0) - 0.10).clip(lower=0)
+    df["z_blowoff"] = zscore(-spike)
+    # penalize extremely extended (>0.98 of high) slightly
+    df["z_ext"] = zscore((-(df["dist_high"].fillna(0.9) - 0.9).abs()))
+    df["z_trend"] = zscore(df["above50"] + df["above200"])
+
+    df["z_roe"] = zscore(df["roe"])
+    df["z_margin"] = zscore(df["margin"])
+    df["z_earn"] = zscore(df["earn_growth"])
+    df["z_fcf"] = zscore(df["fcf_pos"])
+    df["z_dte"] = zscore(-df["dte"].fillna(df["dte"].median()))
+
+    df["z_fpe"] = zscore(-df["fpe"].fillna(df["fpe"].median()))
+    df["z_ptb"] = zscore(-df["ptb"].fillna(df["ptb"].median()))
+
+    df["z_vol"] = zscore(-df["vol60"].fillna(df["vol60"].median()))
+    df["z_dd"] = zscore(df["maxdd"].fillna(df["maxdd"].median()))  # less negative = better
+    # penalize high beta (>1.5)
+    beta_pen = df["beta"].fillna(1.0).apply(lambda b: -abs(b - 1.0))
+    df["z_beta"] = zscore(beta_pen)
+
+    # Weighted composite: momentum 22%, blowoff-avoidance 8%, quality 30%,
+    # low-risk 30%, insider/valuation/value 10%. Built for: keep doing well,
+    # minimize post-buy drawdown.
+    df["base_score"] = (
+        0.08 * df["z_6m"] + 0.06 * df["z_3m"] + 0.04 * df["z_ext"] + 0.04 * df["z_trend"]
+        + 0.08 * df["z_blowoff"]
+        + 0.10 * df["z_roe"] + 0.08 * df["z_margin"] + 0.07 * df["z_earn"] + 0.05 * df["z_fcf"]
+        + 0.12 * df["z_vol"] + 0.12 * df["z_dd"] + 0.06 * df["z_beta"]
+        + 0.05 * df["z_dte"]
+        + 0.03 * df["z_fpe"] + 0.02 * df["z_ptb"]
+    )
+    # character: the Composure parts the expected-value estimate doesn't
+    # already see — quality + entry timing + leverage/value. est uses ret_6m
+    # and maxdd directly, so momentum/vol/drawdown z-scores are deliberately
+    # excluded here (no double-counting). Used as a multiplier on the EV.
+    df["character"] = (
+        0.10 * df["z_roe"] + 0.08 * df["z_margin"] + 0.07 * df["z_earn"] + 0.05 * df["z_fcf"]
+        + 0.08 * df["z_blowoff"] + 0.04 * df["z_ext"] + 0.04 * df["z_trend"]
+        + 0.05 * df["z_dte"] + 0.03 * df["z_fpe"] + 0.02 * df["z_ptb"]
+    ).fillna(0)
+    return df.sort_values("base_score", ascending=False)
+
+
+def _enrich_one(t):
+    """Insider net selling / market cap (90d) and days to next earnings.
+    Returns (ticker, insider_ratio, earnings_in_days); None when unknown."""
+    insider_ratio, earn_days = None, None
+    try:
+        tk = yf.Ticker(t)
+        try:
+            it = tk.insider_transactions
+            if it is not None and not it.empty:
+                d = it.copy()
+                d["dt"] = pd.to_datetime(d["Start Date"], errors="coerce", utc=True)
+                cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)
+                rec = d[d["dt"] >= cutoff]
+                sells = rec[rec["Text"].str.startswith("Sale", na=False)]["Value"].fillna(0).sum()
+                buys = rec[rec["Text"].str.contains("Purchase", na=False)]["Value"].fillna(0).sum()
+                mcap = tk.info.get("marketCap") if isinstance(tk.info, dict) else None
+                if mcap:
+                    insider_ratio = float((sells - buys) / mcap)
+        except Exception:
+            pass
+        try:
+            ed = tk.earnings_dates
+            if ed is not None and len(ed):
+                idx = ed.index
+                try:
+                    idx_utc = idx.tz_convert("UTC")
+                except Exception:
+                    try:
+                        idx_utc = idx.tz_localize("UTC")
+                    except Exception:
+                        idx_utc = idx
+                now = pd.Timestamp.now(tz="UTC")
+                fut = idx_utc[idx_utc > now]
+                if len(fut):
+                    earn_days = int((fut[0] - now).total_seconds() // 86400)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return t, insider_ratio, earn_days
+
+
+def enrich_candidates(tickers, workers=6):
+    """Threaded insider + earnings enrichment for top candidates."""
+    from concurrent.futures import ThreadPoolExecutor
+    log(f"Enriching {len(tickers)} candidates (insider + earnings)...")
+    out = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        done = 0
+        for t, ir, ed in ex.map(_enrich_one, tickers):
+            done += 1
+            if done % 25 == 0:
+                log(f"  enrichment {done}/{len(tickers)}...")
+            out[t] = {"insider_ratio": ir, "earnings_in_days": ed}
+    return out
+
+
+def log_levers(args):
+    """Every tunable of the pipeline with its current value and what it does.
+
+    This is the lever panel for an auditor (human or LLM): to change what the
+    pipeline selects, push/pull these. Values are read from the live args so
+    this block can never go stale."""
+    _eb = etf_benchmark(args)
+    log("--- pipeline levers (tunables: push/pull these to change selection) ---")
+    log(f"universe: yfinance screener, mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f}")
+    log(f"benchmark={args.benchmark} (stocks must beat its 1y; 5pp slack on screener 52w%); "
+        f"etf_benchmark={_eb} (ETFs must beat its 1y)")
+    log("trash filters (hard, pre-scoring): history>=120 trading days; "
+        "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
+    log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
+        f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
+    log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind), a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), and a {POOL_SECTOR_CAP}/sector cap on stock core seats — lanes buy evaluations only (2026-11-06)")
+    log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
+        f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
+        "base_w = base_score winsorized at p95, excess = amount above cap)")
+    log("base_score(stocks) = 0.08*z_6m + 0.06*z_3m + 0.04*z_ext + 0.04*z_trend "
+        "+ 0.08*z_blowoff + 0.10*z_roe + 0.08*z_margin + 0.07*z_earn + 0.05*z_fcf "
+        "+ 0.12*z_vol + 0.12*z_dd + 0.06*z_beta + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
+    log("base_score(ETFs)   = 0.12*z_6m + 0.08*z_3m + 0.10*z_1m + 0.05*z_trend "
+        "+ 0.05*z_blowoff + 0.15*z_vol + 0.15*z_dd + 0.10*z_dvol + 0.10*z_expense + 0.10*z_aum")
+    log("  z glossary: z_6m/3m/1m = trailing returns; z_ext = not extended far below high; "
+        "z_trend = above 50/200DMA; z_blowoff = penalizes 2-week vertical spikes (don't buy the top); "
+        "z_roe/margin = profitability; z_earn = earnings growth; z_fcf = positive FCF; "
+        "z_vol = low 60d vol; z_dd = shallow maxDD; z_beta = beta near 1.0; z_dte = low debt/equity; "
+        "z_fpe/ptb = cheapness; z_expense = low fees; z_aum = large AUM (closure safety); "
+        "z_dvol = liquidity. Higher z = better; bad metrics inverted.")
+    log("expected value = conf * (1+0.25*character) * "
+        "(cont*upside - (1-cont)*downside - dep*20%)")
+    log("  upside (ETFs) = 6m run SKIPPING the most recent month (short-term reversal): first 25% at full weight, excess at half, input capped at 50% (momentum figure only — ETF EV uses the C3 constant)")
+    log(f"  upside (stocks, 2026-11-06 steep dampener V6) = first {STOCK_UP_T1:.0%} at full weight, excess at {STOCK_UP_FACTOR:.2f}, input capped at {STOCK_UP_CAP:.0%}")
+    log("  downside = max(|maxDD|*50%, 15% stocks / 10% ETFs) * (1 + dd_freq); "
+        "dd_freq = fraction of rolling 1m windows losing >10%")
+    log("  character = Composure z-sum of quality/entry-timing/structure "
+        "(excludes momentum+volatility, no double-count), clamped [-2,2]")
+    log("  character(stocks) = 0.10*z_roe + 0.08*z_margin + 0.07*z_earn + 0.05*z_fcf "
+        "+ 0.08*z_blowoff + 0.04*z_ext + 0.04*z_trend + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
+    log("  character(ETFs)   = 0.05*z_blowoff + 0.05*z_trend + 0.10*z_expense "
+        "+ 0.10*z_aum + 0.10*z_dvol")
+    log("  (z_* are cross-sectional z-scores across the scored outperformer set; "
+        "per-ticker character parts are in the 'character breakdown' section)")
+    log(f"EV floor --min-est={args.min_est:+.1%}: every pick must earn its place; "
+        "empty slots beat filler")
+    log(f"ETF EV (2026-11-06): upside term is the constant "
+        f"{ETF_EV_UPSIDE_CONST:.4f} (no-momentum EV, calibration candidate "
+        f"C3) — a fund's own 6m run does not enter its EV; ETF floor "
+        f"--min-est-etf={getattr(args, 'min_est_etf', 0.0):+.1%}")
+    log(f"ETF eligibility gate (2026-11-06 late, strike design): "
+        f"strikes counted at 6m run > +{ETF_STRIKE_MAX_RUN:.0%}, "
+        f"dep_used > {ETF_STRIKE_MAX_DEP:.2f}, maxdd < "
+        f"{ETF_STRIKE_MIN_MAXDD:.0%}, dd_freq > "
+        f"{ETF_STRIKE_MAX_DDFREQ:.2f}; 0 strikes = tier 1, 1 strike "
+        f"= tier 2 (no slot cap), "
+        f"{ETF_STRIKE_BAR}+ strikes = barred; barred names stay "
+        f"honorable-mention eligible")
+    log(f"stock eligibility gate (2026-11-06): implied upside >= 0 "
+        f"and dep_used < {STOCK_GATE_MAX_DEP:.2f}; barred names stay "
+        f"honorable-mention eligible")
+    log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
+    log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
+        f"--max-per-etf-category={args.max_per_etf_category} (ETFs); hard across both "
+        "pick passes; cap ties broken by EV (highest-EV names survive)")
+    log(f"--max-etf-overlap={args.max_etf_overlap:.0%}: pairwise top-10 holdings "
+        f"overlap cap for ETFs, enforced on the SELECTED portfolio: when two "
+        f"picks overlap above the cap the lower-EV one is evicted and the slot "
+        f"refilled (redundancy is not diversification)")
+    log(f"score floor --min-score={args.min_score}")
+    log(f"final slots: --n-stocks={args.n_stocks} + --n-etfs={args.n_etfs}")
+    log("--- end levers ---")
+
+
+def apply_risk_gates(df, max_vol=0.80, min_dd=-0.40):
+    """Absolute risk gates for the 'don't go negative' goal.
+
+    Relative z-scores can't do this: in a parabolic universe, -40% DD can
+    look 'average'. Gate absolutely before research/final selection.
+
+    Fail-closed on missing data: a ticker whose volatility or drawdown can't
+    be measured doesn't get the benefit of the doubt (NaN comparisons are
+    False in pandas, which would otherwise let unmeasurable names through).
+    """
+    gated_vol = df["vol60"].fillna(float("inf")) > max_vol
+    gated_dd = df["maxdd"].fillna(float("-inf")) < min_dd
+    gated = df[gated_vol | gated_dd]
+    kept = df[~(gated_vol | gated_dd)].copy()
+    report = {"gated_vol_gt": f"{max_vol:.0%}", "n_gated_vol": int(gated_vol.sum()),
+              "gated_dd_lt": f"{min_dd:.0%}", "n_gated_dd": int(gated_dd.sum()),
+              "gated_total": len(gated), "kept": len(kept),
+              "gated_tickers": gated["ticker"].tolist()}
+    log(f"Risk gates: {report['gated_total']} excluded "
+        f"(vol>{max_vol:.0%}: {report['n_gated_vol']}, dd<{min_dd:.0%}: {report['n_gated_dd']})")
+    log(f"  risk-gated tickers: {report['gated_tickers']}")
+    return kept, report
+
+
+def stability_grade(row, dep=None):
+    """A/B/C/D stability grade from vol, drawdown, event dependence.
+
+    dep should be the merged research dep (same value the EV uses). A
+    missing dep warns loudly — silently defaulting to 0.3 once printed
+    an 'A' for a name the researcher had flagged at 0.40.
+    """
+    try:
+        vol = float(row.get("vol60", 1))
+    except Exception:
+        vol = 1.0
+    try:
+        dd = float(row.get("maxdd", -1))
+    except Exception:
+        dd = -1.0
+    if dep is None:
+        dep = row.get("llm_event_dependence", row.get("news_penalty", 0.3))
+    try:
+        dep = float(dep)
+    except (TypeError, ValueError):
+        dep = 0.3
+        log(f"WARNING: stability_grade dep missing for "
+            f"{row.get('ticker', '?')} — defaulted to 0.3")
+    if vol <= 0.35 and dd >= -0.20 and dep <= 0.35:
+        return "A"
+    if vol <= 0.55 and dd >= -0.30 and dep <= 0.55:
+        return "B"
+    if vol <= 0.80 and dd >= -0.45:
+        return "C"
+    return "D"
+
+
+    if vol <= 0.80 and dd >= -0.45:
+        return "C"
+    return "D"
+
+
+_STOCK_SCORE_GROUPS = {
+    "mom": [(0.08, "z_6m"), (0.06, "z_3m"), (0.04, "z_ext"), (0.04, "z_trend")],
+    "blowoff": [(0.08, "z_blowoff")],
+    "qual": [(0.10, "z_roe"), (0.08, "z_margin"), (0.07, "z_earn"), (0.05, "z_fcf")],
+    "risk": [(0.12, "z_vol"), (0.12, "z_dd"), (0.06, "z_beta")],
+    "lev": [(0.05, "z_dte")],
+    "val": [(0.03, "z_fpe"), (0.02, "z_ptb")],
+}
+_ETF_SCORE_GROUPS = {
+    "mom": [(0.12, "z_6m"), (0.08, "z_3m"), (0.10, "z_1m"),
+            (0.05, "z_trend"), (0.05, "z_blowoff")],
+    "risk": [(0.15, "z_vol"), (0.15, "z_dd")],
+    "liq": [(0.10, "z_dvol")],
+    "struct": [(0.10, "z_expense"), (0.10, "z_aum")],
+}
+
+
+_CHAR_PARTS_STOCK = [("z_roe", 0.10), ("z_margin", 0.08), ("z_earn", 0.07),
+                      ("z_fcf", 0.05), ("z_blowoff", 0.08), ("z_ext", 0.04),
+                      ("z_trend", 0.04), ("z_dte", 0.05), ("z_fpe", 0.03),
+                      ("z_ptb", 0.02)]
+_CHAR_PARTS_ETF = [("z_blowoff", 0.05), ("z_trend", 0.05), ("z_expense", 0.10),
+                   ("z_aum", 0.10), ("z_dvol", 0.10)]
+
+
+def log_character_breakdown(df, label, parts):
+    """Per-ticker Composure decomposition: which sub-components drive character.
+
+    Lets an independent reviewer judge the scorer's construction, not just its
+    output — e.g. whether z_earn is doing real work or just adding noise.
+    """
+    log(f"--- character breakdown: {label} ({len(df)} tickers) ---")
+    for _, r in df.iterrows():
+        try:
+            comps = []
+            for z, w in parts:
+                v = r.get(z, float("nan"))
+                try:
+                    v = float(v)
+                except Exception:
+                    v = float("nan")
+                if v != v:  # NaN -> 0, mirroring the .fillna(0) in scoring
+                    v = 0.0
+                comps.append(f"{z[2:]} {w * v:+.2f}")
+            log(f"  {r['ticker']:6s} char={float(r['character']):+.2f} "
+                f"({' | '.join(comps)})")
+        except Exception:
+            continue
+
+
+def log_score_breakdown(df, label, groups):
+    """Log per-ticker grouped score contributions, e.g.
+    DAC base=+0.17 (mom +0.42 | qual -0.10 | risk +0.05 | ...).
+    This is the scorer stage, fully exposed: each group's weighted
+    contribution to base_score."""
+    if df is None or df.empty:
+        return
+    log(f"--- score breakdown: {label} ({len(df)} tickers) ---")
+    for _, r in df.sort_values("base_score", ascending=False).iterrows():
+        parts = []
+        for gname, terms in groups.items():
+            v = 0.0
+            for w, col in terms:
+                try:
+                    x = r.get(col)
+                    v += w * float(x) if pd.notna(x) else 0.0
+                except Exception:
+                    pass
+            parts.append(f"{gname} {v:+.2f}")
+        try:
+            bs = f"{float(r['base_score']):+.2f}"
+        except Exception:
+            bs = "n/a"
+        log(f"  {r['ticker']:6s} base={bs} ({' | '.join(parts)})")
+
+
+def log_research_assessments(ranked):
+    """Log each ticker's research-stage assessment: verdict + full rationale +
+    risks + the news the researcher based it on.
+
+    This is the research stage, fully exposed: what the researcher decided
+    about each name, why, what could go wrong, and what news it read — so an
+    independent reviewer can re-judge every call from the log alone.
+    """
+    log("--- research assessments ---")
+    today = __import__("datetime").date.today().isoformat()
+    n_fresh, n_carried, n_unknown, n_stale, n_missing = 0, 0, 0, 0, 0
+    for _, r in ranked.iterrows():
+        try:
+            dep = float(r.get("llm_event_dependence", float("nan")))
+            cont = float(r.get("llm_continuation", float("nan")))
+            conf = float(r.get("llm_confidence", float("nan")))
+            dep_s, cont_s, conf_s = f"{dep:.2f}", f"{cont:.2f}", f"{conf:.2f}"
+        except Exception:
+            dep_s = cont_s = conf_s = "n/a"
+        # provenance: fresh research vs carried-over from an earlier run
+        ad = str(r.get("llm_assessed_date", "") or "")
+        why = str(r.get("llm_rationale", "") or "").replace("\n", " ").strip()
+        if ad == today:
+            prov, n_fresh = "fresh", n_fresh + 1
+        elif ad:
+            n_carried += 1
+            try:
+                age = (__import__("datetime").date.today() -
+                       __import__("datetime").date.fromisoformat(ad)).days
+            except Exception:
+                age = -1
+            if age > 7:
+                # stale: the 7-day refresh rule says this should have been
+                # re-researched — flag it loudly rather than silently carrying
+                prov, n_stale = f"carried({ad}) STALE>{age}d", n_stale + 1
+            else:
+                prov = f"carried({ad})"
+        elif why:
+            prov, n_unknown = "carried(?)", n_unknown + 1
+        else:
+            # no assessment at all: neutral defaults (dep 0.3/cont 0.5/conf
+            # 0.7) were used silently by apply_llm_outputs — make it visible
+            prov, n_missing = "NO-ASSESSMENT (neutral defaults)", n_missing + 1
+        log(f"  {r['ticker']:6s} dep={dep_s} cont={cont_s} conf={conf_s} [{prov}]")
+        if why:
+            log(f"    rationale: {why}")
+        risks = str(r.get("llm_risks", "") or "").strip()
+        if risks:
+            log(f"    risks: {risks}")
+        try:
+            headlines = [str(h).strip() for h in (r.get("headlines", []) or [])
+                         if str(h).strip()]
+        except Exception:
+            headlines = []
+        if headlines:
+            log(f"    news seen ({len(headlines)}):")
+            for h in headlines:
+                log(f"      - {h[:220]}")
+    log(f"research provenance: {n_fresh} fresh, {n_carried} carried-over, "
+        f"{n_unknown} unknown (pre-dates date stamping), "
+        f"{n_stale} STALE (>7d, should have been re-researched), "
+        f"{n_missing} with NO assessment (neutral defaults used)")
+
+
+def log_world_layer(outputs):
+    """Log the researcher's world/market context: drivers + risk events.
+
+    This is the macro layer every per-ticker assessment was conditioned on.
+    An independent reviewer needs it to judge whether the researcher read
+    the market right (e.g. did it register a freight-rate spike before
+    judging a tanker stock?). If the researcher skipped it, the log says so
+    — a missing world layer is itself audit signal.
+    """
+    w = (outputs or {}).get("world") or {}
+    drivers = w.get("drivers") or []
+    risk_events = w.get("risk_events") or []
+    log("--- world/market context (researcher's macro layer) ---")
+    if not drivers and not risk_events:
+        log("  world layer: NOT PROVIDED by researcher "
+            "(outputs.json has no 'world' key)")
+        return
+    for d in drivers:
+        log(f"  driver: {str(d.get('title', ''))[:200]} | "
+            f"{str(d.get('summary', ''))[:300]} | "
+            f"sectors={d.get('affected_sectors', [])} | "
+            f"direction={d.get('direction', '')}")
+    for e in risk_events:
+        log(f"  risk event: {str(e.get('title', ''))[:200]} | "
+            f"{str(e.get('summary', ''))[:300]} | "
+            f"sectors={e.get('affected_sectors', [])} | "
+            f"severity={e.get('severity', '')}")
+
+
+def winsorize_base(df):
+    """Cap base_score at the 95th percentile for reranking.
+
+    Addresses the SBLK problem: a statistical outlier (base +1.62 vs +0.6
+    for #2) built on trailing stats can dominate the final ordering even
+    when half its thesis is event-driven. The raw score stays for display;
+    reranking uses base_w. Returns (df, cap)."""
+    df = df.copy()
+    if df.empty or "base_score" not in df.columns:
+        df["base_w"] = df.get("base_score", pd.Series(dtype=float))
+        df.attrs["base_cap"] = float("inf")
+        return df, float("inf")
+    cap = float(df["base_score"].quantile(0.95))
+    df["base_w"] = df["base_score"].clip(upper=cap)
+    df.attrs["base_cap"] = cap
+    clipped = df[df["base_score"] > cap]["ticker"].tolist()
+    log(f"winsorize: base_score p95 cap={cap:+.2f}"
+        + (f"; clipped: {clipped}" if clipped else "; nothing clipped"))
+    return df, cap
+
+
+def est_parts(row, dep, cont, conf=1.0):
+    """Decompose the expected-value heuristic into auditable components.
+
+    Returns dict(r6, upside, dd, dd_freq, downside, character, dep, cont, conf, est).
+    estimate_next_year() is a thin wrapper over this; the log prints the
+    components per ticker so any reviewer can re-derive every estimate
+    from logged inputs alone.
+    """
+    try:
+        r6 = float(row.get("ret_6m_skip1m", 0) or 0)
+    except Exception:
+        r6 = 0.0
+    if not r6:
+        # fallback for rows computed before ret_6m_skip1m existed
+        try:
+            log("WARNING: ret_6m_skip1m missing for %s — falling back to ret_6m "
+                "(upside input includes the most recent month)" % row.get("ticker", "?"))
+        except Exception:
+            pass
+        try:
+            r6 = float(row.get("ret_6m", 0) or 0)
+        except Exception:
+            r6 = 0.0
+    try:
+        dd = float(row.get("maxdd", -0.2) or -0.2)
+    except Exception:
+        dd = -0.2
+    try:
+        dep = float(dep)
+    except Exception:
+        dep = 0.3
+    try:
+        cont = float(cont)
+    except Exception:
+        cont = 0.5
+    try:
+        conf = max(0.0, min(1.0, float(conf)))
+    except Exception:
+        conf = 1.0
+    try:
+        ddf = max(0.0, min(1.0, float(row.get("dd_freq", 0) or 0)))
+    except Exception:
+        ddf = 0.0
+    try:
+        char = max(-2.0, min(2.0, float(row.get("character", 0) or 0)))
+    except Exception:
+        char = 0.0
+    if str(row.get("kind") or "").lower() == "etf":
+        r6c = min(max(r6, 0.0), 0.50)
+        upside = min(r6c, 0.25) + 0.5 * max(r6c - 0.25, 0.0)
+    else:
+        # STEEP UPSIDE DAMPENER FOR STOCKS (2026-11-06, variant V6 of
+        # the stock test battery — Dan shipped): first 15% of the 6m
+        # run at full weight, beyond at 1/3, run capped at 30%. The
+        # legacy 25% / 1/2 / 50% shape let extended runs inflate EV;
+        # V6 was the only EV variant whose ranking improved on BOTH
+        # split halves of October (Spearman 0.11 -> 0.29 discovery,
+        # 0.19 -> 0.30 validation), and it compresses EV levels toward
+        # realized outcomes (Dan's calibration criterion). ETFs keep
+        # the legacy momentum figure below (their EV upside is then
+        # replaced by the C3 constant).
+        r6c = min(max(r6, 0.0), STOCK_UP_CAP)
+        upside = (min(r6c, STOCK_UP_T1)
+                  + STOCK_UP_FACTOR * max(r6c - STOCK_UP_T1, 0.0))
+    upside_momentum = upside
+    # ETF NO-MOMENTUM EV (2026-11-06, calibration candidate C3 — see
+    # ETF_EV_UPSIDE_CONST): for ETFs the upside term is the constant, so
+    # the fund's own run cannot inflate its EV. Applies wherever est is
+    # computed for an ETF row (selection, ledgers, watchlist ratings).
+    is_etf = str(row.get("kind") or "").lower() == "etf"
+    if is_etf:
+        upside = ETF_EV_UPSIDE_CONST
+    # downside: half the worst 1y drawdown, floored per kind, scaled by
+    # how OFTEN pain arrives (dd_freq): frequent dippers hurt more than
+    # rare ones. The STOCK floor rose 10% -> 15% on 2026-11-06: the
+    # historical study (2021-2026) found stock realized forward
+    # drawdowns ran 1.41x the formula at the median (n=5,887) — worst
+    # exactly where the floor binds (dd_freq = 0: median realized
+    # 16.0%, 88% drew down deeper than the 10% assumed). The same study
+    # found the ETF formula already calibrated at the 10% floor
+    # (median ratio 0.95; dd_freq = 0 realized exactly 10.0%), so ETFs
+    # keep ETF_DOWNSIDE_FLOOR — the raise applies only where the
+    # evidence lives.
+    _dd_floor = ETF_DOWNSIDE_FLOOR if is_etf else DOWNSIDE_FLOOR
+    downside_base = max(abs(dd) * 0.5, _dd_floor) * (1 + ddf)
+    downside = downside_base
+    # EARNINGS-GAP FLOOR (2026-10-30, Dan delegated judgment after the
+    # October audit): backward-looking drawdowns do not price a scheduled
+    # print. When earnings land within 30 days, the downside input is at
+    # least half the ticker's typical earnings-day move (median absolute
+    # close-to-close move on past announcement dates; fallback 12%, the
+    # cross-sectional average from the audit's cited sample). This moves
+    # the downside INPUT only — formula structure and weights unchanged.
+    earn_gap_applied = False
+    earn_move_typ = None
+    earn_move_fallback = False
+    earnings_in_days = None
+    try:
+        _ed = row.get("earnings_in_days")
+        earnings_in_days = (None if _ed is None or _ed != _ed
+                            else float(_ed))
+    except Exception:
+        earnings_in_days = None
+    if earnings_in_days is not None and 0 <= earnings_in_days <= 30:
+        try:
+            _tm = row.get("earn_move_typ")
+            earn_move_typ = (None if _tm is None or _tm != _tm
+                             else float(_tm))
+        except Exception:
+            earn_move_typ = None
+        if earn_move_typ is None:
+            earn_move_typ = EARN_GAP_FALLBACK_MOVE
+            earn_move_fallback = True
+        if 0.5 * earn_move_typ > downside:
+            downside = 0.5 * earn_move_typ
+            earn_gap_applied = True
+    # character: the Composure parts est doesn't already see (quality, entry
+    # timing, structure/cost) adjust the whole estimate up/down by up to ~50%.
+    # DIVERSIFIED-ETF DEP CHARGE — REMOVED (2026-11-06, Dan's delegated
+    # judgment: "do your best recommendations so that the best naturally
+    # get picked"). The -dep x 20% term prices single-name event risk:
+    # the chance a thesis hangs on events outside the company's control.
+    # A diversified basket has no single-name thesis — its event risk is
+    # already fully inside its price history, which the downside term
+    # charges from the same row — so diversified ETFs paid for the same
+    # risk twice (~1.4 EV points at the 0.15 ceiling), pinning the whole
+    # diversified complex just below the 0% floor (2026-11-06: XMHQ,
+    # JQUA, COWZ at -0.2/-0.2/-0.3% with cont 0.65-0.70 and maxdd -7/-8%).
+    # The charge is removed for diversified ETFs ONLY (classification
+    # via category-or-sector: ETF rows carry the Morningstar category in
+    # 'sector'). dep itself is unchanged and still drives the 0.7 veto,
+    # the eligibility gates, and watchlist ratings. Concentrated,
+    # sector, and theme funds keep the charge — their event risk is
+    # real and not fully visible in a short drawdown window. Rehearsed
+    # 2026-11-06 on the Nov 6 bundle: ETF slate 3 -> 6 picks, stock
+    # slate identical, self-check 18/18. Judged by the Nov 30 audit
+    # with the C3 constant (validation agenda item 2).
+    dep_ev = dep
+    if is_etf and classify_etf_category(
+            row.get("category") or row.get("sector")) == "diversified":
+        dep_ev = 0.0
+    # BASE-ONLY EV CORE (2026-11-07; see EV_BASE_STOCK / EV_BASE_ETF):
+    # the fitted price coefficients are zero, so the bracket is the
+    # per-kind base rate less the dep charge; upside and downside
+    # remain computed above and recorded below for the gates and the
+    # audit trail.
+    # EV V2 CONTINUATION TILT (2026-11-07, Dan's directive; see
+    # EV_GAMMA_STOCK / EV_GAMMA_ETF): the bracket gains
+    # GAMMA[kind] x (cont - 0.50). The ETF gamma is half the live
+    # bucket estimate and survived the pre-ship robustness checks;
+    # the stock gamma is 0.0 because the stock continuation effect is
+    # not separately identified from dep on the live record, so the
+    # stock bracket is exactly the base-only core. cont still drives
+    # the gates and the watchlist ratings either way.
+    base_rate = EV_BASE_ETF if is_etf else EV_BASE_STOCK
+    gamma = EV_GAMMA_ETF if is_etf else EV_GAMMA_STOCK
+    cont_tilt = gamma * (cont - 0.50)
+    est = conf * (1 + 0.25 * char) * (base_rate + cont_tilt - dep_ev * 0.20)
+    # RESEARCH REDESIGN v2 EV (stocks only; see the FACT_W_* block):
+    # recorded in every mode; effective only when _EV_MODE == "live".
+    est_v2 = None
+    fact_tilt, research_score, no_signal, dep_override = 0.0, None, None, False
+    conf_adj = conf
+    if not is_etf:
+        _facts = _facts_of(row)
+        fact_tilt, research_score, no_signal, dep_override = \
+            _fact_components(_facts, dep_ev)
+        conf_adj = 0.5 + 0.5 * conf
+        est_v2 = conf_adj * (1 + 0.25 * char) * (
+            base_rate + cont_tilt + fact_tilt)
+    else:
+        # ETF FLAT EV (2026-11-10, Dan approved; etf_redesign_2026-11-10):
+        # the production form anti-sorted blowups (its top quartile blew
+        # up MORE than its bottom quartile in both panel halves) because
+        # the dep charge and the continuation tilt concentrate the
+        # ranking on riskier funds. The flat stock-form (compressed conf,
+        # base only, no tilt, no dep charge for ANY fund) flips blowup
+        # discrimination positive (+0.150) and halves the level error.
+        # est_v2 for ETFs = the flat form; effective in live mode via
+        # the same switch as stocks. dep keeps its gate, tier, veto and
+        # ratings jobs untouched.
+        conf_adj = 0.5 + 0.5 * conf
+        est_v2 = conf_adj * (1 + 0.25 * char) * base_rate
+    est_legacy = est
+    if _EV_MODE == "live" and est_v2 is not None:
+        est = est_v2
+    return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
+            "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
+            "downside": downside, "downside_base": downside_base,
+            "earn_gap_applied": earn_gap_applied,
+            "earn_move_typ": earn_move_typ,
+            "earn_move_fallback": earn_move_fallback,
+            "earnings_in_days": earnings_in_days,
+            "character": char, "base_rate": base_rate,
+            "cont_tilt": cont_tilt,
+            "dep": dep, "dep_ev": dep_ev, "cont": cont, "conf": conf,
+            "est": est, "est_legacy": est_legacy, "est_v2": est_v2,
+            "fact_tilt": fact_tilt, "research_score": research_score,
+            "no_signal": no_signal, "dep_override": dep_override,
+            "conf_adj": conf_adj, "ev_mode": _EV_MODE}
+
+
+def estimate_next_year(row, dep, cont, conf=1.0):
+    """Heuristic expected value, for display and ranking — NOT a prediction.
+
+    EV = conf x (1 + 0.25 x character)
+         x (BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20)
+      BASE        = per-kind base rate (EV_BASE_STOCK / EV_BASE_ETF),
+                    fitted on the 2021-2026 historical snapshots by
+                    the 2026-11-07 design study: sign-constrained fits
+                    put both price coefficients (upside, downside) at
+                    zero, so the bracket is the base rate less the dep
+                    charge. est_parts still computes and records
+                    upside/downside (the gates and the audit consume
+                    them); they carry no EV weight.
+      GAMMA       = per-kind continuation tilt (EV_GAMMA_STOCK /
+                    EV_GAMMA_ETF, v2 shipped 2026-11-07): 0.0177 for
+                    ETFs (half the live bucket estimate; survived the
+                    dep-controlled and per-name robustness checks),
+                    0.0 for stocks (the stock continuation effect is
+                    not separately identified from dep on the live
+                    record). The applied tilt is recorded per row as
+                    cont_tilt.
+      character   = the Composure parts this formula doesn't already see
+                    (quality, entry timing, structure/cost), as a z-sum:
+                    high-character names get their estimate lifted, low-
+                    character names get it cut. Momentum and volatility are
+                    deliberately excluded (ret_6m/maxdd already cover them);
+      event_unwind= 20% haircut scaled by event_dependence (dep_ev is 0
+                    for diversified ETFs — see est_parts);
+      conf        = researcher's confidence in the assessment (0..1): low
+                    confidence shrinks the estimate toward zero (neutral).
+    Names differ only through the research layer: higher confidence and
+    character lift the estimate, higher event dependence cuts it.
+    """
+    return est_parts(row, dep, cont, conf)["est"]
+    raw = cont * upside - (1 - cont) * downside - dep * 0.20
+    return conf * raw
+
+
+# ---- Oct 30, 2026 changes (Dan delegated judgment; October audit) ----
+# 1) Earnings-gap downside input: est_parts() floors the EV downside at
+#    half the typical earnings-day move when earnings are within 30 days.
+# 2) Two-strike risk gate in pick_final: candidates carrying >=2 of
+#    {earnings <=14d, 6m run >=50%, implied_upside <0, dep >=0.40} are
+#    honorable mentions only, never picks. Watchlist mode never applies it.
+EARN_GAP_FALLBACK_MOVE = 0.12  # audit-cited cross-sectional average (§11.3)
+EARN_GAP_WINDOW_DAYS = 30      # earnings proximity for the downside floor
+RISK_GATE_MIN_STRIKES = 2
+
+# 3) Diversified-ETF dep ceiling (Fix B, 2026-10-30, Dan approved after
+#    the ETF-leg EV diagnosis): a diversified basket does not carry
+#    single-name event risk, but researchers were scoring diversified
+#    funds dep ~0.25 out of habit — a 5-point bracket charge that, with
+#    the 10% downside floor and the confidence haircut, meant a
+#    diversified fund needed a ~20% raw 6m run just to break even
+#    (98 scored ETFs on 2026-10-30: median EV -2.8%, exactly 1 over the
+#    +3% floor). For DIVERSIFIED ETFs only, the dep fed to every
+#    decision (EV term, dep veto, risk-gate strike, watchlist rating,
+#    stability grade) is capped at 0.15. Stocks and concentrated
+#    (sector/thematic) ETFs are untouched. The EV formula itself,
+#    the floor, the veto threshold and the caps are unchanged — this
+#    corrects a mis-priced INPUT, like the earnings-gap downside.
+DEP_CEILING_DIVERSIFIED = 0.15
+
+# ---- Nov 6, 2026 changes (Dan's call after the special scorer/EV audit
+# and the ETF winner-detection study; both studies in the project dir) ----
+# 4) ETF EXTENSION/DEP ELIGIBILITY GATE (winner-detection rule R7,
+#    REPLAY-VALIDATED): October ETF picks were the most extended names in
+#    the evaluated universe (entry 6m run +32.2% vs winners' +12.7%) and
+#    lost to the rejects (-5.99% vs -1.85%). Rules built on Oct 5-15
+#    entries only and frozen beat both the actual picks and the full
+#    cohort on Oct 16-30; the best was: pick-eligible ETFs must have
+#    ret_6m_skip1m <= +15% AND dep_used <= 0.20 (validation mean -0.70%
+#    vs picks -3.74%, VOO-rel +2.92%, zero -15% drawdowns; first-week
+#    counterfactual +0.10% vs actual picks -10.04%). The gate removes
+#    names instead of shrinking EVs, so it cannot reproduce the failed
+#    dampener variants' zero-pick arithmetic. Barred ETFs keep their
+#    EVs and can appear as honorable mentions. Judged by the Nov 30
+#    audit (pre-registered: live ETF picks >= live evaluated cohort on
+#    mean return with MAE-bad rate no higher, n >= 30 pick spells).
+ETF_GATE_MAX_RUN = 0.15
+ETF_GATE_MAX_DEP = 0.20
+# 4b) TIER-2 "PROVEN STRENGTH" LANE (2026-11-06, Dan's directive after
+#    VFLO/DIVB were barred: "winners should absolutely not be barred").
+#    The flat R7 cap barred 440 October spells of which 87 were absolute
+#    winners and 290 beat VOO; the damage concentrated above +35% runs
+#    (0% positive, 48% blowups) and in deep-drawdown names. Tier 2 admits
+#    run <= +35% / dep <= 0.30 when the fund's scar tissue is shallow
+#    (maxdd >= -12%, dd_freq <= 0.05) — the exact profile of all 26
+#    October winner tickers. Tier-2-only cohort, validation half:
+#    -1.29% mean, +2.70% vs VOO, zero -15% drawdowns; the cohort still
+#    barred under the tiered gate: -6.46%, -2.86% rel, 8.0% blowups.
+#    Tier-2 picks are slot-capped so the page cannot refill with
+#    extended names. Judged by the Nov 30 audit alongside the gate.
+ETF_TIER2_MAX_RUN = 0.35
+ETF_TIER2_MAX_DEP = 0.30
+ETF_TIER2_MIN_MAXDD = -0.12
+ETF_TIER2_MAX_DDFREQ = 0.05
+# (ETF_TIER2_MAX_PICKS was 3 under the tiered gate; see 4c and 4d.)
+# 4c) STRIKE GATE (2026-11-06 late, Dan's directive: "ship the strike
+#    design using your best design" — shipped over Muse's stated
+#    recommendation to wait for the Nov 30 audit). The tiered hard caps
+#    of 4b are replaced by strikes, mirroring the stock two-strike
+#    gate: each of the four tier-2 lines becomes a strike. Zero
+#    strikes = tier 1 (clean, uncapped); exactly one strike = tier 2
+#    (eligible; at ship it kept the old tier-2 slot cap of 3 picks,
+#    REMOVED later the same evening at Dan's directive — see 4d);
+#    two or more strikes = barred. The thresholds ARE the
+#    tier-2 constants (aliased below) — no new fitted numbers; the
+#    change is combinational only: any one line may fail, two may
+#    not. Judged by the Nov 30 audit head-to-head against the
+#    hard-tier design it replaced (agenda item 10).
+# 4d) ONE-STRIKE SLOT CAP REMOVED (2026-11-06 late, Dan's directive:
+#    "remove the limit of 3 picks with one strike"). None = no cap:
+#    enforce_etf_tier2_cap() returns the selection unchanged and the
+#    self-check's tier-2 count test is skipped. The constant is kept
+#    (value None) so manifests record the uncapped state explicitly.
+ETF_TIER2_MAX_PICKS = None
+ETF_STRIKE_MAX_RUN = ETF_TIER2_MAX_RUN
+ETF_STRIKE_MAX_DEP = ETF_TIER2_MAX_DEP
+ETF_STRIKE_MIN_MAXDD = ETF_TIER2_MIN_MAXDD
+ETF_STRIKE_MAX_DDFREQ = ETF_TIER2_MAX_DDFREQ
+ETF_STRIKE_BAR = 2
+# STOCK SELECTION (2026-11-06, Dan shipped on the stock test battery —
+# stock_winner_detection_2026-11-06): eligibility gate (implied_upside
+# >= 0 and dep_used < STOCK_GATE_MAX_DEP) and the steep upside dampener
+# in est_parts (first STOCK_UP_T1 of the 6m run at full weight, beyond
+# at STOCK_UP_FACTOR, run capped at STOCK_UP_CAP).
+STOCK_GATE_MAX_DEP = 0.30
+STOCK_UP_T1 = 0.15
+STOCK_UP_FACTOR = 1.0 / 3.0
+STOCK_UP_CAP = 0.30
+# 5) ETF NO-MOMENTUM EV (calibration candidate C3, the only variant with
+#    positive EV->return correlation on both split halves in both
+#    populations): for ETFs the EV upside term is a CONSTANT — the
+#    discovery-half median dampened upside of gate-eligible ETFs — so a
+#    fund's own 6-month run no longer enters its EV at all. Production
+#    EV was REVERSED for ETFs (each +1pp of EV predicted -0.55pp of
+#    realized return, C4 fit) because the momentum upside term pays for
+#    exactly the extension the gate now excludes. ETF EV ranks on
+#    cont/conf/character/dep/downside only. The constant is
+#    regime-stamped (October 2026 falling tape); the monthly audit
+#    re-derives it. Stocks are untouched.
+ETF_EV_UPSIDE_CONST = 0.08
+# Recalibrated 2026-11-06 (historical study, Jan 2021-Oct 2026): the
+# original 0.1115 was the October-2026 discovery-half median and sits
+# at ~p75 of historical per-snapshot medians (median-of-medians 0.079,
+# pooled 0.088; by year 0.060-0.107 with 2026 the highest). 0.08 is
+# the long-history central value. The Nov 30 audit re-derives it again
+# from live data.
+# 6) BASE-ONLY EV CORE (shipped 2026-11-07, Dan's directive; design
+#    study: ev_formula_study_2026-11-07/results.md + formula_spec.md).
+#    Sign-constrained fits of EV = base + b x upside - c x downside on
+#    the 2021-2026 historical snapshots put BOTH price coefficients at
+#    their zero bound, for both kinds, on both validation splits:
+#    under the formula's own sign conventions the price terms carry
+#    no supported level content (the unconstrained fits want upside
+#    negative and downside positive — the survivor-population
+#    artifact). The EV bracket is therefore the per-kind base rate
+#    less the dep charge (see est_parts). These constants are the
+#    study's DISCOVERY-window fits (2021-2023), the pair validated on
+#    untouched 2024-2026 data (bucket MAE 13.9pp stocks / 13.8pp ETFs
+#    vs the retired skeleton's 19.4 / 16.6pp). The full-window refits
+#    (+12.56% / +9.34%) were NOT shipped: fitted partly on the
+#    validation years, they carry the survivor population's flattery
+#    at full strength. Constants are frozen between audits; the
+#    monthly audit re-derives them from the extended snapshot
+#    dataset and Dan approves any change (spec section 5 guardrail
+#    governs any future nonzero price coefficient). Judged by the
+#    Nov 30 audit, agenda item 13 (ADOPTED branch).
+EV_BASE_STOCK = 0.0822
+EV_BASE_ETF = 0.0620
+# 7) EV V2 — CONTINUATION TILT (shipped 2026-11-07, Dan's directive:
+#    "find the best v2 from the evidence and ship it now"). The bracket
+#    gains a per-kind continuation term:
+#      EV = conf x (1 + 0.25 x character)
+#           x (BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20)
+#    Evidence basis (ev_smelltest_2026-11-07/results.md, v2_spec.md,
+#    gamma_robustness.md — live record, PRELIMINARY, one falling
+#    regime, horizons <= 24 trading days):
+#    - ETFs: the live bucket estimate was +0.35pp realized per 0.10 of
+#      cont, and the tilt SURVIVED the robustness checks that were run
+#      before shipping (dep-controlled spell regression +0.71
+#      [+0.43, +0.99]; per-name collapse +1.60 cont-only / +1.31
+#      [+0.36, +2.25] dep-controlled). GAMMA_ETF = 0.0177 is HALF the
+#      bucket estimate (the pre-registered v2 spec size): the
+#      dep-controlled estimates were larger but noisier and rest on a
+#      single observation window, so the conservative size stands.
+#      Caveat on the record: the effect has been observed once, in
+#      spells entered on or before Oct 31; November entries show zero
+#      so far at much shorter horizons.
+#    - Stocks: GAMMA_STOCK = 0.0. The stock continuation effect is
+#      NOT separately identified from dep on the live record
+#      (cont-dep correlation -0.56; dep-controlled gamma +0.05
+#      [-0.52, +0.61]; per-name -0.28 cont-only / -0.85 dep-controlled
+#      — a sign flip), so the coefficient the evidence supports for
+#      stocks is zero. The tilt ships only where the evidence carries
+#      it; the stock leg of EV is unchanged from the base-only core.
+#    Judged by the Nov 30 audit, agenda item 14, under its
+#    pre-registered adoption rule (this shipped state is what runs).
+EV_GAMMA_STOCK = 0.0
+EV_GAMMA_ETF = 0.0177
+# 8) RESEARCH REDESIGN — FACT-BASED EV, STOCKS ONLY (approved by Dan
+#    2026-11-10 after the research_backtest + research_redesign +
+#    research_ultimate studies of 2026-11-10 and the verification
+#    battery in research_redesign_2026-11-10/tests/). For stocks, the
+#    v2 EV replaces the dep charge and the raw-conf multiplier with:
+#      EV_v2 = (0.5 + 0.5 x conf) x (1 + 0.25 x character)
+#              x (BASE_STOCK + fact_tilt)
+#      fact_tilt = 0.044 x dividend_up + 0.046 x buyback
+#                  - 0.071 x big_acquisition
+#    Terms are 50% x the POOLED forward-1y return gaps from the
+#    completed 240-name blinded reconstruction (design validated
+#    out-of-sample on the 2024-2025 as-of half; final weights fitted
+#    on all history once the design was chosen). DEPENDENCE OVERRIDE:
+#    the positive terms (dividend/buyback) are zeroed when
+#    dep_used >= 0.50 — inside high-dependence names the dividend gap
+#    flips sign (windfall/event-linked payers; the tanker case) and
+#    buyback turns into a risk marker, while the acquisition penalty
+#    deepens (interaction test, tests/chosen_configuration.md). The
+#    acquisition charge applies at every dependence level. dep itself
+#    is unchanged everywhere else: the 0.30 eligibility gate, the
+#    two-strike dep strike, the 0.70 veto, watchlist ratings.
+#    A recorded research score (no EV weight) rides along:
+#      0.499 x dividend_up + 0.172 x buyback + 0.081 x beat_streak
+#        - 0.253 x big_acquisition   (beat_streak is a downside-only
+#      graduate; it is deliberately NOT an EV return term).
+#    Names whose facts were coded with every fact 0 get no_signal=True
+#    (the research stage found nothing either way — never filled with
+#    a judgment estimate). ETFs are untouched by this block.
+#    MODES (--ev-mode): "legacy" = v2 computed and recorded only if
+#    mode is shadow; "shadow" = v2 computed and recorded alongside the
+#    production EV, production still decides (Nov 11-13 runs);
+#    "live" = v2 IS the stock EV (from Mon 2026-11-16). In every mode
+#    the non-effective variant is recorded in frames for the audit.
+FACT_W_DIVIDEND = 0.044
+FACT_W_BUYBACK = 0.046
+FACT_W_ACQUISITION = -0.071
+FACT_DEP_OVERRIDE = 0.50
+RESEARCH_SCORE_W = {"dividend_up": 0.499, "buyback": 0.172,
+                    "beat_streak": 0.081, "big_acquisition": -0.253}
+_EV_MODE = "legacy"
+
+# THEME RECORDING (2026-11-10): category -> theme entry, populated from
+# the research store's "themes" block by _adapt_research_store_outputs
+# whenever a store is adapted. Recording only: frame rows stamp these
+# onto ETF rows; no EV, gate, or rating code reads them.
+_THEME_FACTS = {}
+
+
+def _facts_of(row):
+    """Normalized 14-fact dict for a row, or None when facts were not
+    coded for it. Reads the llm_facts column (JSON string set by
+    llm_research.apply_llm_outputs) or a dict on the row."""
+    raw = None
+    try:
+        raw = row.get("llm_facts")
+    except Exception:
+        raw = None
+    if raw is None or (isinstance(raw, float) and raw != raw):
+        return None
+    if isinstance(raw, dict):
+        nf = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            import json as _json
+            nf = _json.loads(raw)
+        except Exception:
+            return None
+    else:
+        return None
+    try:
+        from llm_research import normalize_facts
+        return normalize_facts(nf)
+    except Exception:
+        return nf if isinstance(nf, dict) else None
+
+
+def _theme_entry_of(r):
+    """The stored theme entry for this row's category, or None. ETF
+    rows only; the category is the Morningstar category the row
+    carries in its 'sector' field."""
+    if str(r.get("kind", "")) != "etf":
+        return None
+    entry = _THEME_FACTS.get(str(r.get("sector") or ""))
+    return entry if isinstance(entry, dict) else None
+
+
+def _theme_facts_of(r):
+    """The coded theme facts for this ETF row's category, or None
+    (stocks, unknown categories, uncoded themes)."""
+    entry = _theme_entry_of(r)
+    if entry is None:
+        return None
+    facts = entry.get("facts")
+    return facts if isinstance(facts, dict) else None
+
+
+def _theme_coded_date_of(r):
+    entry = _theme_entry_of(r)
+    return entry.get("coded_date") if entry is not None else None
+
+
+# ETF THEME CAP (2026-11-10, Dan's directive): the ETF pick cap binds
+# per economic THEME, not per exact Morningstar category string. The
+# Blend/Value/Growth splits inside one market-cap size are one theme:
+# their holdings overlap heavily and they draw down together, so
+# Large Blend + Large Value + Large Growth may hold at most
+# --max-per-etf-category picks COMBINED. Every other category is its
+# own theme. The raw category is still recorded on every row.
+_ETF_STYLEBOX_THEMES = {
+    "Large Blend": "Large-cap", "Large Value": "Large-cap",
+    "Large Growth": "Large-cap",
+    "Mid-Cap Blend": "Mid-cap", "Mid-Cap Value": "Mid-cap",
+    "Mid-Cap Growth": "Mid-cap",
+    "Small Blend": "Small-cap", "Small Value": "Small-cap",
+    "Small Growth": "Small-cap",
+}
+
+
+def _etf_theme_of(category):
+    """The economic theme a Morningstar category belongs to for the
+    ETF theme cap; falls back to the category itself."""
+    c = str(category or "")
+    return _ETF_STYLEBOX_THEMES.get(c, c or "Unknown")
+
+
+# Category data fixes (2026-11-10): the metadata feed leaves a few
+# well-known funds unclassified ('Unknown'), and a theme cap must not
+# treat a data gap as a theme of its own. Applied ONLY where the raw
+# category is missing/Unknown, and only for cap grouping and frame
+# theme recording - the raw category on the row is never rewritten,
+# so dependence classification and everything else sees the feed data.
+_ETF_CATEGORY_OVERRIDES = {"VO": "Mid-Cap Blend",
+                           "VTI": "Large Blend"}
+
+
+def _etf_category_of(r):
+    """The category used for theme grouping of an ETF row: the raw
+    category, repaired from the override map when the feed left it
+    Unknown."""
+    cat = str(r.get("sector") or "")
+    if cat in ("", "Unknown"):
+        return _ETF_CATEGORY_OVERRIDES.get(str(r.get("ticker") or ""),
+                                            cat)
+    return cat
+
+
+def _cap_key_of(r):
+    """The grouping key the pick caps enforce for a row: the theme for
+    ETF rows, the sector for stock rows."""
+    if str(r.get("kind", "")) == "etf":
+        return _etf_theme_of(_etf_category_of(r))
+    sec = r.get("sector")
+    return str(sec) if sec is not None else ""
+
+
+def _fact_components(facts, dep_used):
+    """(fact_tilt, research_score, no_signal, dep_override) for a stock.
+
+    facts=None (not coded) -> tilt 0.0, score None, no_signal None.
+    """
+    if not isinstance(facts, dict):
+        return 0.0, None, None, False
+    div = 1.0 if facts.get("dividend_up") else 0.0
+    bb = 1.0 if facts.get("buyback") else 0.0
+    acq = 1.0 if facts.get("big_acquisition") else 0.0
+    beat = 1.0 if facts.get("beat_streak") else 0.0
+    override = False
+    pos = FACT_W_DIVIDEND * div + FACT_W_BUYBACK * bb
+    try:
+        if dep_used is not None and float(dep_used) >= FACT_DEP_OVERRIDE:
+            pos = 0.0
+            override = (div or bb)
+    except (TypeError, ValueError):
+        pass
+    tilt = pos + FACT_W_ACQUISITION * acq
+    score = (RESEARCH_SCORE_W["dividend_up"] * div
+             + RESEARCH_SCORE_W["buyback"] * bb
+             + RESEARCH_SCORE_W["beat_streak"] * beat
+             + RESEARCH_SCORE_W["big_acquisition"] * acq)
+    no_signal = not any(facts.get(k) for k in facts)
+    return tilt, score, bool(no_signal), bool(override)
+
+
+DOWNSIDE_FLOOR = 0.15       # stocks (raised from 0.10, see est_parts)
+ETF_DOWNSIDE_FLOOR = 0.10   # ETFs: 10% already calibrated historically
+_ETF_SECTOR_KEYWORDS = (
+    "technology", "health", "biotech", "energy", "financial",
+    "real estate", "materials", "industrials", "utilities", "consumer",
+    "communication", "semiconductor", "cyber", "artificial", "robotics",
+    "cannabis", "gaming", "airline", "transportation", "infrastructure",
+    "water", "clean", "solar", "nuclear", "defense", "crypto",
+    "blockchain", "gold", "silver", "mining", "oil", "gas", "bank",
+    "insurance", "pharma", "media", "retail", "homebuild",
+)
+_ETF_SIZE_WORDS = ("large", "mid", "small")
+_ETF_FACTOR_WORDS = ("value", "blend", "growth", "momentum", "quality",
+                     "dividend")
+# Evidence from the most recent add_research_columns() enrichment, for
+# the dep_ceiling_applied self-check (a real recomputation, below).
+_DEP_CEILING_BINDS = {}      # ticker -> (dep_raw, dep_used)
+_DEP_CEILING_EVIDENCE = []   # per-row dicts from the latest enrichment
+
+
+def classify_etf_category(category):
+    """'diversified' | 'concentrated' for an ETF category string.
+
+    Diversified requires a size band (Large/Mid/Small) + a factor word
+    (Value/Blend/Growth/Momentum/Quality/Dividend) and NO sector/theme
+    keyword. Anything else — single-sector/thematic categories, and
+    ambiguous categories without the size+factor signature — is
+    concentrated (fail-safe: no ceiling applied)."""
+    c = str(category or "").lower()
+    if any(k in c for k in _ETF_SECTOR_KEYWORDS):
+        return "concentrated"
+    if (any(w in c for w in _ETF_SIZE_WORDS)
+            and any(w in c for w in _ETF_FACTOR_WORDS)):
+        return "diversified"
+    return "concentrated"
+
+
+def effective_dep(ticker, kind, category, dep):
+    """(dep_used, capped) — the ONE dep every decision consumes.
+
+    Shared by the main Phase B ranking and watchlist-mode rating so the
+    diversified-ETF ceiling can never diverge between flows. Only
+    diversified ETFs are capped; everything else passes through."""
+    try:
+        d = float(dep)
+    except Exception:
+        d = 0.3
+    if str(kind or "").lower() == "etf" \
+            and classify_etf_category(category) == "diversified":
+        used = min(d, DEP_CEILING_DIVERSIFIED)
+        return used, used < d - 1e-12
+    return d, False
+
+
+def _dep_used_of(r):
+    """dep_used for a frame row: the enriched column when present, else
+    recomputed from the raw fields via effective_dep (ledger/control
+    paths iterate the caller's unenriched ranked frame)."""
+    v = _safe(r.get("dep_used")) if hasattr(r, "get") else None
+    if v is not None:
+        return v
+    raw = _safe(r.get("llm_event_dependence"))
+    used, _c = effective_dep(r.get("ticker"), r.get("kind"),
+                             r.get("sector"),
+                             raw if raw is not None else 0.3)
+    return used
+
+
+# Scorer z-components (2026-11-06, Dan's call): the special audit could
+# not replay scorer variants because no per-ticker z-scores were ever
+# recorded ("no per-ticker z-scores" was a named data gap). The z's are
+# computed in the Phase A scorer and now travel with each candidate
+# (bundle dicts) into the frame snapshot, so future scorer tests are
+# replayable end to end. Recording only — never read by selection.
+ZCOLS = ["z_6m", "z_3m", "z_blowoff", "z_ext", "z_trend", "z_roe",
+         "z_margin", "z_earn", "z_fcf", "z_dte", "z_fpe", "z_ptb",
+         "z_vol", "z_dd", "z_beta"]
+
+
+def _z_of(r):
+    """The row's scorer z-components as a plain dict (from a nested 'z'
+    dict when the row came through a research bundle, else from the
+    z_* fields/columns of an in-process scored row)."""
+    try:
+        z = r.get("z")
+    except Exception:
+        z = None
+    if isinstance(z, dict) and z:
+        return {c: _safe(z.get(c)) for c in ZCOLS}
+    return {c: _safe(r.get(c)) for c in ZCOLS}
+
+
+def _offense_score_of(r):
+    """Variant A offense score (2026-11-07): the scorer's momentum leg,
+    0.08 * z_6m + 0.06 * z_3m, from the row's recorded z components (the
+    exact production leg weights, recovered from build_scores via the
+    historical study's replication). Returns None when either component
+    is missing — an unscored name ranks below every scored name in
+    Variant A selection and records no score in frames/ledgers."""
+    z = _z_of(r)
+    a, b = z.get("z_6m"), z.get("z_3m")
+    if a is None or b is None:
+        return None
+    return 0.08 * float(a) + 0.06 * float(b)
+
+
+# RESEARCH POOL LANES (2026-11-06 pool package — Dan shipped on the
+# pool-gap diagnosis). The core pool stays top-N by base_score; the
+# lanes below only decide what gets EVALUATED — every gate, the EV
+# formula and the floors decide picks exactly as before.
+POOL_SECTOR_CAP = 25        # stocks: max core seats per sector
+POOL_OVERFLOW_N = 15        # seats per kind for top ret_1y non-core names
+POOL_PERSIST_MAX = 20       # persistence seats per kind
+POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
+
+
+def _persistence_tickers():
+    """Tickers picked within the last POOL_PERSIST_WINDOW_DAYS days,
+    most recent pick first (from thesis_ledger 'picked' events).
+
+    A pool_exit exit deliberately does NOT cancel a seat: the pool
+    exit is the cliff this lane fixes (VCTR's thesis was still intact
+    when its Nov 6 exit was recorded as pool_exit), not a verdict.
+    The window itself is the expiry — a name that stops being picked
+    ages out within a week."""
+    try:
+        import datetime as _dt
+        import json as _j
+        cutoff = (_dt.date.today()
+                  - _dt.timedelta(days=POOL_PERSIST_WINDOW_DAYS)).isoformat()
+        last = {}
+        with open(THESIS_LEDGER) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = _j.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "picked" \
+                        and str(e.get("date", "")) >= cutoff:
+                    t = str(e.get("ticker"))
+                    if str(e["date"]) > last.get(t, ""):
+                        last[t] = str(e["date"])
+        return [t for t, _ in sorted(last.items(),
+                                     key=lambda kv: kv[1], reverse=True)]
+    except Exception:
+        return []
+
+
+def _build_pool(frame, n, kind, persist):
+    """Assemble one kind's research pool from its full scored frame.
+
+    Core: top-n by base_score (the frame arrives sorted), with a
+    per-sector cap for stocks. Persistence: recently-picked names keep
+    a seat even when their rank slips (the AAMI/NTAP cliff). Overflow:
+    the strongest trailing-1y names outside the core get seats (the
+    SNX/PR/XOM shape — big 1y benchmark-beaters whose cooled momentum
+    sinks base_score). Returns (pool_df, tail_records) where the tail
+    is core ranks n+1..n+100 that no lane seated — recorded so the
+    monthly audit measures pool leakage instead of finding anecdotes.
+    """
+    if frame is None or frame.empty:
+        return frame, []
+    f = frame.copy()
+    f["_pool_rank"] = range(1, len(f) + 1)
+    f["_pool_lane"] = None
+    taken = []
+    if kind == "stock":
+        counts = {}
+        for i, r in f.iterrows():
+            if len(taken) >= n:
+                break
+            sec = str(r.get("sector"))
+            if counts.get(sec, 0) >= POOL_SECTOR_CAP:
+                continue
+            counts[sec] = counts.get(sec, 0) + 1
+            taken.append(i)
+    else:
+        taken = list(f.index[:n])
+    if taken:
+        f.loc[taken, "_pool_lane"] = "core"
+    taken_set = set(f.loc[taken, "ticker"].astype(str)) if taken else set()
+    by_ticker = {str(t): i for i, t in zip(f.index,
+                                          f["ticker"].astype(str))}
+    n_p = 0
+    for t in persist:
+        if n_p >= POOL_PERSIST_MAX:
+            break
+        if t in taken_set or t not in by_ticker:
+            continue
+        i = by_ticker[t]
+        f.loc[i, "_pool_lane"] = "persistence"
+        taken.append(i)
+        taken_set.add(t)
+        n_p += 1
+    rest = f[~f.index.isin(taken)]
+    if len(rest):
+        for i in rest.sort_values("ret_1y", ascending=False) \
+                .head(POOL_OVERFLOW_N).index:
+            f.loc[i, "_pool_lane"] = "overflow"
+            taken.append(i)
+    pool = f.loc[sorted(taken,
+                        key=lambda i: int(f.loc[i, "_pool_rank"]))].copy()
+    tail = []
+    for _, r in f.iterrows():
+        if n < int(r["_pool_rank"]) <= n + 100 and r["_pool_lane"] is None:
+            tail.append({"ticker": str(r["ticker"]), "kind": kind,
+                         "rank": int(r["_pool_rank"]),
+                         "base_score": _safe(r.get("base_score")),
+                         "ret_1y": _safe(r.get("ret_1y")),
+                         "sector": (str(r.get("sector"))
+                                    if r.get("sector") is not None
+                                    else None),
+                         "z": _z_of(r)})
+    return pool, tail
+
+
+def _etf_strikes_of(r):
+    """Strike list for an ETF candidate row under the strike gate
+    (2026-11-06 late). Returns (strikes, missing): strikes is a list of
+    plain-language strike descriptions, one per failed proven-strength
+    line; missing is True when any metric needed to count strikes is
+    unavailable (fail-safe: unverifiable names are barred, as they
+    were under the tiered gate)."""
+    r6 = _safe(r.get("ret_6m_skip1m"))
+    if r6 is None:
+        r6 = _safe(r.get("ret_6m"))
+    du = _safe(_dep_used_of(r))
+    mdd = _safe(r.get("maxdd"))
+    ddf = _safe(r.get("dd_freq"))
+    if r6 is None or du is None or mdd is None or ddf is None:
+        return [], True
+    strikes = []
+    if r6 > ETF_STRIKE_MAX_RUN:
+        strikes.append(f"6m run {r6:+.0%} > +{ETF_STRIKE_MAX_RUN:.0%}")
+    if du > ETF_STRIKE_MAX_DEP:
+        strikes.append(f"dep {du:.2f} > {ETF_STRIKE_MAX_DEP:.2f}")
+    if mdd < ETF_STRIKE_MIN_MAXDD:
+        strikes.append(f"max drawdown {mdd:.0%} deeper than "
+                       f"{ETF_STRIKE_MIN_MAXDD:.0%}")
+    if ddf > ETF_STRIKE_MAX_DDFREQ:
+        strikes.append(f"drawdown frequency {ddf:.2f} > "
+                       f"{ETF_STRIKE_MAX_DDFREQ:.2f}")
+    return strikes, False
+
+
+def _etf_strike_count(r):
+    """Strike count for frame recording: an int, or None when the
+    strikes cannot be verified from the row's data."""
+    try:
+        strikes, missing = _etf_strikes_of(r)
+    except Exception:
+        return None
+    return None if missing else len(strikes)
+
+
+def _etf_tier_of(r):
+    """ETF pick-eligibility tier for a candidate row (strike gate,
+    2026-11-06 late — Dan's directive; replaces the tiered hard caps
+    shipped earlier the same day).
+
+    Strikes are counted against the four proven-strength lines (6m
+    run +35%, dep_used 0.30, maxdd -12%, dd_freq 0.05 — the profile
+    every October winner shared: all 26 winner tickers had dd_freq 0
+    and maxdd >= -10.6%). Zero strikes = tier 1 (clean). Exactly one
+    strike = tier 2 (eligible, no slot cap since 2026-11-06 late).
+    Two or more strikes = barred, and the fail reason names the
+    strikes. Mirrors the stock two-strike gate: one flaw warns, two
+    flaws bar. Judged by the Nov 30 audit head-to-head against the
+    hard-tier design (agenda item 10).
+    Returns (tier, fail_reason): tier is 1, 2, or None (barred)."""
+    strikes, missing = _etf_strikes_of(r)
+    if missing:
+        return None, "insufficient data for strike verification"
+    if not strikes:
+        return 1, None
+    if len(strikes) < ETF_STRIKE_BAR:
+        return 2, None
+    return None, f"{len(strikes)} strikes: " + "; ".join(strikes)
+
+
+def _earnings_dates_one(t):
+    """(ticker, [past earnings dates as naive Timestamps]) — never raises."""
+    try:
+        ed = yf.Ticker(t).earnings_dates
+        if ed is None or not len(ed):
+            return t, []
+        idx = ed.index
+        try:
+            idx = idx.tz_localize(None)
+        except Exception:
+            try:
+                idx = idx.tz_convert("America/New_York").tz_localize(None)
+            except Exception:
+                pass
+        today = pd.Timestamp.now().normalize()
+        past = sorted(d for d in idx if d <= today + pd.Timedelta(days=1))
+        return t, past
+    except Exception:
+        return t, []
+
+
+def typical_earnings_move(closes, earn_dates):
+    """Median absolute close-to-close move on past earnings dates.
+
+    yfinance stamps earnings announcements at ~16:00 ET (after the
+    close), so the reaction session is the first session AFTER the
+    announcement date and the move is measured against the
+    announcement-date session's close. Returns None when fewer than 2
+    usable announcements exist (caller then applies the 12% fallback
+    and logs it).
+    """
+    if closes is None or not earn_dates:
+        return None
+    try:
+        s = closes.dropna()
+        if len(s) < 60:
+            return None
+        idx = s.index
+        if getattr(idx, "tz", None) is not None:
+            s = s.copy()
+            s.index = idx.tz_localize(None)
+        moves = []
+        for d in earn_dates:
+            dd = pd.Timestamp(d).normalize()
+            pos = int(s.index.searchsorted(dd, side="right"))
+            if pos <= 0 or pos >= len(s):
+                continue
+            prev, cur = float(s.iloc[pos - 1]), float(s.iloc[pos])
+            if prev > 0:
+                moves.append(abs(cur / prev - 1.0))
+        if len(moves) < 2:
+            return None
+        import statistics
+        return float(statistics.median(moves))
+    except Exception:
+        return None
+
+
+def attach_earnings_gap_inputs(df, cache=None):
+    """Ensure every row with earnings within 30 days carries earn_move_typ
+    (the ticker's typical earnings-day move), so est_parts can apply the
+    earnings-gap downside floor. Cached per ticker-set in the StepCache,
+    like the other per-ticker enrichment. Fail-soft throughout: rows whose
+    history is unavailable get the 12% fallback value, flagged in the
+    earn_move_fallback column, and the fallback use is logged."""
+    from cache import StepCache
+    if df is None or df.empty or "earnings_in_days" not in df.columns:
+        return df
+    df = df.copy()
+    if "earn_move_typ" not in df.columns:
+        df["earn_move_typ"] = None
+    if "earn_move_fallback" not in df.columns:
+        df["earn_move_fallback"] = False
+    ed = pd.to_numeric(df["earnings_in_days"], errors="coerce")
+    need_mask = ed.between(0, EARN_GAP_WINDOW_DAYS) & \
+        pd.to_numeric(df["earn_move_typ"], errors="coerce").isna()
+    need = sorted(df.loc[need_mask, "ticker"].astype(str).unique())
+    if not need:
+        return df
+    if cache is None:
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    key = "earn_moves_" + StepCache.tickers_key(need)
+    moves = cache.get(key)
+    if moves is None:
+        log(f"earnings-gap inputs: computing typical earnings-day moves "
+            f"for {len(need)} tickers (earnings within "
+            f"{EARN_GAP_WINDOW_DAYS}d)")
+        closes = download_prices(need, period="2y", min_rows=50)
+        dates = {}
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for t, ds in ex.map(_earnings_dates_one, need):
+                dates[t] = ds
+        moves = {t: typical_earnings_move(closes.get(t), dates.get(t))
+                 for t in need}
+        cache.put(key, moves)
+    fallback = []
+    for t in need:
+        mv = moves.get(t)
+        m = df["ticker"].astype(str) == t
+        if mv is None:
+            df.loc[m, "earn_move_typ"] = EARN_GAP_FALLBACK_MOVE
+            df.loc[m, "earn_move_fallback"] = True
+            fallback.append(t)
+        else:
+            df.loc[m, "earn_move_typ"] = float(mv)
+            _ed = ed[m].iloc[0] if m.any() else None
+            log(f"  earnings-gap input {t}: typical earnings-day move "
+                f"{mv:.1%} (earnings in {_ed:.0f}d)")
+    if fallback:
+        log(f"earnings-gap downside: fallback typical move "
+            f"{EARN_GAP_FALLBACK_MOVE:.0%} used for {len(fallback)} "
+            f"tickers (earnings-day history unavailable): {fallback}")
+    return df
+
+
+def attach_implied_upside(df, cache=None):
+    """Attach an implied_upside column ((analyst mean target - price) /
+    price) for every candidate, pre-selection, so the two-strike risk
+    gate can count the valuation strike. Cached per ticker-set in the
+    StepCache. Fail-soft: unavailable (no target — typical for ETFs —
+    or a failed fetch) stays NaN and the strike is simply not counted."""
+    from cache import StepCache
+    if df is None or df.empty or "ticker" not in df.columns:
+        return df
+    df = df.copy()
+    tickers = sorted(df["ticker"].astype(str).unique())
+    if cache is None:
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    key = "implied_upside_" + StepCache.tickers_key(tickers)
+    m = cache.get(key)
+    if m is None:
+        try:
+            from fuse_checks import implied_upside_map
+            m = implied_upside_map(tickers) or {}
+        except Exception as e:
+            log(f"implied upside: fetch failed ({e}) — valuation strike "
+                f"will not be counted this run")
+            m = {}
+        cache.put(key, m)
+    df["implied_upside"] = df["ticker"].astype(str).map(
+        lambda t: m.get(t))
+    n_ok = int(df["implied_upside"].notna().sum())
+    log(f"implied upside: available for {n_ok}/{len(df)} candidates "
+        f"(unavailable names simply don't take the valuation strike)")
+    return df
+
+
+def compute_risk_strikes(df, llm_path=True):
+    """Two-strike risk gate inputs (2026-10-30): per candidate, count
+    strikes from spell-start values —
+      (a) earnings within 14 days (earnings_in_days in [0, 14]);
+      (b) trailing 6m run (ret_6m_skip1m, the EV upside's series;
+          ret_6m fallback, mirroring est_parts) >= 50%;
+      (c) implied_upside < 0 (analyst mean target below price);
+      (d) event_dependence (dep) >= 0.40.
+    A missing field never counts as a strike (fail-soft, logged). Adds
+    risk_strikes (list of human-readable strike labels) and
+    risk_strike_count columns; pick_group enforces >=2 as HM-only."""
+    df = df.copy()
+    if "dep_used" in df.columns:
+        # Fix B (2026-10-30): the strike must count the dep decisions
+        # actually consume (diversified-ETF ceiling applied), not raw.
+        dep_col = "dep_used"
+    elif "llm_event_dependence" in df.columns:
+        dep_col = "llm_event_dependence"
+    elif "news_penalty" in df.columns:
+        dep_col = "news_penalty"
+    else:
+        dep_col = None
+        log("WARNING: risk-flag gate — no dep column; strike (d) not "
+            "counted for any candidate")
+    if "implied_upside" not in df.columns:
+        log("WARNING: risk-flag gate — implied_upside unavailable; "
+            "strike (c) not counted for any candidate")
+    if "earnings_in_days" not in df.columns:
+        log("WARNING: risk-flag gate — earnings_in_days unavailable; "
+            "strike (a) not counted for any candidate")
+    all_strikes, counts = [], []
+    for _, r in df.iterrows():
+        strikes = []
+        ed = _safe(r.get("earnings_in_days"))
+        if ed is not None and 0 <= ed <= 14:
+            strikes.append(f"earnings in {ed:.0f}d")
+        r6 = _safe(r.get("ret_6m_skip1m"))
+        if r6 is None:
+            r6 = _safe(r.get("ret_6m"))
+        if r6 is not None and r6 >= 0.50:
+            strikes.append(f"6m run {r6:+.0%}")
+        iu = _safe(r.get("implied_upside"))
+        if iu is not None and iu < 0:
+            strikes.append(f"implied upside {iu:+.0%}")
+        dep = _safe(r.get(dep_col)) if dep_col else None
+        if dep is not None and dep >= 0.40:
+            strikes.append(f"dep {dep:.2f}")
+        all_strikes.append(strikes)
+        counts.append(len(strikes))
+        if strikes:
+            log(f"  risk strikes {r['ticker']}: {len(strikes)} — "
+                f"{', '.join(strikes)}")
+    df["risk_strikes"] = all_strikes
+    df["risk_strike_count"] = counts
+    n2 = sum(1 for c in counts if c >= RISK_GATE_MIN_STRIKES)
+    log(f"risk-flag gate inputs: {len(df)} candidates, "
+        f"{sum(1 for c in counts if c >= 1)} with >=1 strike, "
+        f"{n2} with >={RISK_GATE_MIN_STRIKES} strikes (barred from picks)")
+    return df
+
+
+def watchlist_quality_summary(ratings, evs, tickers=None):
+    """One-sentence verdict on the watchlist as a whole — computed, not
+    written. Keys the quality word off the buy/sell mix (ratings are
+    literal since 2026-11-06, no longer keyed to expected value), names
+    the drag when sells pull the average expected value below zero, and
+    calls out the leader and
+    the biggest drag by name."""
+    n = len(ratings)
+    if not n:
+        return ""
+    b = sum(1 for x in ratings if x == "BUY")
+    h = sum(1 for x in ratings if x == "HOLD")
+    s = n - b - h
+    try:
+        evf = [float(e) for e in evs]
+        avg = sum(evf) / n
+    except Exception:
+        evf, avg = [], 0.0
+    score = b - s
+    if score >= 5:
+        q = "strong"
+    elif score >= 2:
+        q = "solid"
+    elif score >= 0:
+        q = "decent"
+    elif score >= -3:
+        q = "mixed"
+    else:
+        q = "weak"
+
+    def _pl(k, w):
+        return f"{k} {w}" if k == 1 else f"{k} {w}s"
+    out = (f"A {q} list: {_pl(b, 'buy')}, {_pl(h, 'hold')}, {_pl(s, 'sell')}, "
+           f"averaging {avg:+.1%} expected value")
+    if s and avg < 0.0:
+        out += ("; the sell drags the average expected value below zero"
+                if s == 1 else
+                "; the sells drag the average expected value below zero")
+    if tickers and evf and n > 1:
+        try:
+            order = sorted(range(n), key=lambda i: evf[i], reverse=True)
+            lead, drag = order[0], order[-1]
+            out += (f"; {tickers[lead]} ({evf[lead]:+.1%}) leads, "
+                    f"{tickers[drag]} ({evf[drag]:+.1%}) drags")
+        except Exception:
+            pass
+    return out + "."
+
+
+def add_ratings(df):
+    """Attach literal Buy/Hold/Sell columns ('what Mint would do').
+
+    Ratings come from compute_rating() — the pick test, not the expected
+    value (Dan's design, 2026-11-06). Gathers the inputs the verdict
+    keys off: dep_used, continuation, confidence, stability, risk
+    strikes, ETF gate eligibility, and the latest thesis-check status
+    per ticker from the ledger (same source the spell-exit logic uses).
+    Logs each rating for the audit trail.
+    """
+    import json as _json
+    latest_check = {}
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "check" and e.get("ticker"):
+                    latest_check[e["ticker"]] = e.get("status")
+    except FileNotFoundError:
+        pass
+    sub = df.copy()
+    _rats = []
+    for _, r in sub.iterrows():
+        etf_barred = False
+        if str(r.get("kind")) == "etf":
+            try:
+                etf_barred = _etf_tier_of(r)[0] is None
+            except Exception:
+                etf_barred = False
+        _score, _nosig = None, None
+        _is_etf = str(r.get("kind")) == "etf"
+        _inf = None
+        if str(r.get("kind")) == "stock":
+            _fc = _fact_components(_facts_of(r), _dep_used_of(r))
+            _score, _nosig = _fc[1], _fc[2]
+        elif _is_etf:
+            _ef = _facts_of(r)
+            if _ef is not None:
+                _inf = bool(_ef.get("big_inflows"))
+        _rats.append(compute_rating(
+            _dep_used_of(r), r.get("llm_continuation"),
+            r.get("llm_confidence"), r.get("stability"),
+            r.get("risk_strike_count"), etf_barred,
+            latest_check.get(str(r.get("ticker"))),
+            research_score=_score, no_signal=_nosig,
+            is_etf=_is_etf, big_inflows=_inf))
+    sub["rating"] = [x[0] for x in _rats]
+    sub["rating_reason"] = [x[1] for x in _rats]
+    for _, r in sub.iterrows():
+        log(f"  rating {r['ticker']:6s}: {r['rating']} — {r['rating_reason']}")
+    return sub
+
+
+def compute_rating(dep, cont, conf, stability, strike_count,
+                   etf_barred=False, check_status=None,
+                   research_score=None, no_signal=None,
+                   is_etf=False, big_inflows=None):
+    """Literal Buy/Hold/Sell — 'what Mint would do' (Dan's design,
+    shipped 2026-11-06; replaces the EV-threshold design).
+
+    The verdict never reads the expected value: EV units change when
+    the formula is recalibrated, and thresholds denominated in them
+    silently broke (2026-11-06: every watchlist name rated SELL under
+    the legacy +3%/+8% cutoffs in V6/C3 units). Instead the rating
+    applies the same plain tests a Mint pick must pass:
+
+    - SELL: any hard fail — the thesis is broken on the record (latest
+      ledger check), the thesis hangs on outside events (dep >= 0.70,
+      the standing veto line), the researcher thinks the run is over
+      (continuation < 0.40), or the name is a proven crumbler
+      (stability grade D).
+    - BUY: passes the pick test — dep < 0.50, confidence >= 0.60,
+      stability A/B, at most one risk strike, ETFs gate-eligible, and
+      no open watch/broken thesis flag — plus, for stocks whose facts
+      have been coded, the fact screen below.
+    - HOLD: everything between — story intact, but something (a watch
+      flag, stacked strikes, a C grade, an event lean, a middling
+      outlook) says don't add, and nothing says get out.
+
+    RATINGS V2 (2026-11-10, Dan approved; evidence in
+    research_redesign_2026-11-10/tests/chosen_configuration.md):
+    continuation >= 0.60 is NO LONGER a BUY bar — it never validated
+    (1y correlation +0.03 stocks / -0.15 funds; a facts-only design
+    beat every judgment design in the ultimate study); it remains a
+    SELL fail below 0.40 and a HOLD reason below 0.60. In its place,
+    stocks carry two fact legs driven by the recorded research score:
+    a negative score (a big acquisition not offset by a dividend
+    raise — the battery's score block cut the BUY cohort's blowup
+    rate from 62.5% to 55.9%) caps the rating at HOLD, and a coded
+    checklist that fired nothing (no_signal — silent names blew up
+    more often than signaled ones) also caps at HOLD. Both legs are
+    inert when facts were never coded (score None).
+
+    ETF PACKAGE (2026-11-10, Dan approved; evidence in
+    etf_redesign_2026-11-10/results.md): two ETF-only legs change.
+    (1) The confidence >= 0.60 BUY bar is DROPPED for ETFs — in the
+    fund panel, high-confidence funds blew up MORE often than the rest
+    (57.1% vs 43.5%); the bar survives for stocks, where it is a
+    research-quality guard, a different claim. (2) A fund whose coded
+    flow facts carry big_inflows is capped at HOLD: inside the
+    BUY-eligible core its carriers blew up 61.5% vs 45.0% for
+    non-carriers. That finding is the program's most fragile
+    (permutation p=0.055 on the parent study), so it is sized as a
+    cap, never a price term or a SELL leg, and the Nov 30 audit
+    judges it on the live record. Inert when flows were never coded.
+
+    Returns (rating, reason), the reason in plain words naming the
+    deciding factor.
+    """
+    import math
+
+    def _f(x, default=None):
+        try:
+            v = float(x)
+        except Exception:
+            return default
+        return default if math.isnan(v) else v
+
+    dep = _f(dep, 0.3)
+    cont = _f(cont)
+    conf = _f(conf)
+    strikes = _f(strike_count, 0)
+    stab = stability if isinstance(stability, str) else None
+
+    # SELL — hard fails first.
+    if check_status == "broken":
+        return ("SELL", "thesis broken on the record, the story that "
+                "justified holding it no longer holds")
+    if dep >= 0.7:
+        return ("SELL", "event-driven, the thesis depends on things "
+                "outside its control")
+    if cont is not None and cont < 0.40:
+        return ("SELL", "the run looks over, the researcher no longer "
+                "expects it to keep doing well")
+    if stab == "D":
+        return ("SELL", "fragile, it has shown it can fall hard and fast")
+
+    # BUY — the full pick test (v2: no continuation bar; the stock
+    # fact legs stand in for it when facts are coded). The conf bar
+    # applies to stocks only (ETF package, 2026-11-10).
+    conf_ok = True if is_etf else (conf is not None and conf >= 0.60)
+    if (dep < 0.50
+            and conf_ok
+            and stab in ("A", "B", None)
+            and strikes <= 1
+            and not etf_barred
+            and check_status != "watch"
+            and not (research_score is not None and research_score < 0)
+            and not no_signal
+            and not (is_etf and big_inflows)):
+        return ("BUY", "passes the pick test: durable thesis, trusted "
+                "read, clean risk profile")
+
+    # HOLD — name the main blocker.
+    if check_status == "watch":
+        return ("HOLD", "story intact, but on watch, a warning flag "
+                "is open")
+    if etf_barred:
+        return ("HOLD", "story intact, but the fund is beyond its "
+                "proven-strength limits right now")
+    if strikes >= 2:
+        return ("HOLD", "story intact, but risk flags are stacked "
+                "against it")
+    if stab == "C":
+        return ("HOLD", "story intact, but the name is fragile, "
+                "hold, don't add")
+    if dep >= 0.50:
+        return ("HOLD", "story intact, but it leans on outside events")
+    if research_score is not None and research_score < 0:
+        return ("HOLD", "story intact, but a big acquisition outweighs "
+                "the hard positives on its record")
+    if no_signal:
+        return ("HOLD", "story intact, but the research checklist "
+                "turned up no supporting facts")
+    if is_etf and big_inflows:
+        return ("HOLD", "story intact, but money has been pouring in, "
+                "and heavily bought funds have tended to stumble")
+    if cont is not None and cont < 0.60:
+        return ("HOLD", "story intact, but the outlook is only middling")
+    if conf is not None and conf < 0.60:
+        return ("HOLD", "story intact, but confidence in the read is low")
+    return ("HOLD", "story intact, hold")
+
+
+# ---------------- ETF pipeline ----------------
+# ETFs have no ROE/margins/P-E; score on momentum + risk + structure/cost.
+# Same goal: likely to continue, minimize going negative after buying.
+
+US_ETF_EXCHANGES = {"NMS", "NYQ", "ASE", "ARC", "BAT", "NGM", "PCX", "BTS"}
+# NOTE 2026-10-03: "PCX" is how Yahoo's ETF screener labels NYSE Arca (it never
+# emits "ARC" there). It was missing, silently excluding every Arca-listed ETF
+# — including SPMO — from the candidate universe. Arca is a US exchange, so
+# this is a bug fix, not a methodology change.
+# 2026-10-03, same bug class again: "BTS" is Yahoo's code for CBOE BZX (BATS),
+# also a US exchange. It was missing too, silently dropping ~90 hot-band ETFs
+# including VLUE (+57% 52w%) and DIVB. Exchange skips are now counted+logged
+# below so a missing code can never go silent again.
+LEVERAGE_PAT = None  # compiled lazily (re module import at top)
+
+
+def _leverage_pat():
+    global LEVERAGE_PAT
+    if LEVERAGE_PAT is None:
+        import re as _re
+        LEVERAGE_PAT = _re.compile(
+            r"2X|3X|LEVERAG|ULTRA|DIREXION|MICROSECTORS|INVERSE|\bSHORT\b|HEDGE"
+            r"|BEAR\s*\d|BULL\s*\d|DAILY\s*(BULL|BEAR)", _re.IGNORECASE)
+    return LEVERAGE_PAT
+
+
+def get_etf_universe(target=2000, min_price=5.0, min_52w=None):
+    """Top 52-week gaining US-listed, unleveraged ETFs via yfinance ETF screener.
+
+    Tiles 52w% bands top-down (API caps page size). Leveraged/inverse and
+    non-US listings are excluded up front — structural decay and closure
+    risk are the opposite of 'don't go negative'.
+
+    When min_52w is given (benchmark-relative mode), bands are tiled until
+    the band range sits entirely below min_52w — the cutoff is 'better than
+    the benchmark', not an arbitrary headcount. `target` remains only as a
+    hard work bound (raised 2026-10-04: 500 silently truncated the universe
+    mid-band in hot years, dropping 57 eligible ETFs — the same bug class as
+    the old fixed-200 cap). If the bound ever binds before the bar is
+    reached, it logs a WARNING so the truncation is visible, not silent.
+    """
+    from yfinance import ETFQuery, screen
+    bands = [(150, None), (100, 150), (70, 100), (50, 70), (35, 50),
+             (25, 35), (15, 25), (8, 15), (0, 8)]
+    pat = _leverage_pat()
+    seen, out = set(), []
+    _ex_skipped = {}
+    for lo, hi in bands:
+        if min_52w is not None and hi is not None and hi <= min_52w:
+            break  # band entirely below the bar; lower bands are too
+        ops = [ETFQuery("gt", ["fiftytwowkpercentchange", lo]),
+               ETFQuery("gt", ["intradayprice", min_price])]
+        if hi is not None:
+            ops.append(ETFQuery("lt", ["fiftytwowkpercentchange", hi]))
+        qq = ETFQuery("and", ops)
+        off = 0
+        while True:
+            try:
+                r = screen(qq, sortField="fiftytwowkpercentchange",
+                           sortAsc=False, size=250, offset=off)
+            except Exception as e:
+                log(f"ETF screener band {lo}-{hi} offset {off} failed: {e}")
+                break
+            qs = r.get("quotes", []) or []
+            if not qs:
+                break
+            for x in qs:
+                sym = x.get("symbol")
+                if not sym or sym in seen:
+                    continue
+                seen.add(sym)
+                if x.get("exchange") not in US_ETF_EXCHANGES:
+                    _ex_skipped[x.get("exchange")] = \
+                        _ex_skipped.get(x.get("exchange"), 0) + 1
+                    continue
+                name = str(x.get("shortName") or x.get("longName") or "")
+                if pat.search(name) or pat.search(sym):
+                    continue
+                out.append({
+                    "ticker": sym, "name": name,
+                    "pct_52w": x.get("fiftyTwoWeekChangePercent"),
+                    "screener_aum": x.get("netAssets"),
+                    "screener_vol10": x.get("averageDailyVolume10Day"),
+                })
+                if len(out) >= target:
+                    break
+            if len(out) >= target or len(qs) < 250:
+                break
+            off += 250
+            time.sleep(0.3)
+        log(f"ETF universe: {len(out)} so far (band {lo}-{hi})")
+        if len(out) >= target:
+            break
+    log(f"ETF universe final: {len(out)} US unleveraged ETFs"
+        + (f" (52w% > {min_52w:.0f}%)" if min_52w is not None else ""))
+    if len(out) >= target and min_52w is not None:
+        log(f"WARNING: ETF work bound ({target}) hit before reaching the "
+            f"{min_52w:.0f}% bar — universe is TRUNCATED, not complete. "
+            f"Raise target.")
+    if _ex_skipped:
+        log(f"ETF universe: skipped exchanges (not in allow-list): "
+            f"{dict(sorted(_ex_skipped.items(), key=lambda kv: -kv[1]))}")
+    return out
+
+
+def etf_facts(info):
+    """Expense ratio, AUM, category from yfinance info (defensive)."""
+    info = info or {}
+    exp = info.get("expenseRatio")
+    if exp is None:
+        exp = info.get("annualReportNetExpenseRatio")
+    aum = info.get("totalAssets")
+    if aum is None:
+        aum = info.get("netAssets")
+    return {"expense_ratio": exp, "aum": aum,
+            "category": info.get("category") or "Unknown",
+            "family": info.get("fundFamily") or ""}
+
+
+# Religious-themed securities (faith-based screens, religious mandates or
+# issuers). Dan's rule: no religious stocks, ETFs, or similar, ever.
+# Word-boundary matching; "church" deliberately excluded (Church & Dwight).
+_RELIGIOUS_THEME_PAT = re.compile(
+    r"\b(shariah|sharia|islamic|halal|wahed|biblical|bible|christian|"
+    r"catholic|gospel|torah|kosher|faith)\b", re.IGNORECASE)
+_RELIGIOUS_TICKERS = {"hlal", "spus", "bibl"}  # known faith-based ETFs whose
+# names don't carry keywords (e.g. Inspire 100)
+
+
+def _religious_theme(name, ticker=""):
+    """True if a stock/ETF name or ticker is religious-themed."""
+    if _RELIGIOUS_THEME_PAT.search(str(name or "")):
+        return True
+    return str(ticker or "").lower() in _RELIGIOUS_TICKERS
+
+
+def _foreign_focus(info, name):
+    """True if an ETF's focus is non-US (foreign/emerging/global mandate).
+
+    Checks the Morningstar-style category first (reliable), falling back to
+    the fund name for strong foreign keywords when the category is missing.
+    """
+    cat = str(etf_facts(info)["category"] or "")
+    foreign_words = ("foreign", "emerging", "international", "global", "world",
+                     "europe", "european", "asia", "asian", "pacific", "japan",
+                     "japanese", "china", "chinese", "india", "latin", "canada",
+                     "canadian", "frontier", "mexico", "brazil", "korea",
+                     "taiwan", "ex-us")
+    cl = cat.lower()
+    if cat and cat.lower() != "unknown" and any(w in cl for w in foreign_words):
+        return True
+    # category missing/unknown: only strong name keywords count
+    nl = str(name or "").lower()
+    strong = ("emerging", "international", "foreign", "europe", "asia",
+              "japan", "china", "msci eafe")
+    return any(w in nl for w in strong)
+
+
+def etf_trash_filter(rows, closes, infos, us_only=True):
+    """Hard filters for ETFs: history, liquidity, scale, no blowups.
+    Returns (kept_rows, report) with dropped ticker names per reason (audit:
+    every silent exclusion must be named, same as the stock filter)."""
+    kept = []
+    dropped = {"short_history": [], "illiquid": [], "tiny_aum": [],
+               "blown_up": [], "leveraged_name": [], "foreign_focus": [],
+               "religious_theme": []}
+    pat = _leverage_pat()
+    for r in rows:
+        t = r["ticker"]
+        px = closes.get(t)
+        if px is None or len(px) < 120:
+            dropped["short_history"].append(t)
+            continue
+        info = infos.get(t, {})
+        name = str(info.get("longName") or r["name"] or "")
+        if pat.search(name) or pat.search(t):
+            dropped["leveraged_name"].append(t)
+            continue
+        if _religious_theme(name, t):
+            dropped["religious_theme"].append(t)
+            continue
+        if us_only and _foreign_focus(info, name):
+            dropped["foreign_focus"].append(t)
+            continue
+        try:
+            adv = (info.get("averageDailyVolume10Day")
+                   or info.get("averageVolume")
+                   or r.get("screener_vol10") or 0)
+            lastpx = info.get("regularMarketPrice") or px.iloc[-1]
+            if float(adv) * float(lastpx) < 2_000_000:
+                dropped["illiquid"].append(t)
+                continue
+        except Exception as e:
+            # Fail-closed: unverifiable liquidity doesn't pass (was: pass).
+            log(f"etf trash: {t} liquidity check failed ({e}) — dropped")
+            dropped["illiquid"].append(t)
+            continue
+        aum = (etf_facts(info)["aum"] or r.get("screener_aum") or 0)
+        try:
+            aum_f = float(aum) if aum else 0.0
+        except Exception:
+            aum_f = 0.0
+        # Fail-closed on unknown AUM: scale can't be verified (was: kept).
+        if aum_f < 100_000_000:
+            dropped["tiny_aum"].append(t)
+            continue
+        dd = max_drawdown(px)
+        if dd < -0.70:
+            dropped["blown_up"].append(t)
+            continue
+        kept.append(r)
+    report = {"kept": len(kept),
+              "dropped_total": sum(len(v) for v in dropped.values())}
+    for reason, names in dropped.items():
+        report[reason] = len(names)
+        if names:
+            log(f"etf trash[{reason}]: {names}")
+    return kept, report
+
+
+def build_etf_scores(closes, infos):
+    """Score ETFs: momentum 40%, low-risk/liquidity 40%, cost/scale 20%."""
+    rows = []
+    for t, px in closes.items():
+        info = infos.get(t, {})
+        if px is None or len(px) < 120:
+            continue
+        facts = etf_facts(info)
+        row = {"ticker": t,
+               "name": str(info.get("longName") or info.get("shortName") or t),
+               "sector": facts["category"], "kind": "etf",
+               "expense_ratio": facts["expense_ratio"], "aum": facts["aum"]}
+        row["ret_1y"] = calc_return(px)
+        row["ret_6m"] = calc_return(px, 126)
+        # momentum skip: 6m run EXCLUDING the most recent month (21 trading
+        # days) — standard academic treatment for short-term reversal.
+        # The upside component of EV uses this, not ret_6m.
+        row["ret_6m_skip1m"] = (calc_return(px.iloc[:-21], 126)
+                               if px is not None and len(px.dropna()) > 21
+                               else np.nan)
+        row["ret_3m"] = calc_return(px, 63)
+        row["ret_1m"] = calc_return(px, 21)
+        row["ret_2w"] = calc_return(px, 10)
+        sma50 = px.rolling(50).mean().iloc[-1] if len(px) >= 50 else np.nan
+        sma200 = px.rolling(200).mean().iloc[-1] if len(px) >= 200 else np.nan
+        sma20 = px.rolling(20).mean().iloc[-1] if len(px) >= 20 else np.nan
+        last = px.iloc[-1]
+        row["above50"] = 1.0 if not pd.isna(sma50) and last > sma50 else 0.0
+        row["above200"] = 1.0 if not pd.isna(sma200) and last > sma200 else 0.0
+        row["dist_20dma"] = float(last / sma20 - 1) if sma20 and not pd.isna(sma20) and sma20 > 0 else 0.0
+        rets = px.pct_change().dropna()
+        row["vol60"] = float(rets.tail(60).std() * np.sqrt(252)) if len(rets) >= 60 else np.nan
+        row["maxdd"] = max_drawdown(px)
+        row["dd_freq"] = drawdown_frequency(px)
+        try:
+            adv = info.get("averageDailyVolume10Day") or info.get("averageVolume") or 0
+            lastpx = info.get("regularMarketPrice") or last
+            row["dollar_vol10"] = float(adv) * float(lastpx)
+        except Exception:
+            row["dollar_vol10"] = 0.0
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df["z_6m"] = zscore(df["ret_6m"].fillna(0))
+    df["z_3m"] = zscore(df["ret_3m"].fillna(0))
+    df["z_1m"] = zscore(df["ret_1m"].fillna(0))
+    df["z_trend"] = zscore(df["above50"].fillna(0) + df["above200"].fillna(0))
+    spike = (df["ret_2w"].fillna(0) - 0.15).clip(lower=0) + \
+            (df["dist_20dma"].fillna(0) - 0.10).clip(lower=0)
+    df["z_blowoff"] = zscore(-spike)
+    df["z_vol"] = zscore(-df["vol60"].fillna(1.0))
+    df["z_dd"] = zscore(-df["maxdd"].fillna(-0.5).abs())
+    df["z_dvol"] = zscore(np.log1p(df["dollar_vol10"].fillna(0)))
+    # lower expense ratio is better; missing -> neutral-ish (median)
+    exp = pd.to_numeric(df["expense_ratio"], errors="coerce")
+    df["z_expense"] = zscore(-exp.fillna(exp.median() if not exp.isna().all() else 0.005))
+    aum = pd.to_numeric(df["aum"], errors="coerce")
+    df["z_aum"] = zscore(np.log1p(aum.fillna(aum.median() if not aum.isna().all() else 1e8)))
+    df["base_score"] = (
+        0.12 * df["z_6m"] + 0.08 * df["z_3m"] + 0.10 * df["z_1m"]
+        + 0.05 * df["z_trend"] + 0.05 * df["z_blowoff"]
+        + 0.15 * df["z_vol"] + 0.15 * df["z_dd"] + 0.10 * df["z_dvol"]
+        + 0.10 * df["z_expense"] + 0.10 * df["z_aum"]
+    )
+    # character: the ETF parts the EV doesn't already see — structure/cost/
+    # liquidity + entry timing. Excludes momentum and risk z-scores (est uses
+    # ret_6m/maxdd directly; no double-counting). EV multiplier.
+    df["character"] = (
+        0.05 * df["z_blowoff"] + 0.05 * df["z_trend"]
+        + 0.10 * df["z_expense"] + 0.10 * df["z_aum"] + 0.10 * df["z_dvol"]
+    ).fillna(0)
+    return df.sort_values("base_score", ascending=False)
+
+
+def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
+                  honorable=None, market_chat=None, watchlist_chat=None):
+    """HTML chart: stocks + ETFs with 1y return, expected value, confidence.
+
+    Columns: 1-year performance %, sector, and expected value %
+    (continuation-vs-downside expected value heuristic). `titles` optionally
+    overrides the two section headings. `honorable` is a list of dicts (ticker, kind, name, sector,
+    ret_1y, est_next_1y, confidence, reason) rendered as the Honorable
+    mentions table. Rows carrying a non-US `country`
+    get a small flag. Pick tables are sortable client-side by expected value
+    or 1-year return (descending).
+    """
+    import html as _html
+
+    def pct(x):
+        try:
+            return f"{float(x):+.1%}"
+        except Exception:
+            return "n/a"
+
+    def conf_pct(x):
+        try:
+            return f"{float(x):.0%}"
+        except Exception:
+            return "n/a"
+
+    sections = [(titles[0] if titles else "Top 10 stocks (most confident)", stocks_df),
+                (titles[1] if titles else "Top 10 ETFs (most confident)", etfs_df)]
+    # Bar scales: the 1y-return bar keeps a FIXED reference (full bar =
+    # +150%, a monster year) so return bars stay comparable across days.
+    # The EV bar scale is DYNAMIC (Dan's directives, 2026-11-06 late —
+    # this reverses the fixed +20% EV scale): in V6/C3 units the
+    # strongest expected values run only a few percent, so a fixed
+    # +20% scale left every EV bar a sliver, while a pure page-relative
+    # scale crowns the top pick with a full bar even at +4.4%, which
+    # Dan rejected. The full-bar mark is therefore the page's
+    # strongest expected value stretched by EV_BAR_STRETCH (1.5x),
+    # generated from the day's own EVs rather than a hardcoded level:
+    # the strongest bar fills two-thirds of its track, never all of
+    # it, and the scale adapts across EV eras (if top EVs run at +14%
+    # again, the mark becomes +21% and nothing saturates). A brief
+    # hardcoded +10% anchor shipped first the same evening and was
+    # replaced within the hour at Dan's direction. The printed
+    # percentage beside each bar carries the absolute value. The
+    # scale is two-sided where a page carries negative EVs (the
+    # watchlist), each side stretched from its own strongest value,
+    # so one outlier on one side cannot squash the other side's bars.
+    REF_1Y = 1.50
+    EV_BAR_STRETCH = 1.5
+    _ev_signed = []
+    for _df in (stocks_df, etfs_df):
+        if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
+            for _v in _df["est_next_1y"]:
+                try:
+                    _ev_signed.append(float(_v))
+                except Exception:
+                    pass
+    if honorable:
+        for _h in honorable:
+            try:
+                _ev_signed.append(float(_h.get("est_next_1y")))
+            except Exception:
+                pass
+    _pos = [v for v in _ev_signed if v > 0]
+    _neg = [-v for v in _ev_signed if v < 0]
+    REF_EV_POS = EV_BAR_STRETCH * max(_pos) if _pos else 0.10
+    REF_EV_NEG = EV_BAR_STRETCH * max(_neg) if _neg else 0.10
+
+    def bar(val, gold=False):
+        try:
+            v = float(val)
+        except Exception:
+            return ""
+        if gold:
+            ref = REF_EV_NEG if v < 0 else REF_EV_POS
+        else:
+            ref = REF_1Y
+        w = max(2, min(100, abs(v) / ref * 100))
+        cls = "neg" if v < 0 else ("est" if gold else "pos")
+        return (f'<div class="track"><div class="bar {cls}" style="width:{w:.1f}%">'
+                f"</div></div>")
+
+    def lbl(val, base):
+        """Label div class: green 1y / gold est / red when negative."""
+        try:
+            neg = float(val) < 0
+        except Exception:
+            neg = False
+        return f"lbl {base} neg" if neg else f"lbl {base}"
+
+    # --- Blurb maps: ticker -> story, rendered INSIDE the pick row and
+    # revealed by clicking it (expand, not flip — a flip would hide the
+    # stats the row exists to show). Main page: market_chat sector tickers
+    # (what/why). Watchlist: blurb + rating chip. The market-chat section
+    # below keeps only the sector paragraphs; the watchlist's "About these
+    # names" section is gone (its summary stays).
+    _bmap = {}
+    if market_chat and market_chat.get("sectors"):
+        for _sec in market_chat["sectors"]:
+            for _t in _sec.get("tickers", []):
+                _bmap[str(_t.get("ticker", "")).upper()] = (
+                    "mc", str(_t.get("what", "")), str(_t.get("why", "")))
+    if market_chat and market_chat.get("tickers"):
+        for _t in market_chat["tickers"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "mc", str(_t.get("what", "")), str(_t.get("why", "")))
+    if watchlist_chat and watchlist_chat.get("tickers"):
+        for _t in watchlist_chat["tickers"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "wl", str(_t.get("blurb", "")),
+                str(_t.get("rating", "HOLD")).upper(),
+                str(_t.get("rating_reason", "")))
+    if market_chat and market_chat.get("honorable"):
+        for _t in market_chat["honorable"]:
+            _bmap[str(_t.get("ticker", "")).upper()] = (
+                "hm", str(_t.get("what", "")), str(_t.get("why", "")))
+    header = """
+<div class="row head">
+  <div># / Ticker / Name</div><div>Sector / Category</div>
+  <div>1-year return</div><div>Expected value</div>
+  <div>Confidence</div><div>Stability</div>
+</div>
+"""
+    rows_html = ""
+    for si, (title, df) in enumerate(sections):
+        rows_html += f'<h2>{_html.escape(title)}</h2>\n'
+        rows_html += (
+            f'<div class="sortctl" data-pl="pl{si}"><span>Sort by:</span> '
+            f'<button class="sbtn" data-k="r1y">1-year return</button>'
+            f'<button class="sbtn on" data-k="ev">Expected value</button></div>\n')
+        rows_html += header + f'<div class="picklist" id="pl{si}">\n'
+        for i, (_, r) in enumerate(df.iterrows(), 1):
+            est = r.get("est_next_1y")
+            ctry = str(r.get("country") or "")
+            nonus = (f' <span class="nonus" title="Domiciled in {_html.escape(ctry)}">'
+                     f"non-US</span>" if ctry and ctry != "United States" else "")
+            try:
+                _evf = float(est)
+            except Exception:
+                _evf = float("nan")
+            try:
+                _r1yf = float(r.get("ret_1y"))
+            except Exception:
+                _r1yf = float("nan")
+            _kk = str(r.get("kind", "")).strip().lower()
+            if _kk not in ("stock", "etf"):
+                _kk = "stock" if si == 0 else "etf"
+            _b = _bmap.get(str(r["ticker"]).upper())
+            _blurb_html, _chev, _hasb, _wchip = "", "", "", ""
+            if _b:
+                _hasb = " has-blurb"
+                _chev = '<span class="chev" title="Tap to expand">▸</span>'
+                if _b[0] in ("mc", "hm"):
+                    _blurb_html = (
+                        f'<div class="blurb"><div class="mc-what">'
+                        f'{_html.escape(_b[1])}</div>'
+                        f'<div class="mc-why">{_html.escape(_b[2])}</div></div>')
+                else:
+                    # watchlist: the rating chip lives on the row itself, not
+                    # hidden in the expansion — the call should be visible
+                    _rcls = {"BUY": "buy", "HOLD": "hold",
+                             "SELL": "sell"}.get(_b[2], "hold")
+                    _wchip = f' <span class="rchip {_rcls}">{_b[2]}</span>'
+                    _blurb_html = (
+                        f'<div class="blurb">'
+                        f'<span class="mc-why">{_html.escape(_b[1])}</span>'
+                        + (f'<br><span class="wl-rate-why">{_b[2].title()}: '
+                           f'{_html.escape(_b[3])}</span>' if _b[3] else '')
+                        + '</div>')
+            rows_html += f"""
+<div class="row k-{_kk}{_hasb}" data-ev="{_evf}" data-r1y="{_r1yf}">
+  <div class="id"><span class="rank">{i}</span>
+    <span class="tick">{_html.escape(str(r['ticker']))}</span>
+    <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
+  <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
+  <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
+  <div class="cell" data-cap="Expected value"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
+  <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
+  <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
+  {_blurb_html}
+</div>
+"""
+        rows_html += '</div>\n'  # close .picklist
+    now = meta.get("asof", "")
+    bench = meta.get("benchmark", "")
+    etf_bench = meta.get("etf_benchmark", bench)
+    bench_label = (f"{bench} (stocks) / {etf_bench} (ETFs)"
+                   if etf_bench != bench else bench)
+    # --- Honorable mentions: cleared the EV floor, didn't make the cut.
+    # The near-miss table Dan asked for — alternatives worth a look, with the
+    # reason each missed (cap, overlap, or final-score order).
+    hm_html = ""
+    # --- Market today: single reader-facing section (market pulse line +
+    # themed blocks with colored bold leads). Content is written by the
+    # researcher into market_chat.json as "market_status": {"direction":
+    # "up"|"down"|"mixed", "summary": "..."} and "market_today": [{"tone":
+    # "good"|"bad"|"verdict", "lead": "...", "body": "..."}]; the chart only
+    # renders it.
+    _TONE_COLORS = {"good": "#4ade80", "bad": "#f87171",
+                    "verdict": "#ffd54f"}
+    mc_html = ""
+    _mt = market_chat.get("market_today") if market_chat else None
+    if _mt:
+        _parts = ['<h2>Market today</h2>', '<div class="note mc-today">']
+        # Market pulse: one-line up/down/mixed verdict + single-sentence
+        # summary, written by the researcher as market_status: {"direction":
+        # "up"|"down"|"mixed", "summary": "..."}. Always first.
+        _ms = market_chat.get("market_status") if market_chat else None
+        if isinstance(_ms, dict):
+            _mdir = str(_ms.get("direction", "")).strip().lower()
+            _mcolor = {"up": "#4ade80", "down": "#f87171",
+                       "mixed": "#ffd54f"}.get(_mdir, "#cfd6cf")
+            _mlabel = {"up": "Market's up.", "down": "Market's down.",
+                       "mixed": "Market's mixed."}.get(_mdir, "Market update.")
+            _msum = str(_ms.get("summary", "")).strip()
+            if _msum:
+                _parts.append(
+                    f'<p><b style="color:{_mcolor}">{_mlabel}</b>'
+                    f' {_html.escape(_msum)}</p>')
+        for _b in _mt:
+            _tone = str(_b.get("tone", "")).strip().lower()
+            _color = _TONE_COLORS.get(_tone, "#cfd6cf")
+            _lead = str(_b.get("lead", "")).strip()
+            _body = str(_b.get("body", "")).strip()
+            if not _lead and not _body:
+                continue
+            _parts.append(
+                f'<p><b style="color:{_color}">{_html.escape(_lead)}</b>'
+                + (f' {_html.escape(_body)}' if _body else '') + '</p>')
+        _parts.append(
+            '<p class="fineprint">As of ' +
+            _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
+        mc_html = "\n".join(_parts)
+    elif market_chat and market_chat.get("sectors"):
+        # legacy fallback: overview + per-sector expandables
+        _parts = ['<h2>Market chat</h2>']
+        _ov = str(market_chat.get("overview") or "").strip()
+        if _ov:
+            _parts.append(
+                '<div class="note mc-overview"><p>' + _html.escape(_ov) + '</p>'
+                '<p class="fineprint">As of ' +
+                _html.escape(str(market_chat.get("asof", ""))) + '.</p></div>')
+        for _sec in market_chat["sectors"]:
+            # per-ticker what/why now lives inside the pick rows (click to
+            # expand); the sector block keeps only its "why it's doing well"
+            _parts.append(
+                f'<details class="mc-sec"><summary>'
+                f'{_html.escape(str(_sec.get("name", "")))}</summary>'
+                f'<div class="mc-body"><p>'
+                f'{_html.escape(str(_sec.get("blurb", "")))}</p>'
+                f'</div></details>')
+        mc_html = "\n".join(_parts)
+    # --- Watchlist today: themed blocks with colored bold leads (same
+    # format as Market today). Content is written by the researcher into
+    # watchlist_chat.json as "watchlist_today": [{"tone": "good"|"bad"|
+    # "verdict", "lead": "...", "body": "..."}]; the roast's voice lives
+    # in the bodies. The chart only renders it.
+    wl_html = ""
+    if watchlist_chat:
+        _wt = watchlist_chat.get("watchlist_today")
+        if _wt:
+            _wparts = ['<h2>Watchlist today</h2>', '<div class="note wl-today">']
+            for _b in _wt:
+                _wtone = str(_b.get("tone", "")).strip().lower()
+                _wcolor = _TONE_COLORS.get(_wtone, "#cfd6cf")
+                _wlead = str(_b.get("lead", "")).strip()
+                _wbody = str(_b.get("body", "")).strip()
+                if not _wlead and not _wbody:
+                    continue
+                _wparts.append(
+                    f'<p><b style="color:{_wcolor}">{_html.escape(_wlead)}</b>'
+                    + (f' {_html.escape(_wbody)}' if _wbody else '') + '</p>')
+            _wparts.append(
+                '<p class="fineprint">As of ' +
+                _html.escape(str(watchlist_chat.get("asof", ""))) + '.</p></div>')
+            wl_html = "\n".join(_wparts)
+        else:
+            # legacy fallback: summary + roast paragraph
+            _wsum = str(watchlist_chat.get("summary") or "").strip()
+            _wcolor = str(watchlist_chat.get("summary_color") or "").strip()
+            if _wsum or _wcolor:
+                _wtxt = _wsum + (" " + _wcolor if _wcolor else "")
+                wl_html = (f'<p class="note wl-summary">{_html.escape(_wtxt)}</p>')
+    # --- Fresh Off the Mint: suggested moves for the watchlist page.
+    # Replaces the About Mint explainer in watchlist mode. Content is written
+    # by the researcher into watchlist_chat.json as "suggested_moves":
+    # [{"tone": "good"|"bad"|"verdict", "lead": "...", "body": "..."}] —
+    # good = moves to consider making (adds), bad = trims/exits,
+    # verdict = bottom line. Same tone/color system as the other sections.
+    sm_html = ""
+    if watchlist_chat:
+        _sm = watchlist_chat.get("suggested_moves")
+        if _sm:
+            _smparts = ['<h2>Fresh Off the Mint</h2>',
+                        '<div class="note sm-moves">']
+            for _b in _sm:
+                _stone = str(_b.get("tone", "")).strip().lower()
+                _scolor = _TONE_COLORS.get(_stone, "#cfd6cf")
+                _slead = str(_b.get("lead", "")).strip()
+                _sbody = str(_b.get("body", "")).strip()
+                if not _slead and not _sbody:
+                    continue
+                _smparts.append(
+                    f'<p><b style="color:{_scolor}">{_html.escape(_slead)}</b>'
+                    + (f' {_html.escape(_sbody)}' if _sbody else '') + '</p>')
+            _smparts.append(
+                '<p class="fineprint">Ideas, not orders &mdash; '
+                'Mint suggests, Dan decides.</p></div>')
+            sm_html = "\n".join(_smparts)
+    # --- About Mint explainer. Shown on the main page; on the watchlist
+    # page it is replaced by Fresh Off the Mint (sm_html), falling back to
+    # this only if the researcher didn't write suggested_moves.
+    _wl_para = ("<p>Watchlist mode: every ticker you supplied is researched "
+                "and scored, sorted by expected value &mdash; no benchmark, "
+                "no picking.</p>"
+                if meta.get("mode") == "watchlist" else "")
+    if meta.get("mode") != "watchlist" or not sm_html:
+        about_html = ("<div class=\"note\">\n"
+"<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already\n"
+"proven themselves &mdash; names that beat their benchmark over the past year.\n"
+"For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,\n"
+"which tracks the S&amp;P 500. Then Mint asks the harder question: which are most\n"
+"likely to keep winning without stumbling right after you buy?</p>\n"
++ _wl_para +
+"<p>The philosophy is simple: avoid losses first. We look past recent gains to the\n"
+"business behind each name, the risks that could derail it, and whether its\n"
+"success looks durable or depends on hype, headlines, or a one-time event.\n"
+"Strong recent performance gets a name noticed. Strong evidence earns it a spot.\n"
+"If nothing clears the bar, we leave the slot empty &mdash; every pick earns its\n"
+"place.</p>\n"
+"<p class=\"stages-head\">How it works, in three stages:</p>\n"
+"<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark\n"
+"over the past year, then scored on the quality of the business, the timing of\n"
+"entry, and the steadiness of the ride. Hard risk gates throw out anything too\n"
+"volatile or too deeply scarred.</p>\n"
+"<p><b>Question the story.</b> Survivors get researched &mdash; we read the news\n"
+"behind each name, not just the numbers. How much does the story depend on things\n"
+"outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and\n"
+"it&apos;s out on the spot. For the rest: how likely is the strength to continue,\n"
+"and how much do we trust our own read?</p>\n"
+"<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those\n"
+"judgments become one number &mdash; expected value: the likely gains if it holds,\n"
+"minus the likely pain if it turns, adjusted for how much we trust our own\n"
+"read.</p>\n"
+"<p>Mint is built around a simple idea: find strength, question the story, weigh\n"
+"the odds, and only make room for what earns it.</p>\n"
+"<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t predict\n"
+"future returns. Also: there are gremlins that have control over the markets &mdash;\n"
+"they hate you personally, and they do the exact opposite of your buys and sells\n"
+"purely to spite you. Invest accordingly.</p>\n"
+"</div>")
+    else:
+        about_html = ""
+
+    if honorable:
+        hm_rows = []
+        for i, h in enumerate(honorable, 1):
+            _hk = str(h.get("kind", "")).strip().lower()
+            if _hk not in ("stock", "etf"):
+                _hk = "stock"
+            try:
+                _hev = float(h.get("est_next_1y"))
+            except Exception:
+                _hev = float("nan")
+            try:
+                _hr1y = float(h.get("ret_1y"))
+            except Exception:
+                _hr1y = float("nan")
+            _extra = " hm-extra" if i > 5 else ""
+            _hb = _bmap.get(str(h.get("ticker", "")).upper())
+            _hblurb_html, _hchev, _hhasb = "", "", ""
+            if _hb and _hb[0] == "hm" and (_hb[1] or _hb[2]):
+                _hhasb = " has-blurb"
+                _hchev = '<span class="chev" title="Tap to expand">▸</span>'
+                _hblurb_html = (
+                    f'<div class="blurb"><div class="mc-what">'
+                    f'{_html.escape(_hb[1])}</div>'
+                    f'<div class="mc-why">{_html.escape(_hb[2])}</div></div>')
+            hm_rows.append(f"""
+<div class="row hm k-{_hk}{_extra}{_hhasb}" data-ev="{_hev}" data-r1y="{_hr1y}">
+  <div class="id"><span class="rank">{i}</span>
+    <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
+    <span class="kchip {_hk}">{_hk.upper()}</span>
+    <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
+  <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
+  <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
+  <div class="cell" data-cap="Expected value"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
+  <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
+  <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
+{_hblurb_html}</div>""")
+        hm_html = (
+            '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
+            '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
+            '<button class="sbtn" data-k="r1y">1-year return</button>'
+            '<button class="sbtn on" data-k="ev">Expected value</button></div>\n'
+            '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
+            '<div>1-year return</div><div>Expected value</div>'
+            '<div>Confidence</div><div>Why not picked</div></div>\n'
+            '<div class="picklist" id="pl2">\n'
+            + "\n".join(hm_rows) + "\n</div>\n"
+            + (f'<div class="hm-more"><button class="sbtn" id="hm-toggle" '
+                f'data-n="{len(honorable)}">Show all {len(honorable)} \u2193</button></div>\n'
+                if len(honorable) > 5 else ""))
+    html_doc = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Mint (Chip)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {{ color-scheme: dark;
+  --green: #4ade80; --green-deep: #22c55e; --gold: #ffd54f; --gold-deep: #f59e0b;
+  --red: #f87171; }}
+body {{ font-family: 'Jost', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  max-width: 980px; margin: 24px auto; padding: 0 16px 40px; color: #f2f5f1;
+  background:
+    radial-gradient(1000px 420px at 50% -8%, rgba(125,211,252,0.10), transparent 60%),
+    radial-gradient(900px 500px at 12% -4%, rgba(34,197,94,0.14), transparent 60%),
+    radial-gradient(800px 520px at 88% 108%, rgba(245,158,11,0.12), transparent 60%),
+    radial-gradient(600px 400px at 55% 45%, rgba(74,222,128,0.05), transparent 65%),
+    #070b09; background-attachment: fixed; }}
+h1 {{ font-size: 26px; font-weight: 700; letter-spacing: 0.05em;
+  color: #a7f3c7;
+  text-shadow: 0 2px 24px rgba(74,222,128,0.25); margin-bottom: 4px; }}
+h1 span.chip {{ -webkit-text-fill-color: var(--gold); color: var(--gold); }}
+.tagline {{ font-size: 15px; font-style: italic; letter-spacing: 0.06em;
+  color: var(--gold); margin: 2px 0 2px; text-shadow: 0 0 14px rgba(255,213,79,0.3); }}
+.subhead {{ font-size: 16px; color: #8a938a; margin-bottom: 18px; letter-spacing: 0.04em; }}
+h1 span {{ -webkit-text-fill-color: #8a938a; color: #8a938a; }}
+h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; margin: 30px 0 12px; color: var(--green);
+  text-shadow: 0 0 18px rgba(74,222,128,0.35); }}
+.row {{ display: grid; grid-template-columns: 290px 160px 1fr 1fr 80px 70px;
+  gap: 10px; align-items: center; padding: 12px 16px; margin-bottom: 10px;
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }}
+.row::before {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--sheen, rgba(255,255,255,0.08)) 0%,
+    var(--sheen2, rgba(255,255,255,0.03)) 30%, transparent 58%); }}
+.row.head::before {{ display: none; }}
+.row.k-stock {{ --sheen: rgba(125,211,252,0.22); --sheen2: rgba(125,211,252,0.07); }}
+.row.k-etf {{ --sheen: rgba(196,181,253,0.22); --sheen2: rgba(196,181,253,0.07); }}
+.row.head {{ background: none; border: none; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.10em;
+  color: #93a093; padding: 4px 16px 8px; margin-bottom: 2px; }}
+.row > div {{ min-width: 0; overflow: hidden; }}
+.row.head > div {{ overflow: visible; }}
+@media (hover: hover) {{
+  .row {{ transition: border-color 0.25s ease, box-shadow 0.25s ease; }}
+  .row:hover {{ border-color: rgba(255,255,255,0.22);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.24); }}
+}}
+.id {{ display: flex; align-items: center; min-width: 0; }}
+.id .nm {{ flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }}
+.id .rank, .id .tick, .id .rchip, .id .chev {{ flex: 0 0 auto; }}
+.sec {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.id .rank {{ display:inline-block; width:22px; color: var(--gold); font-weight: 600; }}
+.id .tick {{ font-weight: 700; margin-right: 8px; letter-spacing: 0.03em; color: #ffffff; }}
+.id .nm {{ color:#a8b3a8; font-size: 16px; }}
+.sec {{ font-size: 16px; color:#a8b3a8; }}
+.lbl {{ font-size: 16px; margin-bottom: 4px; color: #93a093; }}
+.lbl.r1y {{ color: var(--green); font-weight: 600; }}
+.lbl.est {{ color: var(--gold); font-weight: 700; }}
+.lbl.neg {{ color: var(--red) !important; }}
+.track {{ background: rgba(255,255,255,0.07); height: 10px; border-radius: 6px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); overflow: hidden; }}
+.bar {{ height: 10px; border-radius: 6px; position: relative; overflow: hidden; }}
+.bar::after {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.14) 42%, rgba(255,255,255,0) 62%);
+  pointer-events: none; }}
+.bar.pos {{ background: linear-gradient(90deg, var(--green-deep), var(--green));
+  box-shadow: 0 0 12px rgba(74,222,128,0.55); }}
+.bar.est {{ background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  box-shadow: 0 0 12px rgba(255,213,79,0.55); }}
+.bar.neg {{ background: linear-gradient(90deg, #dc2626, var(--red));
+  box-shadow: 0 0 12px rgba(248,113,113,0.5); }}
+.stab {{ font-size: 16px; color:#a8b3a8; text-align: right; }}
+.cf {{ font-size: 16px; font-weight: 600; text-align: right; color: var(--gold); }}
+.nonus {{ display: inline-block; font-size: 10px; font-weight: 600; color: #ffd54f;
+  background: rgba(245,158,11,0.16); border: 1px solid rgba(255,213,79,0.35);
+  border-radius: 8px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }}
+.note {{ position: relative; overflow: hidden; margin-top: 26px; font-size: 16px;
+  color: #9aa79a; line-height: 1.6; padding: 16px 20px;
+  background: rgba(255,255,255,0.025);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px rgba(0,0,0,0.38); }}
+.note::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,213,79,0.16) 0%,
+    rgba(255,213,79,0.05) 30%, transparent 58%); }}
+.note b {{ color: var(--gold); }}
+.note p {{ margin: 0 0 13px; }}
+.note p:last-child {{ margin-bottom: 0; }}
+.note .stages-head {{ font-weight: 700; color: #cfd6cf;
+  margin-top: 18px; }}
+.note .fineprint {{ font-size: 11px; color: #7d887d; }}
+
+.tledger a {{ color: #9aa79a; font-size: 16px;
+  text-decoration: underline; text-underline-offset: 2px; }}
+.sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+  font-size: 12px; color: #93a093; letter-spacing: 0.06em; }}
+.sbtn {{ font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
+  color: #cfd6cf;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 999px;
+  padding: 4px 14px; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }}
+.sbtn.on {{ color: #0a0f0c; font-weight: 700;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(0,0,0,0.14) 100%),
+    linear-gradient(90deg, var(--gold-deep), var(--gold));
+  border-color: rgba(255,213,79,0.8);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 0 14px rgba(255,213,79,0.45); }}
+.why {{ font-size: 16px; color: #a8b3a8; text-align: right; line-height: 1.4; }}
+.row.hm {{ opacity: 0.88; }}
+.hm-extra {{ display: none; }}
+#pl2.showall .hm-extra {{ display: grid; }}
+.hm-more {{ margin: 4px 0 6px; }}
+.row.k-stock .tick {{ color: #7dd3fc; }}
+.row.k-etf .tick {{ color: #c4b5fd; }}
+.kchip {{ display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border-radius: 8px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: 1px; white-space: nowrap; }}
+.kchip.stock {{ color: #7dd3fc; background: rgba(125,211,252,0.12);
+  border: 1px solid rgba(125,211,252,0.35); }}
+.kchip.etf {{ color: #c4b5fd; background: rgba(196,181,253,0.12);
+  border: 1px solid rgba(196,181,253,0.35); }}
+.mc-sec {{ position: relative; overflow: hidden; margin-bottom: 10px;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
+  background: rgba(255,255,255,0.028);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18); }}
+.mc-sec::before {{ content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.07) 0%, transparent 48%); }}
+.mc-sec > summary {{ position: relative; cursor: pointer; padding: 13px 18px;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #cfd6cf;
+  list-style: none; }}
+.mc-sec > summary::-webkit-details-marker {{ display: none; }}
+.mc-sec > summary::before {{ content: "▸  "; color: var(--gold); }}
+.mc-sec[open] > summary::before {{ content: "▾  "; }}
+.mc-body {{ position: relative; padding: 0 18px 14px; font-size: 16px;
+  color: #a8b3a8; line-height: 1.65; }}
+.mc-body p {{ margin: 0 0 12px; }}
+.mc-item {{ margin: 12px 0; }}
+.mc-tick {{ font-weight: 700; letter-spacing: 0.03em; }}
+.mc-tick.stock {{ color: #7dd3fc; }}
+.mc-tick.etf {{ color: #c4b5fd; }}
+.note.mc-overview {{ font-size: 16px; margin-bottom: 14px; }}
+.rchip {{ display: inline-block; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid; vertical-align: 2px; margin-right: 7px; }}
+.rchip.buy {{ color: #4ade80; border-color: rgba(74,222,128,0.40);
+  background: rgba(74,222,128,0.10); }}
+.row.has-blurb {{ cursor: pointer; }}
+.row .blurb {{ display: none; grid-column: 1 / -1;
+  font-size: 16px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  margin-top: 8px; padding: 8px 4px 6px 34px; }}
+.row.open .blurb {{ display: block; }}
+.row .blurb .mc-what {{ margin-bottom: 5px; }}
+.chev {{ display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
+  border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
+  margin-left: 9px; vertical-align: 1px;
+  transition: transform 0.18s ease, background 0.18s ease; }}
+.row.open .chev {{ transform: rotate(90deg);
+  background: rgba(255,255,255,0.09); }}
+.rchip.hold {{ color: #ffd54f; border-color: rgba(255,213,79,0.40);
+  background: rgba(255,213,79,0.10); }}
+.rchip.sell {{ color: #f87171; border-color: rgba(248,113,113,0.40);
+  background: rgba(248,113,113,0.10); }}
+.wl-blurb {{ margin: 14px 0; }}
+.wl-rate-why {{ color: #8a938a; font-style: italic; }}
+.navwrap {{ text-align: center; margin: 2px 0 14px; }}
+a.navbtn {{ display: inline-block; font-size: 16px; letter-spacing: 0.05em;
+  font-weight: 600; color: #ffd54f; text-decoration: none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.08);
+  border: 1px solid rgba(255,213,79,0.35); border-radius: 999px;
+  padding: 6px 18px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 2px 10px rgba(0,0,0,0.4); }}
+a.navbtn:hover {{ background:
+    linear-gradient(180deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.10) 52%,
+      rgba(255,255,255,0) 100%),
+    rgba(255,213,79,0.14); }}
+.mc-nm {{ color: #cfd6cf; font-weight: 600; }}
+.mc-what {{ color: #8a938a; }}
+.mc-why {{ color: #a8b3a8; }}
+@media (max-width: 700px) {{
+  h1 {{ font-size: 20px; }}
+  .row {{ grid-template-columns: 1fr 1fr; row-gap: 10px; padding: 14px; }}
+  .row.head {{ display: none; }}
+  .id, .sec {{ grid-column: 1 / -1; }}
+  .cell::before, .cf::before, .stab::before {{
+    content: attr(data-cap); display: block;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #93a093; margin-bottom: 3px; }}
+  .cf, .stab {{ text-align: left; font-size: 16px; }}
+}}
+</style></head>
+<body>
+<h1>Mint <span class="chip">(Chip)</span></h1>
+<div class="tagline">Straight from the Mint.</div>
+<div class="subhead">{ _html.escape(meta.get("heading") or f"Top picks vs {bench_label}") }, { _html.escape(now) }</div>
+{ '<div class="navwrap"><a class="navbtn" href="index.html">&larr; Mint picks</a></div>' if meta.get("mode") == "watchlist" else '<div class="navwrap"><a class="navbtn" href="watchlist.html">Dan&apos;s watchlist &rarr;</a></div>' }
+{rows_html}
+{wl_html}
+{mc_html}
+{hm_html}
+{sm_html if meta.get("mode") == "watchlist" else ""}
+{about_html}
+<script>
+document.querySelectorAll('.sortctl').forEach(function(ctl){{
+  var pl = document.getElementById(ctl.getAttribute('data-pl'));
+  if(!pl) return;
+  ctl.querySelectorAll('.sbtn').forEach(function(btn){{
+    btn.addEventListener('click', function(){{
+      ctl.querySelectorAll('.sbtn').forEach(function(b){{ b.classList.remove('on'); }});
+      btn.classList.add('on');
+      var k = btn.getAttribute('data-k');
+      var rows = Array.prototype.slice.call(pl.querySelectorAll('.row'));
+      rows.sort(function(a, b){{
+        var va = parseFloat(a.getAttribute('data-' + k));
+        var vb = parseFloat(b.getAttribute('data-' + k));
+        va = isNaN(va) ? -Infinity : va;
+        vb = isNaN(vb) ? -Infinity : vb;
+        return vb - va;
+      }});
+      rows.forEach(function(r, i){{
+        pl.appendChild(r);
+        var rk = r.querySelector('.rank');
+        if(rk) rk.textContent = i + 1;
+      }});
+      if(pl.id === 'pl2'){{ applyHmLimit(); }}
+    }});
+  }});
+}});
+function applyHmLimit(){{
+  var pl2 = document.getElementById('pl2');
+  if(!pl2) return;
+  var open = pl2.classList.contains('showall');
+  Array.prototype.forEach.call(pl2.querySelectorAll('.row'), function(r, i){{
+    r.classList.toggle('hm-extra', !open && i >= 5);
+  }});
+}}
+applyHmLimit();
+var hmt = document.getElementById('hm-toggle');
+if(hmt){{
+  hmt.addEventListener('click', function(){{
+    var pl2 = document.getElementById('pl2');
+    var open = pl2.classList.toggle('showall');
+    applyHmLimit();
+    hmt.textContent = open ? 'Show fewer \u2191'
+      : 'Show all ' + hmt.getAttribute('data-n') + ' \u2193';
+  }});
+}}
+// Expandable pick rows: tap a row to reveal its blurb (delegated, so it
+// survives re-sorting). Only rows with a story get the affordance.
+document.querySelectorAll('.picklist').forEach(function(pl){{
+  pl.addEventListener('click', function(e){{
+    var row = e.target.closest ? e.target.closest('.row.has-blurb') : null;
+    if(!row || !pl.contains(row)) return;
+    row.classList.toggle('open');
+  }});
+}});
+</script>
+</body></html>
+"""
+    with open(path, "w") as f:
+        f.write(html_doc)
+    log(f"Chart written: {path}")
+
+
+# ---------------- News layer: dynamic risk discovery ----------------
+
+def fetch_rss_headlines(query, max_items=30, max_age_days=7):
+    """Google News RSS titles for a query, dropping items older than max_age_days.
+
+    Stale items (e.g. a 2025 headline in a 2026 bundle) are worse than useless
+    for the world layer — they read as current context."""
+    url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        # requests with a timeout first: feedparser.parse(url) hangs forever
+        # on a stalled connection (a hang is not an exception), which can
+        # burn the whole cron budget on one query.
+        resp = requests.get(url, timeout=15,
+                            headers={"User-Agent": "Mozilla/5.0"})
+        feed = feedparser.parse(resp.content)
+    except Exception:
+        return []
+    now = datetime.now(timezone.utc)
+    out = []
+    for e in feed.entries[:max_items]:
+        if not hasattr(e, "title"):
+            continue
+        try:
+            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+            if (now - pub).days > max_age_days:
+                continue
+        except Exception:
+            pass  # keep items with unparseable dates
+        out.append(e.title)
+    return out
+
+
+def fetch_market_headlines():
+    """Recent market headlines from free RSS (shared by rules + LLM layers).
+
+    Generic queries catch whatever is loudest; topical queries guarantee
+    coverage of geopolitics, energy, and rates — the things that move markets
+    even when they aren't the top story (a 7-month war once surfaced as 4
+    vague mentions out of 80 and was missed entirely)."""
+    queries = ["stock market", "global economy markets", "wall street",
+               "middle east war oil", "oil prices opec",
+               "federal reserve interest rates", "inflation cpi report",
+               "treasury yields bonds"]
+    headlines = []
+    for q in queries:
+        headlines += fetch_rss_headlines(q, 20)
+        time.sleep(0.5)
+    # dedupe, keep order
+    seen, out = set(), []
+    for h in headlines:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out[:120]
+
+
+def fetch_market_internals(cache=None):
+    """Fear/rate gauges for the world layer: VIX and 10Y yield, latest values.
+
+    Gives the researcher a numeric read on market fear and borrowing costs
+    every run, independent of what the headlines happen to emphasize.
+    Date-partitioned cache: same-day reruns reuse, a new day refetches."""
+    if cache is not None:
+        hit = cache.get("market_internals")
+        if hit:
+            return hit
+    out = {}
+    try:
+        for sym, key in [("^VIX", "vix"), ("^TNX", "tnx_10y")]:
+            hist = yf.Ticker(sym).history(period="5d")
+            if len(hist):
+                out[key] = round(float(hist["Close"].iloc[-1]), 2)
+        if out:
+            log(f"market internals: {out}")
+    except Exception as e:
+        log(f"market internals unavailable ({e})")
+    if out and cache is not None:
+        cache.put("market_internals", out)
+    return out
+
+
+def discover_risk_themes(cache=None):
+    """Dynamically discover what's spiking in market news right now.
+
+    No hardcoded events. We look at frequent non-trivial words in recent
+    market headlines — whatever is being talked about a lot *right now*
+    becomes the risk theme set.
+    """
+    log("Discovering dynamic risk themes from recent market news...")
+    headlines = None
+    if cache is not None:
+        headlines = cache.get("market_headlines")
+    if headlines is None:
+        headlines = fetch_market_headlines()
+        if cache is not None:
+            cache.put("market_headlines", headlines)
+    if not headlines:
+        log("  no market headlines fetched, skipping theme discovery")
+        return []
+
+    words = []
+    for h in headlines:
+        toks = re.findall(r"[a-z]{4,}", h.lower())
+        words += [w for w in toks if w not in STOPWORDS]
+    freq = Counter(words)
+    # Top frequent unusual words = what's dominating news right now
+    themes = [w for w, _ in freq.most_common(25)]
+    log(f"  discovered themes: {', '.join(themes[:12])}...")
+    return themes
+
+
+# Foreign exchange tags used to spot ticker collisions across markets.
+# IEX = IDEX Corp (NYSE) AND Indian Energy Exchange (NSEI) — headlines about
+# the wrong company used to pollute the research evidence.
+_FOREIGN_XTAGS = ("NSEI", "NSE", "BSE", "SGX", "HKEX", "LSE", "TSE", "ASX")
+
+
+def _entity_mismatch(headline, ticker):
+    """True if the headline's ticker tag points at a foreign listing.
+
+    Tickers collide across exchanges, so a headline like 'Indian Energy
+    Exchange (NSEI:IEX)' is evidence about a different company than the US
+    stock with the same ticker. Only fires when the foreign tag actually
+    references our ticker, so US headlines are never dropped.
+    """
+    if not headline or not ticker:
+        return False
+    hl = str(headline).upper()
+    t = str(ticker).upper()
+    return any(f"{x}:{t}" in hl for x in _FOREIGN_XTAGS)
+
+
+def fetch_stock_headlines(ticker, name):
+    headlines = []
+    # yfinance news (free)
+    try:
+        news = yf.Ticker(ticker).news or []
+        for n in news:
+            t = n.get("title") if isinstance(n, dict) else None
+            if t:
+                headlines.append(t)
+    except Exception:
+        pass
+    # Google News RSS: ticker query AND company-name query. The name query was
+    # added because ticker-only search conflates same-ticker foreign companies
+    # (e.g. IEX -> Indian Energy Exchange headlines).
+    headlines += fetch_rss_headlines(f"{ticker} stock", 12)
+    if name:
+        headlines += fetch_rss_headlines(f'"{name}" stock', 12)
+    # drop foreign-entity mismatches, then dedupe, keep order
+    dropped = [h for h in headlines if _entity_mismatch(h, ticker)]
+    if dropped:
+        log(f"news: entity filter dropped {len(dropped)} foreign-ticker "
+            f"headlines for {ticker}")
+    seen, out = set(), []
+    for h in headlines:
+        if h not in seen and h not in dropped:
+            seen.add(h)
+            out.append(h)
+    return out[:20]
+
+
+def news_risk_penalty(headlines, risk_themes):
+    """0..1 penalty: higher = more event/negative-news exposure right now."""
+    if not headlines:
+        return 0.3  # unknown = mild penalty, don't blindly trust
+    text = " ".join(headlines).lower()
+    # 1) overlap with dynamically discovered market themes
+    overlap = sum(1 for th in risk_themes if th in text)
+    theme_score = min(overlap / 5.0, 1.0)  # 5+ theme hits = max
+    # 2) negative tone ratio (generic words, not event-specific)
+    neg_hits = sum(1 for h in headlines if any(w in h.lower() for w in NEGATIVE_WORDS))
+    neg_ratio = neg_hits / max(len(headlines), 1)
+    return float(0.5 * theme_score + 0.5 * min(neg_ratio * 2, 1.0))
+
+
+def positive_news_score(headlines):
+    """0..1 score: higher = more fundamental good-news in today's headlines.
+
+    Mirrors news_risk_penalty but for upgrades: only counts POSITIVE_WORDS
+    (earnings beats, raised guidance, contract wins, approvals) — not
+    analyst chatter. Used to invalidate a stale carried assessment when
+    real good news breaks, so the researcher re-evaluates promptly.
+    """
+    if not headlines:
+        return 0.0
+    pos_hits = sum(1 for h in headlines
+                   if any(w in h.lower() for w in POSITIVE_WORDS))
+    pos_ratio = pos_hits / max(len(headlines), 1)
+    return float(min(pos_ratio * 2, 1.0))
+
+
+def fetch_headlines_threaded(tickers_names, cache=None, workers=6,
+                             label="headlines"):
+    """Fetch headlines for (ticker, name) pairs concurrently.
+
+    Cache hits skip the network entirely. 6 workers keeps us friendly to
+    Yahoo/RSS (each RSS call has its own 15s timeout; a hung feed can't
+    stall the pool). Cache puts are atomic per-key, so concurrent writes
+    are safe. Returns dict ticker -> headlines list.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    out, todo = {}, []
+    for t, name in tickers_names:
+        h = cache.get(f"news_{t}") if cache is not None else None
+        if h is not None:
+            out[t] = h
+        else:
+            todo.append((t, name))
+    if not todo:
+        return out
+    log(f"Fetching {label} for {len(todo)} tickers "
+        f"({workers} threads, {len(tickers_names) - len(todo)} cached)...")
+
+    def _fetch(tn):
+        t, name = tn
+        try:
+            h = fetch_stock_headlines(t, name)
+        except Exception as e:
+            log(f"headlines: {t} fetch failed ({e})")
+            h = []
+        if cache is not None:
+            try:
+                cache.put(f"news_{t}", h)
+            except Exception as e:
+                log(f"headlines: cache put {t} failed ({e})")
+        return t, h
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for t, h in ex.map(_fetch, todo):
+            done += 1
+            if done % 25 == 0:
+                log(f"  {label} {done}/{len(todo)}...")
+            out[t] = h
+    return out
+
+
+def apply_news_adjustment(df, risk_themes, top_k=50, cache=None, w_outlier=1.0):
+    log(f"Fetching stock news for top {min(top_k, len(df))} scorers...")
+    candidates = df.head(top_k)
+    _hl = fetch_headlines_threaded(
+        [(r["ticker"], r["name"]) for _, r in candidates.iterrows()],
+        cache=cache, label="news")
+    penalties, news_counts, samples = [], [], []
+    for _, r in candidates.iterrows():
+        headlines = _hl.get(r["ticker"], [])
+        pen = news_risk_penalty(headlines, risk_themes)
+        penalties.append(pen)
+        news_counts.append(len(headlines))
+        samples.append("; ".join(headlines[:2]))
+    candidates = candidates.copy()
+    candidates["news_penalty"] = penalties
+    candidates["news_count"] = news_counts
+    candidates["news_sample"] = samples
+    # Adjust: penalize high news-risk names; winsorized base + outlier*event
+    # interaction (same SBLK logic as the LLM path, news_penalty as dep proxy)
+    base = candidates["base_w"] if "base_w" in candidates.columns else candidates["base_score"]
+    if "base_cap" in candidates.columns:
+        cap = pd.to_numeric(candidates["base_cap"], errors="coerce")
+    else:
+        cap = pd.Series(candidates.attrs.get("base_cap", float("inf")), index=candidates.index)
+    excess = (candidates["base_score"] - cap).clip(lower=0).fillna(0)
+    candidates["adj_score"] = (base - 1.2 * candidates["news_penalty"]
+                               - w_outlier * excess * candidates["news_penalty"])
+    return candidates.sort_values("adj_score", ascending=False)
+
+
+def _ev_of(r):
+    """Expected value as a float; NaN sorts as -inf so it never wins a tiebreak."""
+    try:
+        v = float(r.get("est_next_1y", float("nan")))
+        return v if v == v else float("-inf")
+    except Exception:
+        return float("-inf")
+
+
+# ---------------- ETF holdings-overlap dedupe ----------------
+# A second wrapper on the same theme is redundancy, not diversification.
+# The category cap can't see this (CIBR and BUG are both "Technology" but the
+# real issue is they hold the same stocks). Pairwise top-10 holdings overlap
+# above --max-etf-overlap keeps only the higher-EV fund.
+_ETF_HOLDINGS_CACHE = "etf_holdings_cache.json"
+_ETF_HOLDINGS_TTL_DAYS = 7
+
+
+def _etf_holdings_cache_load():
+    import json as _json
+    try:
+        return _json.load(open(_ETF_HOLDINGS_CACHE))
+    except Exception:
+        return {}
+
+
+def etf_top_holdings(ticker):
+    """Top-10 holdings {symbol: weight} for an ETF, 7-day file-cached."""
+    import json as _json
+    cache = _etf_holdings_cache_load()
+    today = datetime.now().date().isoformat()
+    hit = cache.get(ticker)
+    if hit:
+        try:
+            age = (datetime.now().date() -
+                   datetime.fromisoformat(hit["date"]).date()).days
+            if age <= _ETF_HOLDINGS_TTL_DAYS:
+                return {k: float(v) for k, v in hit["holdings"].items()}
+        except Exception:
+            pass
+    try:
+        th = yf.Ticker(ticker).funds_data.top_holdings
+        if th is None or not len(th):
+            log(f"etf overlap: holdings unavailable for {ticker} "
+                f"(no data) — pair skipped")
+            return {}
+        col = ("Holding Percent" if "Holding Percent" in th.columns
+               else th.columns[-1])
+        holds = {str(s).upper(): float(w)
+                 for s, w in zip(th.index, th[col])}
+    except Exception as e:
+        log(f"etf overlap: holdings unavailable for {ticker} ({e}) — "
+            f"pair skipped")
+        return {}
+    cache[ticker] = {"date": today, "holdings": holds}
+    try:
+        _json.dump(cache, open(_ETF_HOLDINGS_CACHE, "w"))
+    except Exception:
+        pass
+    return holds
+
+
+def holdings_overlap(h1, h2):
+    """Sum of min weights over common holdings (0..~1)."""
+    return sum(min(h1[s], h2[s]) for s in set(h1) & set(h2))
+
+
+def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
+                       min_score=0.0, veto_dep=None):
+    """Enforce the holdings-overlap cap on the SELECTED ETF portfolio.
+
+    While any two picks overlap above max_overlap (top-10 holdings), evict
+    the lower-EV one and refill the slot from eligible candidates that
+    neither breach the category cap nor overlap a survivor. A pre-selection
+    filter can't do this correctly: it drops funds for overlapping a
+    'winner' that may never make the chart (e.g. SOXQ/TTEQ were excluded
+    for overlapping SMH, which then lost the Technology cap).
+    """
+    global _LAST_OVERLAP_DROPS
+    _LAST_OVERLAP_DROPS = {}
+    sel = selected.copy().reset_index(drop=True)
+    if len(sel) < 2:
+        return sel
+
+    def _ev(r):
+        try:
+            return float(r["est_next_1y"])
+        except Exception:
+            return float("-inf")
+
+    def _dep_ok(v):
+        if veto_dep is None:
+            return True
+        try:
+            return not (float(v) > veto_dep)
+        except Exception:
+            return True
+
+    evicted = set()
+    while len(sel) >= 2:
+        tickers = list(sel["ticker"])
+        holds = {t: etf_top_holdings(t) for t in tickers}
+        ev = {t: _ev(sel.loc[sel["ticker"] == t].iloc[0]) for t in tickers}
+        pairs = []
+        for i in range(len(tickers)):
+            for j in range(i + 1, len(tickers)):
+                a, b = tickers[i], tickers[j]
+                if not holds[a] or not holds[b]:
+                    continue
+                ov = holdings_overlap(holds[a], holds[b])
+                if ov > max_overlap:
+                    pairs.append((ov, a, b))
+        if not pairs:
+            break
+        pairs.sort(reverse=True)
+        ov, a, b = pairs[0]
+        loser = a if ev[a] < ev[b] else b
+        winner = b if loser == a else a
+        lrow = sel.loc[sel["ticker"] == loser].iloc[0]
+        _LAST_OVERLAP_DROPS[loser] = (winner, ov)
+        log(f"etf overlap repair: {loser} overlaps selected {winner} {ov:.0%} "
+            f"(top-10 holdings) > {max_overlap:.0%} — evicting lower EV "
+            f"({ev[loser]:+.1%} vs {ev[winner]:+.1%})")
+        # idempotent: the two-pass Phase B reruns this repair, so skip
+        # losers already recorded today
+        if loser not in _ledger_seen_today(REJECTED_LEDGER, "rejected"):
+            _rev = {
+                "event": "rejected", "ticker": loser, "kind": "etf",
+                "name": str(lrow.get("name", "")),
+                "price": None,
+                "reason": (f"etf holdings overlap {ov:.0%} with selected {winner} "
+                           f"> {max_overlap:.0%} (lower EV)"),
+                "est_next_1y": round(ev[loser], 4),
+                "dep": _safe(lrow.get("llm_event_dependence")),
+                "cont": _safe(lrow.get("llm_continuation")),
+                "conf": _safe(lrow.get("llm_confidence")),
+            }
+            if bool(lrow.get("dep_capped")):
+                _rev["dep_capped"] = True
+            ledger_append(REJECTED_LEDGER, _rev)
+        evicted.add(loser)
+        sel = sel[sel["ticker"] != loser].reset_index(drop=True)
+        # refill the freed slot: same hard gates as selection, plus the
+        # category cap against survivors and no overlap with survivors
+        counts = (Counter(_etf_theme_of(_etf_category_of(r))
+                          for _, r in sel.iterrows())
+                  if len(sel) else Counter())
+        cands = pool[~pool["ticker"].isin(set(sel["ticker"]) | evicted)].copy()
+        cands = cands[cands["final_score"] >= min_score]
+        if "llm_event_dependence" in cands.columns or "dep_used" in cands.columns:
+            # astype(bool): an empty map() yields an object-dtype Series,
+            # which pandas would read as a (zero-width) column selector
+            cands = cands[cands.apply(
+                lambda r: _dep_ok(_dep_used_of(r)), axis=1).astype(bool)]
+        cands = cands[cands.apply(
+            lambda r: counts.get(_etf_theme_of(_etf_category_of(r)), 0) < cap,
+            axis=1).astype(bool)]
+        surv_holds = {t: etf_top_holdings(t) for t in sel["ticker"]}
+
+        def _clear(r):
+            hh = etf_top_holdings(str(r["ticker"]))
+            if not hh:
+                return True
+            return all(holdings_overlap(hh, surv_holds[t]) <= max_overlap
+                       for t in surv_holds if surv_holds[t])
+
+        if not cands.empty:
+            cands = cands[cands.apply(_clear, axis=1)]
+        if cands.empty:
+            log("etf overlap repair: no eligible refill — slot left empty")
+            continue
+        cands = cands.copy()
+        cands["_newcat"] = (~cands["sector"].isin(set(counts))).astype(int)
+        cands = cands.sort_values(["_newcat", "est_next_1y"],
+                                  ascending=[False, False])
+        add = cands.iloc[0:1].copy()
+        add["pick_pass"] = 3
+        log(f"etf overlap repair: refill +{add['ticker'].tolist()} "
+            f"(ev={_ev(add.iloc[0]):+.1%})")
+        sel = pd.concat([sel, add.drop(columns=["_newcat"], errors="ignore")],
+                        ignore_index=True)
+    return sel
+
+
+def fetch_pick_summaries(tickers, path="business_summaries.json", workers=6):
+    """One-line business descriptions for picks (market-chat grounding).
+
+    Fetches longBusinessSummary via yfinance (threaded); the researcher
+    condenses each to one plain line. Failures leave that ticker blank
+    (never fatal). Already-cached tickers are skipped, so reruns are free."""
+    import json as _json
+    from concurrent.futures import ThreadPoolExecutor
+    out = {}
+    try:
+        out = _json.load(open(path))
+    except Exception:
+        out = {}
+    missing = [t for t in tickers if not out.get(t, {}).get("summary")]
+    if not missing:
+        return
+
+    def fetch(t):
+        try:
+            info = yf.Ticker(str(t)).info or {}
+            s = info.get("longBusinessSummary") or ""
+            return t, {"name": info.get("longName") or info.get("shortName") or t,
+                       "summary": s[:700]}
+        except Exception as e:
+            log(f"pick summaries: {t} unavailable ({e})")
+            return t, {"name": t, "summary": ""}
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for t, entry in ex.map(fetch, missing):
+            out[t] = entry
+    # Locked read-merge-write with atomic replace: the daily and watchlist
+    # runs can overlap (14:16 vs 14:45 crons) and both update this file —
+    # without a lock the last writer silently drops the other's additions;
+    # without atomic replace a crash mid-write corrupts it for everyone.
+    try:
+        import fcntl
+        lock_path = path + ".lock"
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                with open(path) as f:
+                    current = _json.load(f)
+            except Exception:
+                current = {}
+            current.update(out)
+            tmp = path + f".tmp.{os.getpid()}"
+            with open(tmp, "w") as f:
+                _json.dump(current, f, indent=1)
+            os.replace(tmp, path)
+        log(f"pick summaries: {path} ({len(current)} tickers)")
+    except Exception as e:
+        log(f"pick summaries: could not write ({e})")
+
+
+def enforce_etf_tier2_cap(selected, pool, cap=2, min_score=0.0,
+                          veto_dep=None, max_tier2=ETF_TIER2_MAX_PICKS):
+    """Cap tier-2 (proven-strength lane) names in the SELECTED ETF
+    portfolio at max_tier2: evict the lowest-EV excess tier-2 picks and
+    refill from tier-1 candidates that respect the category cap and the
+    holdings-overlap cap against survivors. Evicted names are recorded
+    in _ETF_TIER2_CAPPED so frames/ledgers state the real reason.
+    Since 2026-11-06 late max_tier2 is None (Dan removed the one-strike
+    slot cap): the function then returns the selection unchanged."""
+    sel = selected.copy().reset_index(drop=True)
+    if not len(sel) or max_tier2 is None:
+        return sel
+
+    def _tier(r):
+        t, _w = _etf_tier_of(r)
+        return t
+
+    def _ev(r):
+        try:
+            return float(r["est_next_1y"])
+        except Exception:
+            return float("-inf")
+
+    tier2_picks = [str(r["ticker"]) for _, r in sel.iterrows()
+                   if str(r["ticker"]) in _ETF_TIER2]
+    if len(tier2_picks) <= max_tier2:
+        return sel
+    ev_of = {str(r["ticker"]): _ev(r) for _, r in sel.iterrows()}
+    excess = sorted(tier2_picks, key=lambda t: ev_of[t],
+                    reverse=True)[max_tier2:]
+    for t in excess:
+        _ETF_TIER2_CAPPED[t] = (
+            f"tier-2 slot cap ({max_tier2} proven-strength picks max)")
+        log(f"etf tier-2 cap: evicting {t} (EV {ev_of[t]:+.1%}) — "
+            f"{len(tier2_picks)} tier-2 picks > cap {max_tier2}")
+    sel = sel[~sel["ticker"].astype(str).isin(set(excess))]
+    sel = sel.reset_index(drop=True)
+    # refill from tier-1 pool candidates, category cap + overlap safe
+    need = len(selected) - len(sel)
+    if need > 0 and pool is not None and len(pool):
+        taken = set(sel["ticker"].astype(str)) | set(excess)
+        counts = Counter(sel["sector"]) if len(sel) else Counter()
+        surv_holds = {str(r["ticker"]): etf_top_holdings(str(r["ticker"]))
+                      for _, r in sel.iterrows()}
+        cand = []
+        for _, r in pool.iterrows():
+            t = str(r["ticker"])
+            if t in taken or _tier(r) != 1:
+                continue
+            if counts.get(str(r.get("sector", "")), 0) >= cap:
+                continue
+            h = etf_top_holdings(t)
+            if h and any(sv and holdings_overlap(h, sv) > 0.30
+                         for sv in surv_holds.values()):
+                continue
+            cand.append(r)
+        if cand:
+            cdf = pd.DataFrame(cand)
+            fill = pick_top_with_sector_cap(
+                cdf, n=need, max_per_sector=cap, min_score=min_score,
+                veto_dep=veto_dep, initial_counts=counts)
+            if len(fill):
+                fill = fill.copy()
+                fill["pick_pass"] = 3
+                log(f"etf tier-2 cap refill: "
+                    f"{fill['ticker'].astype(str).tolist()}")
+                sel = pd.concat([sel, fill], ignore_index=True)
+    return sel
+
+
+def honorable_mentions(ranked, final, args, top_k=30):
+    """Near-miss table: researched names that cleared the EV floor but didn't
+    make the chart — alternatives worth a look, each with the reason it
+    missed (overlap, cap, or final-score order). Sorted by EV, descending."""
+    if ranked is None or ranked.empty or final is None:
+        return []
+    if "est_next_1y" not in ranked.columns:
+        # pick_final enriches a copy via add_research_columns; the caller's
+        # frame lacks est_next_1y — enrich here so near-misses can be ranked
+        ranked = add_research_columns(ranked, llm_path=True)
+    picked = set(final["ticker"]) if len(final) else set()
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    floor = getattr(args, "min_est", 0.03)
+    floor_etf = getattr(args, "min_est_etf", 0.0)
+    contenders = []
+    for _, r in ranked.iterrows():
+        t = str(r["ticker"])
+        if t in picked or bool(r.get("llm_excluded")):
+            continue
+        try:
+            ev = float(r["est_next_1y"])
+        except Exception:
+            continue
+        if ev < (floor_etf if str(r.get("kind", "")) == "etf" else floor):
+            continue
+        try:
+            if float(_dep_used_of(r)) > veto:
+                continue
+        except Exception:
+            pass
+        contenders.append(r)
+    caps = {"stock": getattr(args, "max_per_sector", 2),
+            "etf": getattr(args, "max_per_etf_category", 2)}
+    sec_counts = {}
+    for _, r in final.iterrows():
+        k = (str(r.get("kind", "")), _cap_key_of(r))
+        sec_counts[k] = sec_counts.get(k, 0) + 1
+    out = []
+    for r in sorted(contenders, key=lambda r: float(r["est_next_1y"]),
+                    reverse=True)[:top_k]:
+        t = str(r["ticker"])
+        kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
+        ckey = _cap_key_of(r)
+        if t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+        elif t in _STABILITY_GATED:
+            reason = (f"stability {_STABILITY_GATED[t]}, below the "
+                      f"B-or-better pick bar")
+        elif t in _ETF_GATED:
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            reason = _STOCK_GATED[t]
+        elif t in _OFFENSE_BUDGET:
+            reason = _OFFENSE_BUDGET[t]
+        elif t in _ETF_TIER2_CAPPED:
+            reason = _ETF_TIER2_CAPPED[t]
+        elif t in _LAST_OVERLAP_DROPS:
+            w, ov = _LAST_OVERLAP_DROPS[t]
+            reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
+        elif sec_counts.get((kind, ckey), 0) >= caps.get(kind, 2):
+            reason = f"{ckey} cap full"
+        elif t in _OFFENSE_RANKED:
+            _rk, _n = _OFFENSE_RANKED[t]
+            reason = (f"offense rank {_rk} of {_n} eligible — below the "
+                      f"pick line (Variant A momentum-ranked selection)")
+        else:
+            reason = "lower expected value than picks"
+        try:
+            conf = float(r.get("llm_confidence"))
+        except Exception:
+            conf = None
+        out.append({"ticker": t, "kind": kind, "name": str(r.get("name", "")),
+                    "sector": sec, "ret_1y": r.get("ret_1y"),
+                    "est_next_1y": float(r["est_next_1y"]), "confidence": conf,
+                    "reason": reason})
+    if out:
+        log(f"honorable mentions: {len(out)} near-misses "
+            f"({', '.join(h['ticker'] for h in out)})")
+    return out
+
+
+def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
+                             veto_dep=None, initial_counts=None):
+    """Pick top n with sector cap. Never fills slots with sub-floor or
+    vetoed stocks: fewer strong picks beats 10 diluted ones.
+    Grouping is by _cap_key_of: sector for stocks, economic theme for
+    ETFs (the 2026-11-10 theme cap), so the cap binds the same way in
+    every pass that calls this.
+    EV tiebreak: when the cap forces a choice inside a sector, the
+    highest-expected-value names survive — a hard cap should cut the
+    lowest-EV name, not whichever final_score happened to order last.
+    initial_counts seeds the per-sector tally (used by the fill pass so the
+    cap stays hard across both passes)."""
+    picked, skipped = [], Counter()
+    skipped_names = {}
+    sector_counts = Counter(initial_counts) if initial_counts else Counter()
+    picked_by_sector = {}  # sec -> list of picked rows (enables the EV tiebreak)
+    for _, r in df.iterrows():
+        if r["final_score"] < min_score:
+            skipped["below_floor"] += 1
+            skipped_names.setdefault("below_floor", []).append(r["ticker"])
+            continue
+        if veto_dep is not None and ("llm_event_dependence" in df.columns
+                                     or "dep_used" in df.columns):
+            try:
+                if float(_dep_used_of(r)) > veto_dep:
+                    skipped["vetoed_event_dep"] += 1
+                    skipped_names.setdefault("vetoed_event_dep", []).append(r["ticker"])
+                    continue
+            except Exception:
+                pass
+        sec = _cap_key_of(r)
+        if sector_counts[sec] >= max_per_sector:
+            cur_ev = _ev_of(r)
+            incumbents = picked_by_sector.get(sec, [])
+            if incumbents:
+                weakest = min(incumbents, key=_ev_of)
+                if cur_ev > _ev_of(weakest):
+                    # EV tiebreak: swap the weakest picked name in this sector out
+                    picked = [x for x in picked if x is not weakest]
+                    picked_by_sector[sec] = [x for x in incumbents if x is not weakest]
+                    skipped["sector_cap"] += 1
+                    skipped_names.setdefault("sector_cap", []).append(
+                        f"{weakest['ticker']}({sec},ev={_ev_of(weakest):+.1%})")
+                    log(f"  ev_tiebreak: {r['ticker']} ({cur_ev:+.1%}) replaces "
+                        f"{weakest['ticker']} ({_ev_of(weakest):+.1%}) in {sec}")
+                    picked.append(r)
+                    picked_by_sector[sec].append(r)
+                    # sector_counts unchanged: still at cap
+                    if len(picked) >= n:
+                        break
+                    continue
+            skipped["sector_cap"] += 1
+            skipped_names.setdefault("sector_cap", []).append(
+                f"{r['ticker']}({sec})")
+            continue
+        picked.append(r)
+        picked_by_sector.setdefault(sec, []).append(r)
+        sector_counts[sec] += 1
+        if len(picked) >= n:
+            break
+    log(f"pick_top: {len(picked)} selected (floor={min_score}, veto_dep={veto_dep}), "
+        f"skipped={dict(skipped)}")
+    for reason, names in skipped_names.items():
+        log(f"  skipped[{reason}]: {names}")
+    return pd.DataFrame(picked)
+
+
+
+# ---------------- Auditability: full-frame snapshot + run manifest --------
+# (2026-10-30, Dan approved. INSTRUMENTATION ONLY: these functions read the
+# frames selection already produced and write JSON evidence files; nothing
+# here feeds back into selection. The monthly audit replays from the frame
+# snapshots; the manifests pin the exact code (sha256) that produced them.)
+
+def _mirror_risk_strikes(r, dep_used):
+    """Strike labels identical to compute_risk_strikes, computed inline for
+    rows/flows that function never saw (pre-selection-gate drops) or where
+    its 'barred from picks' summary would be false (watchlist mode).
+    The implied-upside strike is skipped when implied_upside is
+    unavailable, mirroring compute_risk_strikes' fail-soft rule."""
+    strikes = []
+    ed = _safe(r.get("earnings_in_days"))
+    if ed is not None and 0 <= ed <= 14:
+        strikes.append(f"earnings in {ed:.0f}d")
+    r6 = _safe(r.get("ret_6m_skip1m"))
+    if r6 is None:
+        r6 = _safe(r.get("ret_6m"))
+    if r6 is not None and r6 >= 0.50:
+        strikes.append(f"6m run {r6:+.0%}")
+    iu = _safe(r.get("implied_upside"))
+    if iu is not None and iu < 0:
+        strikes.append(f"implied upside {iu:+.0%}")
+    if dep_used is not None and dep_used >= 0.40:
+        strikes.append(f"dep {dep_used:.2f}")
+    return strikes
+
+
+def _frame_row(r, outcome, reason):
+    dep_raw = _safe(r.get("llm_event_dependence"))
+    dep_used = _safe(r.get("dep_used"))
+    if dep_used is None and dep_raw is not None:
+        dep_used, _dcap = effective_dep(str(r.get("ticker")), r.get("kind"),
+                                        r.get("sector"), dep_raw)
+    strikes = r.get("risk_strikes")
+    if isinstance(strikes, (list, tuple)):
+        strikes = [str(s) for s in strikes]
+    else:
+        strikes = _mirror_risk_strikes(r, dep_used)
+    scount = _safe(r.get("risk_strike_count"))
+    _dc = r.get("dep_capped")
+    dep_capped = (bool(_dc) if _dc is not None
+                  and not (isinstance(_dc, float) and _dc != _dc) else False)
+    return {
+        "ticker": str(r.get("ticker")),
+        "kind": (str(r.get("kind")) if r.get("kind") is not None else None),
+        "category": (str(r.get("sector"))
+                     if r.get("sector") is not None else None),
+        # ETF THEME CAP (2026-11-10): the theme the pick cap grouped
+        # this fund under (style-box families merged); None for stocks.
+        "etf_theme": (_etf_theme_of(_etf_category_of(r))
+                      if str(r.get("kind", "")) == "etf" else None),
+        "base_score": _safe(r.get("base_score")),
+        "final_score": _safe(r.get("final_score")),
+        "est_next_1y": _safe(r.get("est_next_1y")),
+        "base_rate": _safe(r.get("base_rate")),
+        "cont_tilt": _safe(r.get("cont_tilt")),
+        # RESEARCH REDESIGN recording (2026-11-10): the shadow/live v2
+        # EV, its fact components, and the coded facts themselves, so
+        # the Nov 30 audit can score the redesign from frames alone.
+        "est_legacy": _safe(r.get("est_legacy")),
+        "est_v2": _safe(r.get("est_v2")),
+        "fact_tilt": _safe(r.get("fact_tilt")),
+        "research_score": _safe(r.get("research_score")),
+        "no_signal": (bool(r.get("no_signal"))
+                      if r.get("no_signal") is not None else None),
+        "dep_override": bool(r.get("dep_override") or False),
+        "ev_mode": _EV_MODE,
+        "facts": _facts_of(r),
+        # THEME RECORDING (2026-11-10): this ETF row's category theme
+        # facts, stamped for the audit's live record (the February
+        # 2027 audit judges them; sunset if nothing graduates).
+        # Nothing computes with these; None for stocks and for
+        # categories with no coding in the store.
+        "theme_facts": _theme_facts_of(r),
+        "theme_coded_date": _theme_coded_date_of(r),
+        "offense_score": (_offense_score_of(r)
+                          if str(r.get("kind", "")) == "stock" else None),
+        "dep": dep_raw,
+        "dep_used": dep_used,
+        "dep_capped": dep_capped,
+        "continuation": _safe(r.get("llm_continuation")),
+        "confidence": _safe(r.get("llm_confidence")),
+        "character": _safe(r.get("character")),
+        # Scorer z-components (2026-11-06): recorded so future scorer
+        # variants are replayable from frames alone (the special audit
+        # listed their absence as a data gap). Recording only.
+        "z": _z_of(r),
+        "stability": (str(r.get("stability"))
+                      if isinstance(r.get("stability"), str) else None),
+        "risk_strikes": strikes,
+        "risk_strike_count": (int(scount) if scount is not None
+                              else len(strikes)),
+        "implied_upside": _safe(r.get("implied_upside")),
+        "earnings_in_days": _safe(r.get("earnings_in_days")),
+        # Instrumentation (2026-11-06): the quant fields the October
+        # ETF tests needed but frames never recorded (vol/AUM/expense
+        # existed in the bundle; the 6m run and drawdown are the gate
+        # and downside inputs). Recorded for every evaluated row.
+        "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
+        "maxdd": _safe(r.get("maxdd")),
+        "vol60": _safe(r.get("vol60")),
+        "aum": _safe(r.get("aum")),
+        "expense_ratio": _safe(r.get("expense_ratio")),
+        "etf_tier": (("tier2" if str(r.get("ticker")) in _ETF_TIER2 else
+                      "barred" if str(r.get("ticker")) in _ETF_GATED
+                      else "tier1")
+                     if str(r.get("kind", "")) == "etf" else None),
+        "dd_freq": _safe(r.get("dd_freq")),
+        "etf_strikes": (_etf_strike_count(r)
+                        if str(r.get("kind", "")) == "etf" else None),
+        "outcome": outcome,
+        "outcome_reason": reason,
+        "rating": None,
+    }
+
+
+def _write_frame_manifest(rows, flow, bundle_path, counts,
+                          expected_candidates):
+    """Write frames/frame_<stamp>_<flow>.json and
+    manifests/manifest_<stamp>_<flow>.json (same stamp) under the project
+    dir and record _FRAME_SNAPSHOT for verification. Returns
+    (frame_path, manifest_path)."""
+    import hashlib
+    import json as _json
+    global _FRAME_SNAPSHOT
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    fdir = os.path.join(_base, "frames")
+    mdir = os.path.join(_base, "manifests")
+    os.makedirs(fdir, exist_ok=True)
+    os.makedirs(mdir, exist_ok=True)
+    frame_path = os.path.join(fdir, f"frame_{stamp}_{flow}.json")
+    manifest_path = os.path.join(mdir, f"manifest_{stamp}_{flow}.json")
+    bundle_name = (os.path.basename(str(bundle_path))
+                   if bundle_path else None)
+    # Pool tail (2026-11-06): the scored-but-unseated ranks recorded by
+    # Phase A in the bundle meta — republished in the manifest so the
+    # monthly audit can measure pool leakage from the manifest alone.
+    _pool_tail = None
+    try:
+        if bundle_path and os.path.exists(str(bundle_path)):
+            with open(str(bundle_path)) as _bf:
+                _pool_tail = _json.load(_bf).get("meta", {}) \
+                    .get("pool_tail")
+    except Exception:
+        _pool_tail = None
+    with open(frame_path, "w") as f:
+        _json.dump({"date": run_date(), "flow": flow,
+                    "bundle": bundle_name, "rows": rows},
+                   f, indent=1, default=str)
+    try:
+        with open(os.path.abspath(__file__), "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        sha = None
+    with open(manifest_path, "w") as f:
+        _json.dump({"date": run_date(), "flow": flow,
+                    "bundle": bundle_name,
+                    "screener_sha256": sha,
+                    "self_check": None,
+                    "counts": counts,
+                    "etf_selection": {
+                        "gate_design": "strikes",
+                        "strike_max_run": ETF_STRIKE_MAX_RUN,
+                        "strike_max_dep": ETF_STRIKE_MAX_DEP,
+                        "strike_min_maxdd": ETF_STRIKE_MIN_MAXDD,
+                        "strike_max_ddfreq": ETF_STRIKE_MAX_DDFREQ,
+                        "strike_bar": ETF_STRIKE_BAR,
+                        "gate_max_run": ETF_GATE_MAX_RUN,
+                        "gate_max_dep": ETF_GATE_MAX_DEP,
+                        "tier2_max_run": ETF_TIER2_MAX_RUN,
+                        "tier2_max_dep": ETF_TIER2_MAX_DEP,
+                        "tier2_min_maxdd": ETF_TIER2_MIN_MAXDD,
+                        "tier2_max_ddfreq": ETF_TIER2_MAX_DDFREQ,
+                        "tier2_max_picks": ETF_TIER2_MAX_PICKS,
+                        "ev_upside_const": ETF_EV_UPSIDE_CONST},
+                    "stock_selection": {
+                        "gate_max_dep": STOCK_GATE_MAX_DEP,
+                        "gate_implied_upside_min": 0.0,
+                        "ranking": "offense_score (Variant A, 2026-11-07)",
+                        "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
+                        "vol_budget_eligible_pct": 0.95,
+                        "up_t1": STOCK_UP_T1,
+                        "up_factor": STOCK_UP_FACTOR,
+                        "up_cap": STOCK_UP_CAP},
+                    "pool_tail": _pool_tail,
+                    "git_commit_of_pages_at_publish": None},
+                   f, indent=1)
+    _FRAME_SNAPSHOT = {"frame_path": frame_path,
+                       "manifest_path": manifest_path,
+                       "candidates": expected_candidates}
+    log(f"frame snapshot: {frame_path} ({len(rows)} rows); "
+        f"manifest: {manifest_path}")
+    return frame_path, manifest_path
+
+
+def _verify_frame_snapshot(expected_candidates):
+    """Read the frame + manifest back from disk: frame exists, its row
+    count equals the candidates evaluated this run, and the manifest's
+    screener_sha256 matches the running file."""
+    import hashlib
+    import json as _json
+    if not _FRAME_SNAPSHOT or _FRAME_SNAPSHOT.get("error"):
+        return False
+    try:
+        with open(_FRAME_SNAPSHOT["frame_path"]) as f:
+            fr = _json.load(f)
+        with open(_FRAME_SNAPSHOT["manifest_path"]) as f:
+            mf = _json.load(f)
+        with open(os.path.abspath(__file__), "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        return (len(fr.get("rows", [])) == expected_candidates
+                and mf.get("screener_sha256") == sha)
+    except Exception:
+        return False
+
+
+def _mark_frame_failed(expected_candidates):
+    """Record a failed frame write so the self-check assert fails honestly
+    instead of being skipped."""
+    global _FRAME_SNAPSHOT
+    _FRAME_SNAPSHOT = {"frame_path": "", "manifest_path": "",
+                       "candidates": expected_candidates, "error": True}
+
+
+def _patch_manifest_self_check(result):
+    """Fill the manifest's self_check field once the run's checks are
+    known (the manifest is written before the self-check runs)."""
+    import json as _json
+    if not _FRAME_SNAPSHOT or _FRAME_SNAPSHOT.get("error"):
+        return
+    try:
+        mp = _FRAME_SNAPSHOT["manifest_path"]
+        with open(mp) as f:
+            m = _json.load(f)
+        m["self_check"] = result
+        with open(mp, "w") as f:
+            _json.dump(m, f, indent=1)
+    except Exception as e:
+        log(f"manifest: could not record self-check result ({e})")
+
+
+def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
+                               args, gate_report):
+    """Daily-flow frame snapshot: one row per bundle candidate (the
+    pre-selection-gate universe), each with the outcome and reason
+    selection actually produced. Reasons mirror, in order, the chart's
+    honorable-mention chain and the rejected-ledger chain. Reads frames
+    and globals only — selects nothing."""
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    floor = getattr(args, "min_est", 0.03)
+    floor_etf = getattr(args, "min_est_etf", 0.0)
+    picked = (set(final["ticker"])
+              if final is not None and len(final) else set())
+    hm_map = {str(h.get("ticker")): str(h.get("reason", ""))
+              for h in (hm or []) if h.get("ticker")}
+    gated_tickers = set((gate_report or {}).get("gated_tickers") or [])
+    # selection-true enrichment for post-gate rows (mirrors pick_final's
+    # own add_research_columns + compute_risk_strikes on the same inputs)
+    enriched = add_research_columns(ranked, llm_path=True)
+    enriched = compute_risk_strikes(enriched, llm_path=True)
+    by_ticker = {str(r["ticker"]): r for _, r in enriched.iterrows()}
+    # pre-selection-gate drops were never enriched/attached; enrich them
+    # separately (implied upside unavailable -> strike (c) fail-soft off)
+    pre_only = pre_gate[~pre_gate["ticker"].isin(set(by_ticker))]
+    if len(pre_only):
+        pre_enriched = add_research_columns(pre_only, llm_path=True)
+        for _, r in pre_enriched.iterrows():
+            by_ticker[str(r["ticker"])] = r
+    sec_counts = {}
+    if final is not None and len(final):
+        for _, r in final.iterrows():
+            k = (str(r.get("kind", "")), str(r.get("sector", "")))
+            sec_counts[k] = sec_counts.get(k, 0) + 1
+    caps = {"stock": getattr(args, "max_per_sector", 2),
+            "etf": getattr(args, "max_per_etf_category", 2)}
+    rows = []
+    for _, r0 in pre_gate.iterrows():
+        t = str(r0["ticker"])
+        r = by_ticker.get(t, r0)
+        est = _safe(r.get("est_next_1y"))
+        dep_used = _safe(r.get("dep_used"))
+        _fl = (floor_etf if str(r.get("kind", "")) == "etf" else floor)
+        contender = (est is not None and est >= _fl
+                     and not (dep_used is not None and dep_used > veto))
+        if t in picked:
+            outcome, reason = "picked", "picked"
+        elif t in hm_map:
+            outcome, reason = "honorable", hm_map[t]
+        elif bool(r.get("llm_excluded")):
+            outcome = "rejected"
+            reason = (f"research exclusion: "
+                      f"{str(r.get('llm_exclude_reason', ''))[:200]}")
+        elif t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+        elif t in _STABILITY_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"stability {_STABILITY_GATED[t]}, below the "
+                      f"B-or-better pick bar")
+        elif t in _ETF_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _STOCK_GATED[t]
+        elif t in _ETF_TIER2_CAPPED:
+            outcome = "honorable" if contender else "rejected"
+            reason = _ETF_TIER2_CAPPED[t]
+        elif t in _OFFENSE_BUDGET:
+            outcome = "honorable" if contender else "rejected"
+            reason = _OFFENSE_BUDGET[t]
+        elif t in _LAST_OVERLAP_DROPS:
+            _w, _ov = _LAST_OVERLAP_DROPS[t]
+            outcome = "honorable" if contender else "rejected"
+            reason = (f"overlaps {_w} ({_ov:.0%}) — kept the "
+                      f"higher-EV fund")
+        elif t in _FRAME_DEDUPE_DROPS:
+            outcome, reason = "rejected", _FRAME_DEDUPE_DROPS[t]
+        elif t in gated_tickers:
+            outcome = "rejected"
+            bits = []
+            _v = _safe(r.get("vol60"))
+            _dd = _safe(r.get("maxdd"))
+            if _v is not None and _v > args.max_vol:
+                bits.append(f"vol {_v:.0%} > {args.max_vol:.0%}")
+            if _dd is not None and _dd < args.min_dd:
+                bits.append(f"max drawdown {_dd:.0%} < {args.min_dd:.0%}")
+            reason = ("pre-selection risk gate"
+                      + (f" ({'; '.join(bits)})" if bits else ""))
+        elif dep_used is not None and dep_used > veto:
+            outcome = "rejected"
+            reason = f"event-dependence veto (dep={dep_used:.2f} > {veto})"
+        elif est is not None and est < _fl:
+            outcome = "rejected"
+            reason = (f"expected-value floor (est={est:+.1%} "
+                      f"< {_fl:+.0%})")
+        else:
+            _k = (str(r.get("kind", "")), str(r.get("sector", "")))
+            if sec_counts.get(_k, 0) >= caps.get(str(r.get("kind",
+                                                          "stock")), 2):
+                outcome = "rejected"
+                reason = f"{r.get('sector', '')} cap full"
+            elif t in _OFFENSE_RANKED:
+                _rk, _n = _OFFENSE_RANKED[t]
+                outcome = "rejected"
+                reason = (f"offense rank {_rk} of {_n} eligible — below "
+                          f"the pick line (Variant A momentum-ranked "
+                          f"selection)")
+            else:
+                outcome = "rejected"
+                reason = "lower expected value than picks"
+        rows.append(_frame_row(r, outcome, reason))
+    counts = {
+        "candidates": len(rows),
+        "picks": len(picked),
+        "gate_bars": len(_RISK_GATED),
+        "stability_bars": len(_STABILITY_GATED),
+        "etf_gate_bars": len(_ETF_GATED),
+        "stock_gate_bars": len(_STOCK_GATED),
+        "etf_tier2_candidates": len(_ETF_TIER2),
+        "etf_tier2_capped": len(_ETF_TIER2_CAPPED),
+        "dep_binds": sum(1 for row in rows if row["dep_capped"]),
+        "vetoes": sum(1 for row in rows
+                      if row["outcome"] != "picked"
+                      and row["dep_used"] is not None
+                      and row["dep_used"] > veto),
+    }
+    return _write_frame_manifest(rows, "daily", bundle_path, counts,
+                                 expected_candidates=len(pre_gate))
+
+
+def write_frame_snapshot_watchlist(final, bundle_path, args):
+    """Watchlist-flow frame snapshot: one row per rated ticker. Outcome
+    maps BUY -> picked, HOLD -> honorable, SELL -> rejected, with
+    compute_rating's reason string. The two-strike gate does NOT apply in
+    watchlist mode, so strikes are mirrored inline for analysis only."""
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    rows = []
+    for _, r in final.iterrows():
+        rating = str(r.get("rating") or "")
+        outcome = {"BUY": "picked", "HOLD": "honorable",
+                   "SELL": "rejected"}.get(rating, "rejected")
+        row = _frame_row(r, outcome, str(r.get("rating_reason") or ""))
+        row["rating"] = rating or None
+        rows.append(row)
+    counts = {
+        "candidates": len(rows),
+        "picks": sum(1 for row in rows if row["outcome"] == "picked"),
+        "gate_bars": 0,
+        "stability_bars": 0,
+        "dep_binds": sum(1 for row in rows if row["dep_capped"]),
+        "vetoes": sum(1 for row in rows
+                      if row["outcome"] != "picked"
+                      and row["dep_used"] is not None
+                      and row["dep_used"] > veto),
+    }
+    return _write_frame_manifest(rows, "watchlist", bundle_path, counts,
+                                 expected_candidates=len(final))
+
+
+def run_self_check(final, args, out_csv):
+    """Automatic post-run validation. Returns list of failures (alert!)."""
+    import os
+    checks = []
+
+    def check(name, ok, detail=""):
+        ok = bool(ok)
+        checks.append({"name": name, "ok": ok, "detail": str(detail)})
+        log(f"SELF-CHECK {'PASS' if ok else 'FAIL'}: {name} {detail}")
+
+    check("csv_written", os.path.exists(out_csv), out_csv)
+    check("nonempty_final", len(final) > 0, f"{len(final)} picks")
+    if len(final):
+        check("no_dupes", not final["ticker"].duplicated().any(),
+              f"{final['ticker'].duplicated().sum()} duplicate tickers")
+        # research coverage: every pick must have an actual assessment —
+        # a pick on neutral defaults (no rationale) is a research miss
+        if "llm_rationale" in final.columns:
+            n_cov = int(final["llm_rationale"].astype(str).str.strip().ne("").sum())
+            check("research_coverage", n_cov == len(final),
+                  f"{n_cov}/{len(final)} picks with assessments")
+        check("no_nan_final_score", not final["final_score"].isna().any())
+        check("no_nan_base_score", not final["base_score"].isna().any())
+        check("floor_respected",
+              bool((final["final_score"] >= args.min_score - 1e-9).all()),
+              f"min_score={args.min_score}")
+        if "kind" in final.columns:
+            for kind, cap in (("stock", args.max_per_sector),
+                              ("etf", args.max_per_etf_category)):
+                sub = final[final["kind"] == kind]
+                if len(sub):
+                    # the cap is hard across both pick passes; for ETFs
+                    # it binds per theme (2026-11-10), not per raw
+                    # category, so the check counts themes there
+                    if kind == "etf":
+                        sc = sub.apply(
+                            lambda r: _etf_theme_of(_etf_category_of(r)),
+                            axis=1).value_counts()
+                    else:
+                        sc = sub["sector"].value_counts()
+                    check(f"sector_cap_{kind}",
+                          bool((sc <= cap).all()), f"max/{kind}={sc.max()}")
+        else:
+            sc = final["sector"].value_counts()
+            check("sector_cap", bool((sc <= args.max_per_sector).all()),
+                  f"max/sector={sc.max()}")
+        if "vol60" in final.columns:
+            check("risk_gates",
+                  bool(((final["vol60"] <= args.max_vol + 1e-9) &
+                        (final["maxdd"] >= args.min_dd - 1e-9)).all()))
+        _dep_veto_col = ("dep_used" if "dep_used" in final.columns
+                         else "llm_event_dependence")
+        if _dep_veto_col in final.columns and args.veto_dep is not None:
+            check("dep_veto",
+                  bool((final[_dep_veto_col] <= args.veto_dep + 1e-9).all()),
+                  f"veto_dep={args.veto_dep} (on {_dep_veto_col})")
+        if "dep_used" in final.columns and _DEP_CEILING_EVIDENCE:
+            # Fix B recomputation check (2026-10-30): re-derive every
+            # enriched ETF row's dep_used from its raw fields via the
+            # shared helper and require an exact match; every logged
+            # bind must correspond to a capped recomputation, and every
+            # diversified pick must sit at or under the ceiling.
+            _ev_ok, _ev_detail = True, ""
+            _capped_ev = set()
+            for _e in _DEP_CEILING_EVIDENCE:
+                _u2, _c2 = effective_dep(_e["ticker"], _e["kind"],
+                                         _e["category"], _e["dep_raw"])
+                if abs(_u2 - _e["dep_used"]) > 1e-9 or _c2 != _e["capped"]:
+                    _ev_ok = False
+                    _ev_detail = (f"{_e['ticker']}: evidence dep_used="
+                                  f"{_e['dep_used']:.2f} vs recomputed "
+                                  f"{_u2:.2f}")
+                    break
+                if _e["cls"] == "diversified" \
+                        and _e["dep_used"] > DEP_CEILING_DIVERSIFIED + 1e-9:
+                    _ev_ok = False
+                    _ev_detail = (f"{_e['ticker']}: diversified dep_used "
+                                  f"{_e['dep_used']:.2f} above ceiling")
+                    break
+                if _e["capped"]:
+                    _capped_ev.add(_e["ticker"])
+            if _ev_ok and set(_DEP_CEILING_BINDS) != _capped_ev:
+                _ev_ok = False
+                _ev_detail = ("logged binds "
+                              f"{sorted(_DEP_CEILING_BINDS)} != capped "
+                              f"evidence {sorted(_capped_ev)}")
+            if _ev_ok and "kind" in final.columns:
+                for _, _r in final[final["kind"] == "etf"].iterrows():
+                    _raw = _safe(_r.get("llm_event_dependence"))
+                    if _raw is None:
+                        _raw = _safe(_r.get("news_penalty"))
+                    _u3, _ = effective_dep(
+                        _r.get("ticker"), "etf", _r.get("sector"),
+                        _raw if _raw is not None else 0.3)
+                    if abs(_u3 - float(_r["dep_used"])) > 1e-9:
+                        _ev_ok = False
+                        _ev_detail = (f"pick {_r['ticker']}: dep_used "
+                                      f"{float(_r['dep_used']):.2f} != "
+                                      f"recomputed {_u3:.2f}")
+                        break
+            check("dep_ceiling_applied", _ev_ok,
+                  _ev_detail or
+                  f"{len(_DEP_CEILING_EVIDENCE)} ETF rows recomputed, "
+                  f"{len(_DEP_CEILING_BINDS)} binds match")
+        if "est_next_1y" in final.columns:
+            _etf_floor = getattr(args, "min_est_etf", 0.0)
+            if "kind" in final.columns:
+                _floor_ok = bool(all(
+                    float(r["est_next_1y"]) >=
+                    ((_etf_floor if str(r.get("kind")) == "etf"
+                      else args.min_est) - 1e-9)
+                    for _, r in final.iterrows()))
+            else:
+                _floor_ok = bool(
+                    (final["est_next_1y"] >= args.min_est - 1e-9).all())
+            check("est_floor", _floor_ok,
+                  f"min_est={args.min_est}, min_est_etf={_etf_floor}")
+        if "stability" in final.columns:
+            check("stability_gate",
+                  bool(final["stability"].isin(["A", "B"]).all()),
+                  "all picks B-or-better (gate added 2026-10-16)")
+        if "risk_strike_count" in final.columns:
+            _gate_ok = bool((final["risk_strike_count"] <
+                             RISK_GATE_MIN_STRIKES).all())
+            # ETF eligibility gate (2026-11-06, tiered): every ETF pick
+            # must be tier-1 or tier-2 eligible, and tier-2 picks must
+            # respect the slot cap.
+            if "kind" in final.columns:
+                _n_tier2 = 0
+                for _, _r in final[final["kind"] == "etf"].iterrows():
+                    _tier, _why = _etf_tier_of(_r)
+                    if _tier is None:
+                        _gate_ok = False
+                    elif _tier == 2:
+                        _n_tier2 += 1
+                if (ETF_TIER2_MAX_PICKS is not None
+                        and _n_tier2 > ETF_TIER2_MAX_PICKS):
+                    _gate_ok = False
+                # Stock eligibility gate (2026-11-06): every stock pick
+                # must have implied upside >= 0 (when recorded) and
+                # dep_used < STOCK_GATE_MAX_DEP.
+                for _, _r in final[final["kind"] == "stock"].iterrows():
+                    _iu = _safe(_r.get("implied_upside"))
+                    if _iu is not None and _iu < 0:
+                        _gate_ok = False
+                    _du = _safe(_dep_used_of(_r))
+                    if _du is not None and _du >= STOCK_GATE_MAX_DEP:
+                        _gate_ok = False
+            check("risk_flag_gate", _gate_ok,
+                  "all picks <2 risk strikes (gate added 2026-10-30); "
+                  "ETF picks strike-eligible (tier 1 or 2); "
+                  "stock picks pass the iu/dep eligibility gate "
+                  "(2026-11-06)")
+        check("has_stability_grade", "stability" in final.columns)
+        check("has_confidence", "llm_confidence" in final.columns)
+    if _FRAME_SNAPSHOT is not None:
+        # Auditability assert (2026-10-30): the frame snapshot + manifest
+        # written this run must exist on disk, cover every candidate
+        # evaluated, and carry this running file's sha256.
+        check("frame_manifest_written",
+              _verify_frame_snapshot(_FRAME_SNAPSHOT.get("candidates")),
+              f"frame rows vs {_FRAME_SNAPSHOT.get('candidates')} "
+              f"candidates; manifest hash vs running file")
+    fails = [c for c in checks if not c["ok"]]
+    log(f"SELF-CHECK: {len(checks) - len(fails)}/{len(checks)} passed")
+    return checks, fails
+
+
+def write_run_summary(path, payload):
+    import json as _json
+    try:
+        if "philosophy" not in payload:
+            phil = _load_philosophy()
+            if phil:
+                payload["philosophy"] = phil
+        with open(path, "w") as f:
+            _json.dump(payload, f, indent=1, default=str)
+        log(f"Run summary: {path}")
+    except Exception as e:
+        log(f"Could not write run summary: {e}")
+
+
+def _safe(x):
+    try:
+        f = float(x)
+        return f if f == f else None  # NaN -> None
+    except Exception:
+        return None
+
+
+def _print_llm_final(final_stocks, final_etfs, args):
+    print("\n" + "=" * 70)
+    print(f"TOP PICKS vs {args.benchmark} — {len(final_stocks)} stocks + "
+          f"{len(final_etfs)} ETFs — LLM reranked")
+    print("=" * 70)
+    for title, grp in (("STOCKS", final_stocks), ("ETFs", final_etfs)):
+        print(f"\n{title}")
+        for i, (_, r) in enumerate(grp.iterrows(), 1):
+            dep = r.get("llm_event_dependence", float("nan"))
+            cont = r.get("llm_continuation", float("nan"))
+            try:
+                est = f"{float(r['est_next_1y']):+.1%}"
+            except Exception:
+                est = "n/a"
+            try:
+                cf = f"{float(r['llm_confidence']):.0%}"
+            except Exception:
+                cf = "n/a"
+            print(
+                f"{i:2d}. {r['ticker']:8s} | {r['sector'][:20]:20s} | "
+                f"1y {r['ret_1y']:+.0%} | est next 1y {est} | conf {cf} | "
+                f"dep {dep:.2f} | cont {cont:.2f} | final {r['final_score']:+.2f}"
+            )
+            print(f"    {r['name'][:60]}")
+            if r.get("llm_rationale"):
+                print(f"    why: {str(r['llm_rationale'])[:160]}")
+            if r.get("llm_risks"):
+                print(f"    risks: {str(r['llm_risks'])[:160]}")
+    print("\nNote: past performance doesn't predict future returns. This is a")
+    print("screening tool, not financial advice.")
+    log(f"Phase B complete: {len(final_stocks)} stocks + {len(final_etfs)} ETFs")
+    # final picks in the log too, so the log alone carries the full audit trail
+    log("--- final picks ---")
+    for title, grp in (("stocks", final_stocks), ("etfs", final_etfs)):
+        for i, (_, r) in enumerate(grp.iterrows(), 1):
+            try:
+                est = f"{float(r['est_next_1y']):+.1%}"
+            except Exception:
+                est = "n/a"
+            try:
+                cf = f"{float(r['llm_confidence']):.0%}"
+            except Exception:
+                cf = "n/a"
+            log(f"  {i:2d}. [{title}] {r['ticker']:6s} {str(r['sector'])[:22]:22s} "
+                f"1y={r['ret_1y']:+.0%} est={est} conf={cf} "
+                f"stab={r.get('stability', '?')} final={r['final_score']:+.2f}")
+
+
+def etf_benchmark(args):
+    """Benchmark ticker for the ETF leg (defaults to the stock benchmark)."""
+    return args.etf_benchmark or args.benchmark
+
+
+def run_etf_pipeline(args, cache, bench_ret, bench_name):
+    """Full ETF leg: universe -> outperformers -> infos -> trash -> scores -> gates.
+
+    Returns a scored, gated, winsorized DataFrame (may be empty).
+    """
+    from cache import StepCache
+    etf_universe = cache.get("etf_universe_v5")
+    if etf_universe is None:
+        # benchmark-relative universe: everything the bench-5 filter below
+        # would consider; 2000 is only a work bound, not a cutoff
+        etf_universe = get_etf_universe(target=2000, min_price=args.min_price,
+                                        min_52w=bench_ret * 100 - 5)
+        if etf_universe:
+            cache.put("etf_universe_v5", etf_universe)
+        # Never cache an empty universe (outage would poison same-day retries).
+    if not etf_universe:
+        log("ETF universe empty; skipping ETF leg")
+        return pd.DataFrame()
+    bench_pct = bench_ret * 100
+    ecands = [u for u in etf_universe
+              if u.get("pct_52w") and u["pct_52w"] > bench_pct - 5]
+    ecands.sort(key=lambda d: d["pct_52w"] or 0, reverse=True)
+    print(f"\n{len(ecands)} candidate ETF outperformers "
+          f"(screener 52w% > {bench_pct - 5:.0f}%)")
+    etickers = [c["ticker"] for c in ecands]
+    ekey = "etf_prices_" + StepCache.tickers_key(etickers)
+    ecloses = cache.get(ekey)
+    if ecloses is None:
+        ecloses = download_prices(etickers, period="1y")
+        cache.put(ekey, ecloses)
+        _cache_put_px(cache, ecloses)
+    eout = []
+    for c in ecands:
+        s = ecloses.get(c["ticker"])
+        r = calc_return(s) if s is not None else np.nan
+        if not pd.isna(r) and r > bench_ret:
+            c["ret_1y"] = r
+            eout.append(c)
+    eout.sort(key=lambda d: d["ret_1y"], reverse=True)
+    print(f"{len(eout)} confirmed ETF outperformers beat {bench_name} "
+          f"({bench_ret:+.1%} 1y)")
+    if not eout:
+        return pd.DataFrame()
+    fkey = "etf_fundamentals_" + StepCache.tickers_key([c["ticker"] for c in eout])
+    einfos = cache.get(fkey) or {}
+    emiss = [c["ticker"] for c in eout if c["ticker"] not in einfos]
+    if emiss:
+        log(f"ETF fundamentals: {len(einfos)} cached, fetching {len(emiss)} missing")
+        einfos.update(get_fundamentals(emiss))
+        cache.put(fkey, einfos)
+    ekept, etrash = etf_trash_filter(eout, ecloses, einfos, us_only=args.us_only)
+    log(f"ETF trash filter: {etrash['dropped_total']} dropped, "
+        f"{etrash['kept']} kept ({etrash})")
+    print(f"ETF trash filter: {etrash['dropped_total']} dropped, {etrash['kept']} kept")
+    ekept_t = [c["ticker"] for c in ekept]
+    einfos = {t: i for t, i in einfos.items() if t in ekept_t}
+    ecloses = {t: s for t, s in ecloses.items() if t in ekept_t}
+    edf = build_etf_scores(ecloses, einfos)
+    if edf.empty:
+        return edf
+    print(f"Scored {len(edf)} ETFs. Top 5:")
+    for _, r in edf.head(5).iterrows():
+        print(f"  {r['ticker']:8s} {str(r['sector'])[:22]:22s} "
+              f"base={r['base_score']:+.2f} 1y={r['ret_1y']:+.0%}")
+    log(f"etf base_score stats: {edf['base_score'].describe().to_dict()}")
+    log_score_breakdown(edf, "etfs", _ETF_SCORE_GROUPS)
+    _etf_pool = edf.head(args.n_etf_research) if not edf.empty else edf
+    log_character_breakdown(_etf_pool, "etfs (research pool)", _CHAR_PARTS_ETF)
+    edf, egate = apply_risk_gates(edf, max_vol=args.max_vol, min_dd=args.min_dd)
+    edf, ecap = winsorize_base(edf)
+    edf["base_cap"] = ecap
+    log(f"ETF gates: {egate['gated_total']} excluded; winsorize cap={ecap:+.2f}")
+    # ETF POOL-PRIORITY DEMOTION (2026-11-06, winner-detection rec 4;
+    # strike form 2026-11-06 late): base_score has zero ETF
+    # winner/loser separation (d +0.03) yet decides the research pool,
+    # and it ranks extended funds IN. ETFs already carrying two or
+    # more of the three price-side strikes (run, maxdd, dd_freq) are
+    # barred no matter what dep the research layer later assigns, so
+    # they are demoted below eligible names in pool order (base_score
+    # order preserved within each group) — they can still be
+    # researched if pool slots remain, they just stop crowding out
+    # eligible funds. Only the price-side strikes apply here: dep
+    # does not exist until the research layer scores it.
+    _run_col = ("ret_6m_skip1m" if "ret_6m_skip1m" in edf.columns
+                else ("ret_6m" if "ret_6m" in edf.columns else None))
+    if _run_col is not None and len(edf):
+        _run = edf[_run_col].fillna(0)
+        _pstrikes = (_run > ETF_STRIKE_MAX_RUN).astype(int)
+        if "maxdd" in edf.columns:
+            _pstrikes = _pstrikes + (edf["maxdd"].fillna(-1)
+                                     < ETF_STRIKE_MIN_MAXDD).astype(int)
+        if "dd_freq" in edf.columns:
+            _pstrikes = _pstrikes + (edf["dd_freq"].fillna(1)
+                                     > ETF_STRIKE_MAX_DDFREQ).astype(int)
+        _ext = (_pstrikes >= ETF_STRIKE_BAR).astype(int)
+        if int(_ext.sum()):
+            edf = edf.assign(_etf_ext=_ext).sort_values(
+                ["_etf_ext", "base_score"], ascending=[True, False],
+                kind="mergesort").drop(columns=["_etf_ext"])
+            log(f"etf pool demotion: {int(_ext.sum())} ETFs already "
+                f"carrying {ETF_STRIKE_BAR}+ price-side strikes "
+                f"demoted in research-pool priority")
+    return edf
+
+
+def add_research_columns(df, llm_path=True):
+    """Add dep/cont/conf/est/stability columns from the research layer.
+
+    No picking — just enriches. llm_path=True uses the LLM research columns;
+    False falls back to the rules-based news layer columns.
+    """
+    dep_col = "llm_event_dependence" if llm_path else "news_penalty"
+    cont_col = "llm_continuation" if llm_path else None
+    conf_col = "llm_confidence" if llm_path else None
+    sub = df.copy()
+    if dep_col in sub.columns:
+        dep = pd.to_numeric(sub[dep_col], errors="coerce").fillna(0.3)
+    else:
+        dep = pd.Series(0.3, index=sub.index)
+    if cont_col and cont_col in sub.columns:
+        cont = pd.to_numeric(sub[cont_col], errors="coerce").fillna(0.5)
+    else:
+        cont = pd.Series(0.5, index=sub.index)
+    if conf_col and conf_col in sub.columns:
+        conf = pd.to_numeric(sub[conf_col], errors="coerce").fillna(0.7)
+    else:
+        conf = pd.Series(0.5 if not llm_path else 0.7, index=sub.index)
+    sub["llm_confidence"] = conf
+    recs = sub.to_dict("records")
+    # Fix B (2026-10-30): diversified-ETF dep ceiling — dep_used is the
+    # dep EVERY downstream decision consumes (EV term, stability grade,
+    # dep veto, risk-gate strike, watchlist rating). One shared helper,
+    # both flows (this function serves Phase B and watchlist-apply).
+    global _DEP_CEILING_BINDS, _DEP_CEILING_EVIDENCE
+    _dep_eff = [effective_dep(r.get("ticker"), r.get("kind"),
+                              r.get("sector"), d)
+                for r, d in zip(recs, dep)]
+    dep_used = pd.Series([u for u, _ in _dep_eff], index=sub.index)
+    dep_capped = pd.Series([c for _, c in _dep_eff], index=sub.index)
+    sub["dep_used"] = dep_used
+    sub["dep_capped"] = dep_capped
+    _DEP_CEILING_BINDS = {}
+    _DEP_CEILING_EVIDENCE = []
+    _n_div = _n_conc = 0
+    for r, d, (u, cap) in zip(recs, dep, _dep_eff):
+        if str(r.get("kind") or "").lower() != "etf":
+            continue
+        cls = classify_etf_category(r.get("sector"))
+        if cls == "diversified":
+            _n_div += 1
+        else:
+            _n_conc += 1
+        _DEP_CEILING_EVIDENCE.append(
+            {"ticker": str(r.get("ticker")), "kind": "etf",
+             "category": str(r.get("sector") or ""), "cls": cls,
+             "dep_raw": float(d), "dep_used": float(u),
+             "capped": bool(cap)})
+        if cap:
+            _DEP_CEILING_BINDS[str(r.get("ticker"))] = (float(d), float(u))
+    if _n_div or _n_conc:
+        log(f"dep ceiling: {_n_div} diversified / {_n_conc} concentrated "
+            f"ETF candidates (diversified dep capped at "
+            f"{DEP_CEILING_DIVERSIFIED:.2f})")
+    for r, d, (u, cap) in zip(recs, dep, _dep_eff):
+        if cap:
+            log(f"dep ceiling (diversified fund): {r.get('ticker')} "
+                f"dep {float(d):.2f} -> {float(u):.2f}")
+    _parts = [est_parts(r, d, c, f)
+              for r, d, c, f in zip(recs, dep_used, cont, conf)]
+    sub["est_next_1y"] = [p["est"] for p in _parts]
+    # RESEARCH REDESIGN recording (2026-11-10): both EV variants and the
+    # fact layer ride the frame in every mode; "est" above is whichever
+    # variant _EV_MODE makes effective (legacy unless live).
+    sub["est_legacy"] = [p["est_legacy"] for p in _parts]
+    sub["est_v2"] = [p["est_v2"] for p in _parts]
+    sub["fact_tilt"] = [p["fact_tilt"] for p in _parts]
+    sub["research_score"] = [p["research_score"] for p in _parts]
+    sub["no_signal"] = [p["no_signal"] for p in _parts]
+    sub["dep_override"] = [p["dep_override"] for p in _parts]
+    sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
+                         else EV_BASE_STOCK) for r in recs]
+    sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
+                          else EV_GAMMA_STOCK) * (float(c) - 0.50))
+                        for r, c in zip(recs, cont)]
+    sub["stability"] = [stability_grade(r, d) for r, d in zip(recs, dep_used)]
+    # --- est audit trail: formula + per-ticker components, so any reviewer
+    # (human or LLM) can re-derive every estimate from the log alone ---
+    log("--- expected-value audit: est = conf x (1 + 0.25 x character) x "
+        "(BASE[kind] + GAMMA[kind] x (cont - 0.50) - dep_ev x 0.20) — "
+        "BASE-ONLY CORE (2026-11-07) + V2 CONTINUATION TILT "
+        "(2026-11-07): GAMMA = 0.0 stocks (effect not separately "
+        "identified from dep) / 0.0177 ETFs (half the live bucket "
+        "estimate, robustness-checked); "
+        "BASE = 8.22% stocks / 6.20% ETFs (discovery-window fits from "
+        "the 2021-2026 design study; the fitted upside/downside "
+        "coefficients are zero, so both are computed and shown for the "
+        "gates and the record but carry no EV weight); "
+        "upside (stocks, 2026-11-06 steep dampener) = first 15% of 6m run "
+        "SKIPPING the most recent month at full weight, beyond at 1/3 "
+        "weight (run capped at 30%); upside (ETF momentum figure) = first "
+        "25% at full weight, beyond at half (cap 50%); downside = max(|maxDD| x 0.5, "
+        "15% stocks / 10% ETFs) x (1 + drawdown_freq), floored at 0.5 x typical earnings-day "
+        "move when earnings are within 30d (2026-10-30); "
+        "character = quality/entry-timing/structure z-sum, clamped [-2, 2]; "
+        "dep_ev = dep_used (diversified-ETF ceiling 0.15 applied, "
+        "2026-10-30; charge removed for diversified ETFs, 2026-11-06)")
+    for (_, r), d, c, f in zip(sub.iterrows(), dep_used, cont, conf):
+        p = est_parts(r, d, c, f)
+        _gap = ""
+        if p.get("earn_gap_applied"):
+            _gap = (f"; EARNINGS-GAP downside {p['downside_base']:.1%} -> "
+                    f"{p['downside']:.1%} (max of base, 0.5 x typical "
+                    f"earnings-day move {p['earn_move_typ']:.1%}"
+                    f"{', FALLBACK 12%' if p.get('earn_move_fallback') else ''}; "
+                    f"earnings in {p['earnings_in_days']:.0f}d)")
+        _v2 = ""
+        if p.get("est_v2") is not None:
+            _v2 = (f"; v2[{p.get('ev_mode')}]={p['est_v2']:+.1%} = "
+                   f"{p['conf_adj']:.2f}conf-adj x "
+                   f"{1 + 0.25 * p['character']:.2f}char x "
+                   f"({p['base_rate']:.3f} base "
+                   f"{p['fact_tilt']:+.4f} fact-tilt"
+                   f"{' DEP-OVERRIDE' if p.get('dep_override') else ''}; "
+                   f"rs={p['research_score'] if p['research_score'] is not None else float('nan'):+.3f}"
+                   f"{' NO-SIGNAL' if p.get('no_signal') else ''})")
+        log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
+            f"{1 + 0.25 * p['character']:.2f}char x "
+            f"({p['base_rate']:.3f} base + {p['cont_tilt']:+.4f} tilt "
+            f"- {p['dep_ev']:.2f} x 0.20) "
+            f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%} (record only); "
+            f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%} (record only); "
+            f"cont={p['cont']:.2f}; "
+            f"char={p['character']:+.2f}]{_gap}{_v2}")
+    return sub
+
+
+def pick_final(adj, args, llm_path):
+    """Final picks: n_stocks most-confident stocks + n_etfs most-confident ETFs.
+
+    Each group gets its own sector/category cap, quality floor, expected-value
+    floor (no negative-EV picks -- the HGER lesson), and event-dependence veto.
+    Adds confidence-weighted est_next_1y and stability grade to each pick.
+    """
+    veto = args.veto_dep if llm_path else None
+    adj = add_research_columns(adj, llm_path=llm_path)
+
+    # reset per-run stability-gate record (ticker -> C/D grade)
+    global _STABILITY_GATED
+    _STABILITY_GATED = {}
+    # reset per-run risk-gate record (ticker -> {count, strikes})
+    global _RISK_GATED
+    _RISK_GATED = {}
+    # reset per-run ETF eligibility-gate record (ticker -> reason)
+    global _ETF_GATED
+    _ETF_GATED = {}
+    global _ETF_TIER2
+    _ETF_TIER2 = {}
+    global _ETF_TIER2_CAPPED
+    _ETF_TIER2_CAPPED = {}
+    # reset per-run stock eligibility-gate record (ticker -> reason)
+    global _STOCK_GATED
+    _STOCK_GATED = {}
+    # reset per-run dedupe record (auditability frame snapshot)
+    global _FRAME_DEDUPE_DROPS
+    _FRAME_DEDUPE_DROPS = {}
+    # reset per-run Variant A offense records (budget exclusions +
+    # eligible-set offense ranking; frame/HM reason strings read these)
+    global _OFFENSE_BUDGET
+    _OFFENSE_BUDGET = {}
+    global _OFFENSE_RANKED
+    _OFFENSE_RANKED = {}
+    # TWO-STRIKE RISK GATE inputs (2026-10-30): strike counts for every
+    # selection candidate; pick_group bars >=2-strike names from picks.
+    adj = compute_risk_strikes(adj, llm_path=llm_path)
+
+    # research-driven hard exclusions (rule violations, etc.)
+    if "llm_excluded" in adj.columns and adj["llm_excluded"].any():
+        _ex = adj[adj["llm_excluded"]]
+        for _, r in _ex.iterrows():
+            log(f"RESEARCH EXCLUSION: {r['ticker']} — {r.get('llm_exclude_reason', '')}")
+        print(f"Research excluded {_ex['ticker'].tolist()}")
+        adj = adj[~adj["llm_excluded"]].copy()
+
+    if "kind" in adj.columns:
+        srank = adj[adj["kind"] == "stock"]
+        erank = adj[adj["kind"] == "etf"]
+    else:
+        srank, erank = adj, adj.iloc[0:0]
+
+    # share-class dedupe (safety net for Phase B bundles built before the
+    # Phase A dedupe): never hold two listings of the same company
+    if not srank.empty and "name" in srank.columns:
+        srank = srank.copy()
+        srank["_ckey"] = srank["name"].str.lower().str.replace(
+            r"\b(class [a-c]|inc\.?|corp\.?|corporation|company|co\.?|ltd\.?|plc|holdings?|group)\b",
+            "", regex=True).str.replace(r"[^a-z0-9]", "", regex=True)
+        srank = srank.sort_values("final_score", ascending=False)
+        _dup_mask = srank.duplicated("_ckey", keep="first")
+        _dropped_names = list(srank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        if _dup_mask.any():
+            _kept_by_key = dict(zip(srank.loc[~_dup_mask, "_ckey"],
+                                    srank.loc[~_dup_mask, "ticker"]))
+            for _dt, _dk in zip(srank.loc[_dup_mask, "ticker"],
+                                srank.loc[_dup_mask, "_ckey"]):
+                _FRAME_DEDUPE_DROPS[str(_dt)] = (
+                    f"share-class duplicate of {_kept_by_key.get(_dk, '?')} "
+                    f"— kept the higher-scoring listing")
+        srank = srank[~_dup_mask].drop(columns=["_ckey"])
+        if _dropped_names:
+            log(f"share-class dedupe: {len(_dropped_names)} duplicate listings "
+                f"removed: {_dropped_names}")
+
+    # ETF portfolio dedupe: never hold two wrappers of the same portfolio
+    # (ETF analogue of the GOOG/GOOGL rule, e.g. QQQ vs QQQM). Keyed on a
+    # small alias map for known identical-portfolio pairs surfaced by
+    # research, falling back to normalized fund name.
+    if not erank.empty and "name" in erank.columns:
+        erank = erank.copy()
+        _noname = (erank["name"].str.lower()
+                   .str.replace(r"\b(etf|trust|fund|index|shares?)\b", "", regex=True)
+                   .str.replace(r"[^a-z0-9]", "", regex=True))
+        erank["_pkey"] = [_ETF_PORTFOLIO_ALIASES.get(str(t).lower(), n)
+                          for t, n in zip(erank["ticker"], _noname)]
+        erank = erank.sort_values("final_score", ascending=False)
+        _dup_mask = erank.duplicated("_pkey", keep="first")
+        _dropped_names = list(erank.loc[_dup_mask, "ticker"]) if _dup_mask.any() else []
+        if _dup_mask.any():
+            _kept_by_key = dict(zip(erank.loc[~_dup_mask, "_pkey"],
+                                    erank.loc[~_dup_mask, "ticker"]))
+            for _dt, _dk in zip(erank.loc[_dup_mask, "ticker"],
+                                erank.loc[_dup_mask, "_pkey"]):
+                _FRAME_DEDUPE_DROPS[str(_dt)] = (
+                    f"duplicate portfolio wrapper of "
+                    f"{_kept_by_key.get(_dk, '?')} "
+                    f"— kept the higher-scoring listing")
+        erank = erank[~_dup_mask].drop(columns=["_pkey"])
+        if _dropped_names:
+            log(f"ETF portfolio dedupe: {len(_dropped_names)} duplicate "
+                f"wrappers removed: {_dropped_names}")
+
+    def pick_group(ranked, n, cap, label):
+        # STABILITY GATE (2026-10-16, Dan's call after DELL): a pick slot
+        # requires stability B or better. The system knew DELL was fragile
+        # (C: 76% vol, -32% drawdown) and picked it anyway on EV because
+        # stability graded but never constrained. C/D names are still
+        # researched, keep their EVs, and can appear as honorable mentions —
+        # they just can't be buys. Empty slots beat fragile picks.
+        if "stability" in ranked.columns:
+            gated = ranked[~ranked["stability"].isin(["A", "B"])]
+            if len(gated):
+                log(f"stability gate (B-or-better): {len(gated)} {label} "
+                    f"barred from picks: "
+                    f"{[str(t) + '(' + str(s) + ')' for t, s in zip(gated['ticker'], gated['stability'])]}")
+                for t, s in zip(gated["ticker"], gated["stability"]):
+                    _STABILITY_GATED[str(t)] = str(s)
+            ranked = ranked[ranked["stability"].isin(["A", "B"])].copy()
+        else:
+            log(f"WARNING: stability gate skipped for {label} — no "
+                f"'stability' column on ranked frame")
+        # TWO-STRIKE RISK GATE (2026-10-30, Dan delegated judgment after
+        # the October audit): the audit's §11 cohort — names carrying >=2
+        # of {earnings <=14d, 6m run >=50%, implied_upside <0, dep >=0.40}
+        # — went 75% negative with a 26% deep-loss rate vs 4% for the
+        # rest, and contained every blowup (FTNT, FFIV, TWLO, NTAP).
+        # >=2-strike names keep their EVs and can appear as honorable
+        # mentions with the strike detail — they just can't be buys.
+        if "risk_strike_count" in ranked.columns:
+            rgated = ranked[ranked["risk_strike_count"] >=
+                            RISK_GATE_MIN_STRIKES]
+            if len(rgated):
+                log(f"risk-flag gate (>={RISK_GATE_MIN_STRIKES} strikes): "
+                    f"{len(rgated)} {label} barred from picks: "
+                    f"{[str(t) + '(' + str(c) + ' strikes: ' + ', '.join(s) + ')' for t, c, s in zip(rgated['ticker'], rgated['risk_strike_count'], rgated['risk_strikes'])]}")
+                for t, c, s in zip(rgated["ticker"],
+                                   rgated["risk_strike_count"],
+                                   rgated["risk_strikes"]):
+                    _RISK_GATED[str(t)] = {"count": int(c),
+                                           "strikes": list(s)}
+            ranked = ranked[ranked["risk_strike_count"] <
+                            RISK_GATE_MIN_STRIKES].copy()
+        else:
+            log(f"WARNING: risk-flag gate skipped for {label} — no "
+                f"'risk_strike_count' column on ranked frame")
+        # STOCK ELIGIBILITY GATE (2026-11-06, Dan shipped on the stock
+        # test battery): stocks only. A stock cannot be picked when
+        # analyst implied upside is negative (targets below price —
+        # October's strongest single separator: iu>=0 picks +3.2% vs
+        # iu<0 picks -18.1%) or when dep_used >= 0.30 (the blowup
+        # carrier: sub-0.30 cohorts ran ~1-2% deep-loss rates vs
+        # ~15-19% above). Validation-half reconstructions: the iu leg
+        # alone flipped picks -2.0% -> +1.1%; both legs -> +2.9% kept
+        # picks / +3.0% reconstructed, deep-loss ~1.5%. Missing
+        # implied upside never bars (it is computed pre-selection for
+        # every candidate; absence is a data gap, not a verdict).
+        # Barred names keep their EVs and can appear as honorable
+        # mentions.
+        if label == "stocks":
+            _sfails = {}
+            for _, r in ranked.iterrows():
+                _iu = _safe(r.get("implied_upside"))
+                _du = _safe(_dep_used_of(r))
+                _why = []
+                if _iu is not None and _iu < 0:
+                    _why.append(f"implied upside {_iu:+.1%} < 0")
+                if _du is not None and _du >= STOCK_GATE_MAX_DEP:
+                    _why.append(f"dep {_du:.2f} >= "
+                                f"{STOCK_GATE_MAX_DEP:.2f}")
+                if _why:
+                    _sfails[str(r["ticker"])] = ", ".join(_why)
+            if _sfails:
+                log(f"stock eligibility gate (implied upside >= 0, "
+                    f"dep < {STOCK_GATE_MAX_DEP:.2f}): {len(_sfails)} "
+                    f"stocks barred from picks: "
+                    f"{[t + ' (' + w + ')' for t, w in _sfails.items()]}")
+                for t, w in _sfails.items():
+                    _STOCK_GATED[t] = f"stock eligibility gate ({w})"
+                ranked = ranked[~ranked["ticker"].astype(str)
+                                .isin(set(_sfails))].copy()
+        # ETF ELIGIBILITY GATE, TIERED (2026-11-06: R7 core + tier-2
+        # proven-strength lane — see _etf_tier_of): ETFs only. Tier 1 is
+        # the validated R7 (run <= +15%, dep <= 0.20). Tier 2 admits
+        # extended/higher-dep names whose drawdown record is shallow
+        # and rare (the October winners' profile), slot-capped after
+        # selection. Barred names keep their EVs and can appear as
+        # honorable mentions.
+        if label == "ETFs":
+            _fails = {}
+            _tier2_names = []
+            for _, r in ranked.iterrows():
+                _tier, _why = _etf_tier_of(r)
+                if _tier is None:
+                    _fails[str(r["ticker"])] = _why
+                elif _tier == 2:
+                    _tier2_names.append(str(r["ticker"]))
+            if _tier2_names:
+                log(f"etf strike lane (exactly 1 strike against the "
+                    f"lines: run +{ETF_STRIKE_MAX_RUN:.0%}, dep "
+                    f"{ETF_STRIKE_MAX_DEP:.2f}, maxdd "
+                    f"{ETF_STRIKE_MIN_MAXDD:.0%}, dd_freq "
+                    f"{ETF_STRIKE_MAX_DDFREQ:.2f}): {len(_tier2_names)} "
+                    f"ETFs eligible with one strike: {_tier2_names}")
+                for t in _tier2_names:
+                    _ETF_TIER2[t] = True
+            # BENCHMARK SELF-EXCLUSION (2026-11-07, shipped with the
+            # base-only EV): the ETF benchmark is this leg's yardstick,
+            # not a pick candidate — a fund cannot beat itself. Under
+            # the retired price-term EV its estimate never topped the
+            # list; the base-rate core ranks it first on research
+            # scores alone (Nov 6 bundle rehearsal: VOO +5.0%, the top
+            # ETF), so the structural ineligibility is now explicit.
+            # VGT remains eligible in this leg: it is the STOCK
+            # benchmark and is measured here against VOO, not itself.
+            _bench = etf_benchmark(args)
+            if _bench:
+                for _, r in ranked.iterrows():
+                    if str(r["ticker"]) == str(_bench):
+                        _fails[str(r["ticker"])] = (
+                            f"benchmark fund {_bench} is the ETF "
+                            f"yardstick, not a pick candidate")
+            if _fails:
+                log(f"etf eligibility gate: {len(_fails)} ETFs barred "
+                    f"from picks: "
+                    f"{[t + ' (' + w + ')' for t, w in _fails.items()]}")
+                for t, w in _fails.items():
+                    _ETF_GATED[t] = (f"etf eligibility gate ({w})")
+                ranked = ranked[~ranked["ticker"].astype(str)
+                                .isin(set(_fails))].copy()
+        # expected-value floor first: never pick a negative-EV name.
+        # ETFs use their own floor (2026-11-06): in no-momentum EV units
+        # the validated floor is 0% — the gate and the dep/downside
+        # terms do the protective work the old +3% did in momentum
+        # units. Stocks keep --min-est.
+        _floor = (getattr(args, "min_est_etf", 0.0) if label == "ETFs"
+                  else args.min_est)
+        cut = ranked[ranked["est_next_1y"] < _floor]
+        if len(cut):
+            log(f"est floor ({_floor:+.1%}): {len(cut)} {label} excluded: "
+                f"{cut['ticker'].tolist()}")
+        est_ok = ranked[ranked["est_next_1y"] >= _floor]
+        # EV shortlist: final_score's job is the quality floor (min_score);
+        # among floor-passers, expected value ranks and selects. The number
+        # the chart shows is the number that awards places.
+        # VARIANT A — OFFENSE-RANKED STOCK SELECTION (shipped 2026-11-07
+        # on Dan's approval, under the refined mandate: "continue to do
+        # well" is the mandate's offensive clause, and going negative
+        # inside a correction is acceptable when the name does well over
+        # the next year — evidence in offensive_study_2026-11-07/,
+        # balanced_study_2026-11-07/ and selection_offense_2026-11-07/).
+        # STOCKS ONLY: eligibility is untouched (final_score floor,
+        # stability B-or-better, two-strike gate, iu/dep eligibility
+        # gate, the +1.5% EV floor above), but among eligible names the
+        # momentum leg (offense score) awards the places instead of EV,
+        # after a pain budget removes the eligible set's extreme-vol
+        # tail (vol60 above its own 95th percentile; excluded names stay
+        # honorable-mention eligible). Six-year backtest (survivor-
+        # flattered, top-slice effects): momentum-leg selection +20.3%
+        # fwd252 vs the EV blend's +6.9%, winner capture 30% vs 17%;
+        # the budget trims the worst pain slice. EV remains the printed
+        # number, the display sort, and the floor. ETFs unchanged.
+        # Judged by the Nov 30 audit on live picks vs the evaluated
+        # cohort (pre-registered with the ship).
+        if label == "stocks" and len(est_ok):
+            est_ok = est_ok.copy()
+            est_ok["offense_score"] = [_offense_score_of(r)
+                                       for _, r in est_ok.iterrows()]
+            _nosc = int(est_ok["offense_score"].isna().sum())
+            if "vol60" in est_ok.columns \
+                    and est_ok["vol60"].notna().sum() >= 10:
+                _vthr = float(est_ok["vol60"].quantile(0.95))
+                _over = est_ok[est_ok["vol60"] > _vthr]
+                if len(_over):
+                    log(f"variant A vol budget: 95th pct of eligible "
+                        f"vol60 = {_vthr:.3f}; excluded {len(_over)}: "
+                        f"{_over['ticker'].tolist()}")
+                    for _, _r in _over.iterrows():
+                        _OFFENSE_BUDGET[str(_r["ticker"])] = (
+                            f"volatility budget (vol60 "
+                            f"{float(_r['vol60']):.3f} > {_vthr:.3f}, the "
+                            f"95th percentile of the eligible set) — "
+                            f"Variant A pain budget")
+                    est_ok = est_ok[(est_ok["vol60"] <= _vthr)
+                                    | est_ok["vol60"].isna()].copy()
+            est_ok = est_ok.sort_values("offense_score", ascending=False,
+                                        na_position="last")
+            for _i, _t in enumerate(est_ok["ticker"].astype(str), 1):
+                _OFFENSE_RANKED[_t] = (_i, len(est_ok))
+            log(f"variant A selection: ranking {len(est_ok)} eligible "
+                f"stocks by offense score (0.08*z_6m + 0.06*z_3m); "
+                f"{_nosc} names without z components rank last")
+        else:
+            est_ok = est_ok.sort_values("est_next_1y", ascending=False)
+        first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
+                                         min_score=args.min_score, veto_dep=veto)
+        first = first.copy()
+        first["pick_pass"] = 1
+        # second pass: fill empty slots with the next-best floor-passers.
+        # The category cap is HARD: the fill pass may not exceed it either.
+        # Within the cap, prefer categories not yet represented before
+        # doubling up. An empty slot beats a redundant third-of-theme.
+        # (Hard floors — score, est, veto, gates — never bend.)
+        if len(first) < n:
+            taken = set(first["ticker"]) if len(first) else set()
+            taken_counts = (Counter(_cap_key_of(r)
+                                    for _, r in first.iterrows())
+                            if len(first) else Counter())
+            rest = est_ok[~est_ok["ticker"].isin(taken)].copy()
+            rest["_capkey"] = rest.apply(_cap_key_of, axis=1)
+            rest = rest[rest["_capkey"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
+            if not rest.empty:
+                rest["_newcat"] = (~rest["_capkey"].isin(set(taken_counts))).astype(int)
+                _fillkey = ("offense_score" if label == "stocks"
+                            else "est_next_1y")
+                rest = rest.sort_values(["_newcat", _fillkey],
+                                        ascending=[False, False],
+                                        na_position="last")
+                rest = rest.drop(columns=["_newcat", "_capkey"])
+            fill = pick_top_with_sector_cap(rest, n=n - len(first),
+                                            max_per_sector=cap,
+                                            min_score=args.min_score,
+                                            veto_dep=veto,
+                                            initial_counts=taken_counts)
+            if len(fill):
+                fill = fill.copy()
+                fill["pick_pass"] = 2
+                log(f"fill pass ({label}): +{len(fill)} within category cap: "
+                    f"{fill['ticker'].tolist()}")
+                first = pd.concat([first, fill], ignore_index=True)
+        if label == "ETFs" and len(first):
+            # redundancy is not diversification: enforce the overlap cap on
+            # the selected portfolio (post-selection repair, not pre-filter)
+            first = repair_etf_overlap(first, est_ok,
+                                       max_overlap=args.max_etf_overlap,
+                                       cap=cap, min_score=args.min_score,
+                                       veto_dep=veto)
+            # tier-2 (one-strike) picks were slot-capped under the
+            # tiered gate; the cap was removed 2026-11-06 late, so this
+            # call is now a no-op kept for the eviction bookkeeping path
+            first = enforce_etf_tier2_cap(first, est_ok, cap=cap,
+                                          min_score=args.min_score,
+                                          veto_dep=veto)
+        # divergence self-check (informational, not a gate): how much does
+        # final_score-ordered selection disagree with pure EV ordering?
+        # Flags high-EV unpicked names (e.g. HPE) for the monthly audit.
+        try:
+            ev_rank = est_ok.sort_values("est_next_1y", ascending=False)
+            ev_top = list(ev_rank["ticker"].head(n))
+            sel = list(first["ticker"]) if len(first) else []
+
+            def _fmt(t):
+                v = float(ev_rank.loc[ev_rank["ticker"] == t,
+                                     "est_next_1y"].iloc[0])
+                return "%s(%+.1f%%)" % (t, 100 * v)
+
+            hi_unpicked = [_fmt(t) for t in ev_top if t not in sel]
+            lo_picked = [_fmt(t) for t in sel if t not in ev_top]
+            log("selection/divergence check (%s): EV-top-%d overlap %d/%d; "
+                "high-EV unpicked: %s; picked outside EV-top-%d: %s"
+                % (label, n, n - len(hi_unpicked), n,
+                   hi_unpicked or ["none"], n, lo_picked or ["none"]))
+            # opportunity cost of each constraint-driven exclusion: state the
+            # binding constraint and the EV gap to the lowest-EV pick — the
+            # honest margin for "include X within N slots" is displacing the
+            # weakest pick. Feeds the monthly audit's cap-vs-return question.
+            if hi_unpicked and sel:
+                sec_of, ev_of = {}, {}
+                for t in set(ev_top) | set(sel):
+                    r_ = ev_rank.loc[ev_rank["ticker"] == t].iloc[0]
+                    ev_of[t] = float(r_["est_next_1y"])
+                    sec_of[t] = str(r_.get("sector", ""))
+                sec_counts = {}
+                for t in sel:
+                    sec_counts[sec_of[t]] = sec_counts.get(sec_of[t], 0) + 1
+                min_pick = min(sel, key=lambda t: ev_of[t])
+                for t in ev_top:
+                    if t in sel:
+                        continue
+                    why = ("%s cap full" % sec_of[t]
+                           if sec_counts.get(sec_of[t], 0) >= cap
+                           else "final_score order")
+                    gap = 100 * (ev_of[t] - ev_of[min_pick])
+                    log("  opportunity cost (%s): %s(%+.1f%%) unpicked [%s]; "
+                        "including it within %d slots displaces lowest-EV "
+                        "pick %s(%+.1f%%) — EV gap %+.1fpp"
+                        % (label, t, 100 * ev_of[t], why, n,
+                           min_pick, 100 * ev_of[min_pick], gap))
+        except Exception as e:
+            log("selection/divergence check (%s): skipped (%s)" % (label, e))
+        return first
+
+    final_stocks = pick_group(srank, args.n_stocks, args.max_per_sector, "stocks")
+    # for ETFs the 'sector' column holds the fund category; the cap is a hard
+    # max of 2 per category (a third tech ETF is redundant, not diversifying)
+    final_etfs = pick_group(erank, args.n_etfs, args.max_per_etf_category, "ETFs")
+    # display order: highest confidence-weighted expected 1y return first
+    if not final_stocks.empty:
+        final_stocks = final_stocks.sort_values("est_next_1y", ascending=False)
+    if not final_etfs.empty:
+        final_etfs = final_etfs.sort_values("est_next_1y", ascending=False)
+    return final_stocks, final_etfs
+
+
+# ---------------- Watchlist mode: Dan's tickers, full pipeline ----------------
+
+def _watchlist_cand(r, headlines):
+    """Candidate dict for the research bundle (same shape as Phase A)."""
+    cand = {
+        "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
+        "kind": r.get("kind", "stock"),
+        "ret_1y": float(r["ret_1y"]), "ret_6m": _safe(r.get("ret_6m")),
+        "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
+        "ret_3m": _safe(r.get("ret_3m")),
+        "vol60": float(r["vol60"]),
+        "maxdd": float(r["maxdd"]),
+        "dd_freq": _safe(r.get("dd_freq")),
+        "character": _safe(r.get("character")),
+        "beta": _safe(r.get("beta")), "roe": _safe(r.get("roe")),
+        "margin": _safe(r.get("margin")), "fpe": _safe(r.get("fpe")),
+        "base_score": float(r["base_score"]),
+        "base_w": float(r["base_w"]) if "base_w" in r and pd.notna(r["base_w"]) else float(r["base_score"]),
+        "base_cap": _safe(r.get("base_cap")),
+        "z": _z_of(r),
+        "earnings_in_days": _safe(r.get("earnings_in_days")),
+        "earn_soon": bool(r.get("earn_soon", 0.0)),
+        "insider_ratio": _safe(r.get("insider_ratio")),
+        "headlines": headlines[:12],
+    }
+    if r.get("kind") == "etf":
+        cand["expense_ratio"] = _safe(r.get("expense_ratio"))
+        cand["aum"] = _safe(r.get("aum"))
+    cand["country"] = r.get("country", "")
+    return cand
+
+
+def _adapt_research_store_outputs(raw, what, flow=None):
+    """Accept either a legacy research-outputs file or the unified
+    research_store.json. Returns the legacy-shaped {"stocks": ..., "world":
+    ...} dict the merge expects. flow selects which flow's world layer is
+    served ("mint-chip-daily" / "mint-chip-watchlist-daily"); None serves
+    none. Pure passthrough for legacy files, so existing behavior is
+    unchanged when no store is in play."""
+    try:
+        from research_store import adapt_if_store
+    except ImportError:
+        return raw
+    global _THEME_FACTS
+    if isinstance(raw, dict) and isinstance(raw.get("themes"), dict):
+        _THEME_FACTS = raw["themes"]
+    adapted = adapt_if_store(raw, flow)
+    if adapted is not raw:
+        log(f"{what}: unified research_store.json detected "
+            f"({len(adapted.get('stocks', {}))} ticker assessments)")
+    return adapted
+
+
+def _cache_put_px(cache, closes):
+    """ADDITIVE price-cache sharing: also store each ticker's close series
+    under px_<TICKER> in the same date partition, so a later flow (e.g. the
+    watchlist) can reuse prices this flow already downloaded today. Existing
+    bulk keys are untouched."""
+    n = 0
+    for t, s in (closes or {}).items():
+        if s is not None:
+            cache.put(f"px_{t}", s)
+            n += 1
+    return n
+
+
+def _get_px_or_download(cache, tickers, period="1y"):
+    """Return ({ticker: closes}, n_from_cache). Reuses per-ticker px_
+    entries first; bulk-downloads only the misses, then backfills px_ for
+    them. Falls back to a full download when the cache is disabled."""
+    closes, miss = {}, []
+    for t in tickers:
+        s = cache.get(f"px_{t}")
+        if s is None:
+            miss.append(t)
+        else:
+            closes[t] = s
+    if miss:
+        fresh = download_prices(miss, period=period)
+        for t, s in (fresh or {}).items():
+            closes[t] = s
+            if s is not None:
+                cache.put(f"px_{t}", s)
+    return closes, len(tickers) - len(miss)
+
+
+def run_watchlist(args, tickers):
+    """Phase A for --watchlist: Dan's tickers through quant + headlines.
+
+    No benchmark, no picking, no trash filters — every ticker the user
+    provided that has usable price history gets researched and charted,
+    sorted by est_next_1y. Foreign-domiciled names are flagged, not dropped
+    (they're his explicit list).
+    """
+    import json as _json
+    from cache import StepCache
+    from llm_research import build_research_bundle
+    setup_logging()
+    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log,
+                      date_str=pipeline_today())
+    tickers = [t.strip().upper() for t in tickers if t.strip()]
+    log(f"Watchlist Phase A: {tickers}")
+    print(f"Watchlist: {', '.join(tickers)}")
+
+    _wkey = "watchlist_prices_" + StepCache.tickers_key(tickers)
+    closes = cache.get(_wkey)
+    if closes is None:
+        closes, _n_px = _get_px_or_download(cache, tickers)
+        cache.put(_wkey, closes)
+        log(f"watchlist: {_n_px} tickers' 1y prices from per-ticker cache, "
+            f"{len(tickers) - _n_px} downloaded")
+    else:
+        log(f"watchlist: {len(closes)} tickers' 1y prices from cache")
+    ok = [t for t in tickers
+          if t in closes and closes[t] is not None and len(closes[t]) >= 60]
+    for t in tickers:
+        if t not in ok:
+            log(f"watchlist: no usable price history for {t}, skipped")
+            print(f"  {t}: no usable price history, skipped")
+    if not ok:
+        print("No usable price data for any ticker. Aborting.")
+        return
+    infos = get_fundamentals(ok)
+    is_etf = {t: (infos.get(t, {}).get("quoteType") == "ETF") for t in ok}
+    st = [t for t in ok if not is_etf[t]]
+    et = [t for t in ok if is_etf[t]]
+    log(f"watchlist: {len(st)} stocks, {len(et)} ETFs")
+
+    frames = []
+    if st:
+        srows = [{"ticker": t, "name": str(infos.get(t, {}).get("longName") or t)}
+                 for t in st]
+        scloses = {t: closes[t] for t in st}
+        sinfos = {t: infos[t] for t in st if t in infos}
+        # No trash filters in watchlist mode: every user-supplied ticker
+        # with price data is scored, researched, and charted.
+        kt = [r["ticker"] for r in srows]
+        log(f"watchlist stocks: {len(kt)} (no trash filters)")
+        sdf = build_scores({t: scloses[t] for t in kt},
+                           {t: sinfos[t] for t in kt if t in sinfos},
+                           min_rows=60)
+        _dropped = [t for t in kt if t not in set(sdf["ticker"])] if not sdf.empty else list(kt)
+        for t in _dropped:
+            log(f"watchlist: {t} dropped by scorer (<60 trading days of history)")
+            print(f"  {t}: insufficient history for scoring (<60 trading days), skipped")
+        if not sdf.empty:
+            sdf["kind"] = "stock"
+            log_score_breakdown(sdf, "watchlist stocks", _STOCK_SCORE_GROUPS)
+            frames.append(sdf)
+    if et:
+        erows = [{"ticker": t, "name": str(infos.get(t, {}).get("longName") or t)}
+                 for t in et]
+        ecloses = {t: closes[t] for t in et}
+        einfos = {t: infos[t] for t in et if t in infos}
+        kt = [r["ticker"] for r in erows]
+        log(f"watchlist ETFs: {len(kt)} (no trash filters)")
+        edf = build_etf_scores({t: ecloses[t] for t in kt},
+                               {t: einfos[t] for t in kt if t in einfos})
+        if not edf.empty:
+            log_score_breakdown(edf, "watchlist etfs", _ETF_SCORE_GROUPS)
+            frames.append(edf)
+    if not frames:
+        print("Watchlist: nothing to score.")
+        return
+    df = pd.concat(frames, ignore_index=True)
+    df["country"] = df["ticker"].map(lambda t: infos.get(t, {}).get("country") or "")
+    for _, r in df.iterrows():
+        if r["country"] and r["country"] != "United States":
+            log(f"watchlist: {r['ticker']} domiciled in {r['country']} (flagged, kept)")
+    df, _cap = winsorize_base(df)
+
+    log("Watchlist: fetching headlines...")
+    market_headlines = cache.get("market_headlines")
+    if market_headlines is None:
+        market_headlines = fetch_market_headlines()
+        cache.put("market_headlines", market_headlines)
+    cands = []
+    _hl = fetch_headlines_threaded(
+        [(r["ticker"], r["name"]) for _, r in df.iterrows()],
+        cache=cache, label="watchlist news")
+    for _, r in df.iterrows():
+        t = r["ticker"]
+        headlines = _hl.get(t, [])
+        cands.append(_watchlist_cand(r, headlines))
+
+    bundle = build_research_bundle(
+        cands, market_headlines,
+        {"mode": "watchlist", "tickers": tickers,
+         "note": "user-supplied tickers; no benchmark comparison. "
+                 "LLM decides event_dependence/continuation/confidence; "
+                 "output sorted by est_next_1y, no floors."},
+        fetch_market_internals(cache))
+    bp = f"watchlist_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(bp, "w") as f:
+        _json.dump(bundle, f, indent=1, default=str)
+    log(f"Watchlist Phase A complete. Bundle: {bp}")
+    print("\n" + "=" * 70)
+    print("WATCHLIST BUNDLE WRITTEN (agent backend)")
+    print("=" * 70)
+    print(f"Bundle: {bp}")
+    print("Next: research the web and write watchlist_outputs.json per the")
+    print("schema inside the bundle. Then run:")
+    print(f"  python3 screener.py --watchlist-apply {bp} watchlist_outputs.json")
+
+
+def load_json_arg(path, what):
+    """Load a worker-written JSON file with a clean error, not a traceback.
+
+    The research/market-chat files are hand-written by an agent; a malformed
+    file should explain itself (which file, what's wrong, how to recover)
+    instead of dumping a json.decoder traceback. Exits nonzero so crons
+    report the failure instead of publishing a half-built page.
+    """
+    import json as _json
+    try:
+        with open(path) as f:
+            return _json.load(f)
+    except FileNotFoundError:
+        log(f"ERROR: {what} file not found: {path}")
+    except _json.JSONDecodeError as e:
+        log(f"ERROR: {what} file is not valid JSON: {path}: {e}. "
+            f"Fix the JSON (common cause: trailing comma, unclosed brace) "
+            f"and re-run.")
+    except OSError as e:
+        log(f"ERROR: cannot read {what} file {path}: {e}")
+    raise SystemExit(f"Phase B aborted: bad {what} file ({path})")
+
+
+def validate_outputs(outputs, what="research outputs"):
+    """Light schema check on the research outputs before merging.
+
+    apply_llm_outputs() is defensive (clamps ranges, fills neutral defaults),
+    so this only verifies the top-level shape and warns on suspicious
+    entries — it never crashes a run that could proceed.
+    """
+    if not isinstance(outputs, dict):
+        log(f"WARNING: {what} is not a JSON object — research merge skipped")
+        return {}
+    stocks = outputs.get("stocks")
+    if not isinstance(stocks, dict):
+        log(f"WARNING: {what} has no 'stocks' object — research merge skipped")
+        return {}
+    n_bad = 0
+    for t, s in stocks.items():
+        if not isinstance(s, dict):
+            log(f"WARNING: {what}['stocks']['{t}'] is not an object — skipped")
+            n_bad += 1
+            continue
+        for f in ("event_dependence", "continuation", "confidence"):
+            try:
+                v = float(s.get(f, 0.5))
+                if not (0.0 <= v <= 1.0):
+                    log(f"WARNING: {t}.{f}={s.get(f)} out of [0,1] — clamped")
+            except (TypeError, ValueError):
+                log(f"WARNING: {t}.{f}={s.get(f)!r} not numeric — default used")
+                n_bad += 1
+        if not s.get("assessed_date"):
+            log(f"WARNING: {t} has no assessed_date — provenance unknown")
+    if n_bad == 0:
+        log(f"{what}: {len(stocks)} assessments, schema OK")
+    return outputs
+
+
+def run_watchlist_apply(args):
+    """Phase B for --watchlist-apply: apply research, sort by est, chart.
+
+    No floors, no caps, no picking — every researched ticker is shown,
+    sorted by confidence-weighted est_next_1y, highest first.
+    """
+    import json as _json
+    from llm_research import apply_llm_outputs
+    setup_logging()
+    log("Watchlist Phase B: applying research")
+    bundle = load_json_arg(args.watchlist_apply[0], "watchlist bundle")
+    outputs = validate_outputs(
+        _adapt_research_store_outputs(
+            load_json_arg(args.watchlist_apply[1], "watchlist research outputs"),
+            "watchlist research outputs",
+            flow="mint-chip-watchlist-daily"),
+        "watchlist research outputs")
+    df = pd.DataFrame(bundle["candidates"])
+    log(f"Loaded {len(df)} watchlist candidates")
+    ranked = apply_llm_outputs(df, outputs,
+                               w_down=args.w_down, w_up=args.w_up,
+                               w_outlier=args.w_outlier)
+    log_research_assessments(ranked)
+    # earnings-gap EV downside input applies in watchlist mode too (it
+    # is an EV input, not a selection gate); the two-strike risk gate
+    # does NOT apply here — watchlist rates every name.
+    ranked = attach_earnings_gap_inputs(ranked)
+    final = add_research_columns(ranked, llm_path=True)
+    final = final.sort_values("est_next_1y", ascending=False).reset_index(drop=True)
+
+    def _cf(x):
+        try:
+            return f"{float(x):.0%}"
+        except Exception:
+            return "n/a"
+    print("\nWATCHLIST — by est. next 1y")
+    print("=" * 70)
+    for i, (_, r) in enumerate(final.iterrows(), 1):
+        try:
+            est = f"{float(r['est_next_1y']):+.1%}"
+        except Exception:
+            est = "n/a"
+        flag = " [non-US]" if r.get("country") and r["country"] != "United States" else ""
+        print(f"{i:2d}. {r['ticker']:6s} | {r['sector'][:22]:22s} | "
+              f"1y {r['ret_1y']:+.0%} | est next 1y {est} | conf {_cf(r.get('llm_confidence'))} | "
+              f"stab {r.get('stability', '?')}{flag}")
+        log(f"  {i:2d}. {r['ticker']:6s} {r['sector'][:22]:22s} "
+            f"1y={r['ret_1y']:+.0%} est={est} conf={_cf(r.get('llm_confidence'))} "
+            f"stab={r.get('stability', '?')}{flag}")
+        print(f"    {r['name'][:60]}")
+        if r.get("llm_rationale"):
+            print(f"    why: {str(r['llm_rationale'])[:150]}")
+    print("\nNote: past performance doesn't predict future returns. This is a")
+    print("screening tool, not financial advice.")
+
+    # Buy/Hold/Sell: what Mint would do, from pipeline outputs (auditable)
+    final = add_ratings(final)
+    out = f"watchlist_results_{datetime.now().strftime('%Y%m%d')}.csv"
+    final.to_csv(out, index=False)
+    print(f"Saved: {out}")
+    # AUDITABILITY (2026-10-30, instrumentation only): full-frame
+    # snapshot + run manifest for the watchlist flow; verified into the
+    # checks list below as frame_manifest_written.
+    _wl_frame_ok = False
+    try:
+        write_frame_snapshot_watchlist(final, args.watchlist_apply[0], args)
+        _wl_frame_ok = _verify_frame_snapshot(len(final))
+    except Exception as e:
+        log(f"frame snapshot (watchlist): FAILED ({e})")
+    # business summaries for blurb grounding + researcher-written blurbs
+    try:
+        _picks = list(final["ticker"])
+        if _picks:
+            fetch_pick_summaries(_picks)
+    except Exception as e:
+        log(f"pick summaries: skipped ({e})")
+    wl_chat = None
+    try:
+        import json as _json2
+        with open("watchlist_chat.json") as _f:
+            wl_chat = _json2.load(_f)
+        # valid JSON but wrong type (e.g. a list) would crash .get() later
+        if not isinstance(wl_chat, dict):
+            log(f"WARNING: watchlist_chat.json is {type(wl_chat).__name__}, "
+                f"not an object — blurbs skipped")
+            wl_chat = None
+    except Exception:
+        wl_chat = None
+    if wl_chat and wl_chat.get("tickers"):
+        _rmap = {str(r["ticker"]): (r["rating"], r["rating_reason"])
+                 for _, r in final.iterrows()}
+        for _t in wl_chat["tickers"]:
+            _rt, _rr = _rmap.get(str(_t.get("ticker")), ("HOLD", ""))
+            _t["rating"] = _t.get("rating") or _rt
+            _t["rating_reason"] = _t.get("rating_reason") or _rr
+    if wl_chat is not None:
+        # overall quality verdict — computed from the ratings, stays honest
+        wl_chat["summary"] = watchlist_quality_summary(
+            list(final["rating"]), list(final["est_next_1y"]),
+            list(final["ticker"]))
+        log(f"  watchlist summary: {wl_chat['summary']}")
+    sfinal = final[final["kind"] == "stock"]
+    efinal = final[final["kind"] == "etf"]
+    chart_path = f"watchlist_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+    make_chart_html(sfinal, efinal, chart_path,
+                    {"benchmark": "", "mode": "watchlist",
+                     "heading": "Watchlist: by est. next 1y",
+                     "asof": run_stamp()},
+                    titles=("Stocks: by est. next 1y", "ETFs: by est. next 1y"),
+                    watchlist_chat=wl_chat)
+    print(f"Chart: {chart_path}")
+    checks = []
+    checks.append(("no_nan_est", not final["est_next_1y"].isna().any()))
+    checks.append(("has_confidence", "llm_confidence" in final.columns))
+    checks.append(("sorted_by_est",
+                   bool((final["est_next_1y"].values[:-1] >=
+                         final["est_next_1y"].values[1:]).all())))
+    checks.append(("frame_manifest_written", _wl_frame_ok))
+    for name, ok in checks:
+        print(f"[{'PASS' if ok else 'FAIL'}] {name}")
+    _patch_manifest_self_check(
+        f"{sum(1 for _, o in checks if o)}/{len(checks)}")
+    write_run_summary(
+        f"watchlist_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        {"timestamp": datetime.now().isoformat(), "mode": "watchlist",
+         "tickers": bundle["meta"].get("tickers"),
+         "checks": [{"name": n, "ok": bool(o)} for n, o in checks],
+         "picks": [
+             {"ticker": r["ticker"], "kind": r.get("kind"),
+              "sector": r["sector"], "country": r.get("country", ""),
+              "ret_1y": round(float(r["ret_1y"]), 4),
+              "est_next_1y": round(float(r["est_next_1y"]), 4),
+              "confidence": _safe(r.get("llm_confidence")),
+              "stability": r.get("stability"),
+              "event_dependence": _safe(r.get("llm_event_dependence")),
+              "continuation": _safe(r.get("llm_continuation")),
+              "rationale": r.get("llm_rationale", "")}
+             for _, r in final.iterrows()],
+         "chart": chart_path})
+
+
+# ---------------- Thesis ledger: post-buy accountability ----------------
+# The system used to forget its picks the moment it published them. The ledger
+# records every pick (with the prediction it was picked on) and every rejected
+# near-miss (the control group), append-only, so a later audit can measure
+# predictions against outcomes and the formula can be improved from evidence.
+THESIS_LEDGER = "thesis_ledger.jsonl"
+REJECTED_LEDGER = "rejected_ledger.jsonl"
+THESIS_TRACK_DAYS = 90  # price-based checks cover picks this fresh or newer
+
+_RUN_DATE = None
+
+
+def run_date():
+    """Process-wide run date, pinned on first call. A run crossing midnight
+    must not split its ledger events across two dates (idempotency keys and
+    the audit both assume one date per run)."""
+    global _RUN_DATE
+    if _RUN_DATE is None:
+        _RUN_DATE = datetime.now().strftime("%Y-%m-%d")
+    return _RUN_DATE
+
+
+def ledger_append(path, event):
+    import json as _json
+    event = dict(event)
+    event.setdefault("date", run_date())
+    event.setdefault("ts", datetime.now().isoformat())
+    with open(path, "a") as f:
+        f.write(_json.dumps(event, default=str) + "\n")
+
+
+def _ledger_seen_today(path, event="picked"):
+    """Tickers already recorded with `event` today — keeps Phase B idempotent."""
+    import json as _json
+    seen = set()
+    try:
+        today = run_date()
+        with open(path) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == event and e.get("date") == today:
+                    seen.add(e.get("ticker"))
+    except FileNotFoundError:
+        pass
+    return seen
+
+
+_LAST_DATA_COMPLETENESS = {}
+_LAST_OVERLAP_DROPS = {}  # loser -> (winner, overlap); set by apply_etf_overlap_cap
+_STABILITY_GATED = {}  # ticker -> grade; C/D names barred from pick slots (2026-10-16)
+_RISK_GATED = {}  # ticker -> {count, strikes}; >=2-strike names barred from pick slots (2026-10-30)
+_ETF_GATED = {}  # ticker -> reason; ETFs barred by the extension/dep eligibility gate (2026-11-06)
+_STOCK_GATED = {}  # ticker -> reason; stocks barred by the iu/dep eligibility gate (2026-11-06)
+_ETF_TIER2 = {}  # ticker -> True; ETFs eligible only via the tier-2 proven-strength lane (2026-11-06)
+_ETF_TIER2_CAPPED = {}  # ticker -> reason; tier-2 ETFs that lost the tier-2 slot cap (2026-11-06)
+_FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
+_OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Variant A vol pain budget (2026-11-07)
+_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget Variant A offense ranking of eligible stocks (2026-11-07)
+_FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
+
+
+def fetch_pick_prices(tickers, cache=None):
+    """Robust pick-price fetch: batch attempts, then per-ticker fallback.
+
+    Returns (prices, completeness dict). A run with missing prices is
+    INCOMPLETE_DATA — the structural self-checks can pass while price data
+    is absent, so completeness gets its own explicit status, recorded in the
+    log and the run summary.
+
+    Date-partitioned cache (keyed by ticker set): same-day reruns — including
+    the two-pass Phase B pattern — reuse prices instead of re-downloading.
+    """
+    from cache import StepCache
+    tickers = list(dict.fromkeys(tickers))
+    lkey = "ledger_prices_" + StepCache.tickers_key(tickers)
+    if cache is not None:
+        hit = cache.get(lkey)
+        if hit and isinstance(hit, dict) and "prices" in hit:
+            log(f"ledger: pick prices from cache "
+                f"({hit['completeness'].get('got')}/{len(tickers)})")
+            return hit["prices"], hit["completeness"]
+    prices = {}
+    for attempt in (1, 2):
+        try:
+            px = download_prices(tickers, period="5d", min_rows=3)
+            for t in tickers:
+                s = px[t].dropna() if t in px else None
+                if s is not None and len(s):
+                    prices[t] = float(s.iloc[-1])
+            missing = [t for t in tickers if t not in prices]
+            if not missing:
+                break
+            log(f"ledger: price fetch attempt {attempt} missed {missing}")
+            if not prices:
+                # Attempt 1 returned nothing at all — attempt 2 is the same
+                # call and won't help; skip straight to the per-ticker
+                # fallback instead of burning another 10s + full batch.
+                log("ledger: attempt 1 got zero prices — skipping attempt 2")
+                break
+        except Exception as e:
+            log(f"ledger: pick-price fetch failed (attempt {attempt}): {e}")
+        time.sleep(10)
+    missing = [t for t in tickers if t not in prices]
+    if missing:
+        # per-ticker fallback: single-ticker downloads often succeed when the
+        # batched call is rate-limited into returning nothing
+        log(f"ledger: per-ticker fallback for {missing}")
+        for t in missing:
+            try:
+                d = yf.download(t, period="5d", auto_adjust=True,
+                                progress=False, threads=False)
+                s = d["Close"].dropna() if "Close" in d else pd.Series(dtype=float)
+                if isinstance(s, pd.DataFrame):
+                    s = s.iloc[:, 0].dropna()
+                if len(s):
+                    prices[t] = float(s.iloc[-1])
+                    log(f"ledger: fallback got {t}={prices[t]:.2f}")
+            except Exception as e:
+                log(f"ledger: fallback failed for {t} ({e})")
+            time.sleep(1)
+    missing = [t for t in tickers if t not in prices]
+    status = "COMPLETE" if not missing else "INCOMPLETE_DATA"
+    log(f"data_completeness: {status} ({len(prices)}/{len(tickers)} pick prices)"
+        + (f" — missing: {missing}; ledger entries lack pick_price; "
+           "backfill before thesis_check" if missing else ""))
+    completeness = {"status": status, "got": len(prices),
+                    "total": len(tickers), "missing": missing}
+    if cache is not None and status == "COMPLETE":
+        # Only complete fetches are cached: an INCOMPLETE result must not
+        # poison later reruns — they should retry Yahoo fresh.
+        cache.put(lkey, {"prices": prices, "completeness": completeness})
+    return prices, completeness
+
+
+def backfill_ledger_prices(cache=None):
+    """Fill pick_price=None on today's picked events (completeness recovery).
+
+    The cron's thesis step can call this when a run was marked INCOMPLETE_DATA.
+    Returns the number of entries fixed.
+    """
+    import json as _json
+    today = run_date()
+    try:
+        lines = open(THESIS_LEDGER).read().splitlines()
+    except FileNotFoundError:
+        return 0
+    need = []
+    for line in lines:
+        try:
+            d = _json.loads(line)
+        except Exception:
+            continue
+        if (d.get("date") == today and d.get("event") == "picked"
+                and d.get("pick_price") is None and d.get("ticker")):
+            need.append(d["ticker"])
+    need = list(dict.fromkeys(need))
+    if not need:
+        return 0
+    prices, _ = fetch_pick_prices(need, cache)
+    fixed, out = 0, []
+    for line in lines:
+        try:
+            d = _json.loads(line)
+        except Exception:
+            # torn line (crash mid-append) — keep it verbatim, don't crash
+            out.append(line.rstrip("\n"))
+            continue
+        if (d.get("date") == today and d.get("event") == "picked"
+                and d.get("pick_price") is None and d.get("ticker") in prices):
+            d["pick_price"] = prices[d["ticker"]]
+            fixed += 1
+        out.append(_json.dumps(d, default=str))
+    # atomic rewrite: a crash mid-write must never truncate the ledger
+    tmp = THESIS_LEDGER + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, THESIS_LEDGER)
+    log(f"ledger: backfilled {fixed} pick prices")
+    return fixed
+
+
+def record_picks_ledger(final, ranked, args, cache=None):
+    """Append pick events for today's finals + rejected events for the
+    audit-interesting near-misses (vetoes, exclusions, EV-floor fails)."""
+    import json as _json  # noqa: F401 (kept local like the rest of this file)
+    global _LAST_DATA_COMPLETENESS
+    today = run_date()
+    tickers = list(final["ticker"])
+    prices, _LAST_DATA_COMPLETENESS = fetch_pick_prices(tickers, cache)
+    if _LAST_DATA_COMPLETENESS["missing"]:
+        log(f"ledger: recording {len(_LAST_DATA_COMPLETENESS['missing'])} picks "
+            f"without prices; backfill before thesis_check")
+    already = _ledger_seen_today(THESIS_LEDGER, "picked")
+    # Fuse dual-confirmation + fundamental-momentum context (audit
+    # instrumentation only — never selection, never a gate). Computed for
+    # stock picks via fuse_checks; ETFs skip (Fuse is stocks-only).
+    # Any failure here yields null fields; it must never break the append.
+    fuse_ctx = {}
+    try:
+        from fuse_checks import check_tickers as _fuse_check
+        stock_ticks = [t for t in tickers
+                       if str(final[final["ticker"] == t].iloc[0].get("kind", ""))
+                       == "stock"]
+        if stock_ticks:
+            fuse_ctx = _fuse_check(stock_ticks) or {}
+        n_confirmed = sum(1 for v in fuse_ctx.values()
+                         if v.get("dual_confirm") is True)
+        log(f"ledger: fuse check done for {len(stock_ticks)} stock picks "
+            f"({n_confirmed} dual-confirmed)")
+    except Exception as e:
+        log(f"ledger: fuse check failed ({e}) — continuing with null fields")
+    npick = 0
+    for _, r in final.iterrows():
+        if r["ticker"] in already:
+            continue
+        _fc = fuse_ctx.get(r["ticker"], {})
+        _pev = {
+            "event": "picked",
+            "ticker": r["ticker"], "kind": r.get("kind", ""),
+            "name": r.get("name", ""), "sector": r.get("sector", ""),
+            "pick_price": prices.get(r["ticker"]),
+            "ret_1y": _safe(r.get("ret_1y")),
+            "est_next_1y": _safe(r.get("est_next_1y")),
+            "dep": _safe(r.get("llm_event_dependence")),
+            "cont": _safe(r.get("llm_continuation")),
+            "conf": _safe(r.get("llm_confidence")),
+            "character": _safe(r.get("character")),
+            "stability": (r.get("stability")
+                          if isinstance(r.get("stability"), str) else None),
+            "dd_freq": _safe(r.get("dd_freq")),
+            "base_score": _safe(r.get("base_score")),
+            "final_score": _safe(r.get("final_score")),
+            "z": _z_of(r),
+            # Fuse cross-check fields (audit instrumentation, added
+            # 2026-10-05): dual_confirm True/False/None (None = could not
+            # be determined); sue = most recent earnings surprise
+            # (fraction); beat_streak = consecutive positive surprises;
+            # implied_upside = (analyst mean target - price)/price.
+            # RESEARCHER RULE: these fields are context for the monthly
+            # audit only. They must NOT move continuation/confidence
+            # scores until the audit validates them against outcomes.
+            "dual_confirm": _fc.get("dual_confirm"),
+            "sue": _safe(_fc.get("sue")),
+            "beat_streak": _fc.get("beat_streak"),
+            "implied_upside": _safe(_fc.get("implied_upside")),
+            "rationale": str(r.get("llm_rationale", "") or "")[:500],
+            "benchmark": args.benchmark,
+            "etf_benchmark": etf_benchmark(args),
+        }
+        if bool(r.get("dep_capped")):
+            _pev["dep_capped"] = True
+        _off = _safe(r.get("offense_score"))
+        if _off is not None:
+            _pev["offense_score"] = _off
+        # Auditability (2026-10-30): the pick's two-strike risk-gate
+        # inputs, from the same columns pick_final's gate consumed.
+        _strikes = r.get("risk_strikes")
+        _pev["risk_strikes"] = ([str(s) for s in _strikes]
+                                if isinstance(_strikes, (list, tuple))
+                                else [])
+        _scount = _safe(r.get("risk_strike_count"))
+        _pev["risk_strike_count"] = (int(_scount) if _scount is not None
+                                     else len(_pev["risk_strikes"]))
+        ledger_append(THESIS_LEDGER, _pev)
+        npick += 1
+    # rejected control group: names the system said no to, so the audit can
+    # ask whether the vetoes/exclusions/floors were right
+    final_set = set(tickers)
+    rseen = _ledger_seen_today(REJECTED_LEDGER, "rejected")
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    recorded = 0
+    for _, r in ranked.iterrows():
+        t = r["ticker"]
+        if t in final_set or t in rseen or recorded >= 15:
+            continue
+        d = _safe(r.get("llm_event_dependence"))
+        d_used, d_cap = effective_dep(
+            t, r.get("kind"), r.get("sector"), d if d is not None else 0.3)
+        c = _safe(r.get("llm_continuation"))
+        f_ = _safe(r.get("llm_confidence"))
+        p = est_parts(r, d_used,
+                      c if c is not None else 0.5, f_ if f_ is not None else 1.0)
+        reason = None
+        extra = {}
+        if d_cap:
+            extra["dep_capped"] = True
+        if r.get("llm_excluded"):
+            reason = f"research exclusion: {str(r.get('llm_exclude_reason', ''))[:200]}"
+        elif t in _RISK_GATED:
+            _rg = _RISK_GATED[t]
+            reason = (f"risk-flag gate ({_rg['count']} strikes: "
+                      f"{', '.join(_rg['strikes'])})")
+            extra = {"risk_strikes": list(_rg["strikes"]),
+                     "risk_strike_count": int(_rg["count"]),
+                     **extra}
+        elif t in _ETF_GATED:
+            reason = _ETF_GATED[t]
+        elif t in _STOCK_GATED:
+            reason = _STOCK_GATED[t]
+        elif t in _ETF_TIER2_CAPPED:
+            reason = _ETF_TIER2_CAPPED[t]
+        elif d is not None and d_used > veto:
+            reason = f"event-dependence veto (dep={d_used:.2f} > {veto})"
+        elif p["est"] < (getattr(args, "min_est_etf", 0.0)
+                         if r.get("kind") == "etf" else args.min_est):
+            _fl2 = (getattr(args, "min_est_etf", 0.0)
+                    if r.get("kind") == "etf" else args.min_est)
+            reason = f"expected-value floor (est={p['est']:+.1%} < {_fl2:+.0%})"
+        else:
+            continue  # sector cap / score rank — not audit-interesting
+        ledger_append(REJECTED_LEDGER, {
+            "event": "rejected", "ticker": t, "kind": r.get("kind", ""),
+            "name": r.get("name", ""), "price": prices.get(t),
+            "reason": reason, "est_next_1y": round(p["est"], 4),
+            "dep": d, "cont": c, "conf": f_,
+            **extra,
+        })
+        recorded += 1
+    log(f"ledger: recorded {npick} new picks ({len(final)} final), "
+        f"{recorded} rejected (control group)")
+    # spell exits: why did yesterday's picks stop being picks? (audit
+    # instrumentation, 2026-10-30 — the October audit could not attribute
+    # whipsaw without exit reasons). Never breaks the pick recording.
+    try:
+        _record_spell_exits(final_set, ranked, args, today)
+    except Exception as e:
+        log(f"ledger: spell-exit recording failed ({e})")
+
+
+def _record_spell_exits(final_set, ranked, args, today):
+    """Append an 'exit' event for each ticker whose latest pick spell
+    ended before today (picked on an earlier date, not picked today),
+    with the reason the code can determine at this point:
+
+      thesis_break   latest thesis-check status is 'broken'
+      risk_flag_gate barred today by the two-strike risk gate
+      gate_trip      stability gate, dep veto, or research exclusion
+      overlap        evicted by the ETF holdings-overlap repair
+      ev_below_floor still in today's pool but EV under the floor
+      cap            in today's pool, passed floors/gates, lost on
+                     sector cap / slot count / score order
+      pool_exit      not in today's research pool at all
+
+    Idempotent per (ticker, pick_date): a spell's exit is recorded once.
+    Residual gap: 'cap' bundles cap-full, slot-count and ranking losses
+    (pick_top_with_sector_cap logs the split, but the ledger does not
+    separate them), and a name dropped by the pre-research risk gates
+    reads as pool_exit."""
+    import json as _json
+    latest_pick = {}   # ticker -> (date, event)
+    latest_check = {}  # ticker -> status
+    exited = set()     # (ticker, pick_date) with an exit already recorded
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                t = e.get("ticker")
+                if not t:
+                    continue
+                if e.get("event") == "picked":
+                    if (t not in latest_pick
+                            or e.get("date", "") >= latest_pick[t][0]):
+                        latest_pick[t] = (e.get("date", ""), e)
+                elif e.get("event") == "check":
+                    latest_check[t] = e.get("status")
+                elif e.get("event") == "exit":
+                    exited.add((t, e.get("pick_date")))
+    except FileNotFoundError:
+        return
+    ranked_by_ticker = {}
+    if ranked is not None and len(ranked):
+        for _, r in ranked.iterrows():
+            ranked_by_ticker[str(r["ticker"])] = r
+    veto = getattr(args, "veto_dep", 0.7) or 0.7
+    n_exit = 0
+    for t, (pdate, _ev) in sorted(latest_pick.items()):
+        if not pdate or pdate >= today or t in final_set:
+            continue
+        if (t, pdate) in exited:
+            continue
+        r = ranked_by_ticker.get(t)
+        if latest_check.get(t) == "broken":
+            reason = "thesis_break"
+        elif t in _RISK_GATED:
+            reason = "risk_flag_gate"
+        elif t in _STABILITY_GATED:
+            reason = "gate_trip"
+        elif t in _ETF_GATED:
+            reason = "gate_trip"
+        elif t in _STOCK_GATED:
+            reason = "gate_trip"
+        elif r is None:
+            reason = "pool_exit"
+        elif bool(r.get("llm_excluded")):
+            reason = "gate_trip"
+        elif t in _LAST_OVERLAP_DROPS:
+            reason = "overlap"
+        else:
+            d = _safe(r.get("llm_event_dependence"))
+            d_used, _dcap = effective_dep(
+                t, r.get("kind"), r.get("sector"),
+                d if d is not None else 0.3)
+            if d is not None and d_used > veto:
+                reason = "gate_trip"
+            else:
+                c = _safe(r.get("llm_continuation"))
+                f_ = _safe(r.get("llm_confidence"))
+                p = est_parts(r, d_used,
+                              c if c is not None else 0.5,
+                              f_ if f_ is not None else 1.0)
+                _xfl = (getattr(args, "min_est_etf", 0.0)
+                        if r.get("kind") == "etf" else args.min_est)
+                reason = ("ev_below_floor" if p["est"] < _xfl
+                          else "cap")
+        ledger_append(THESIS_LEDGER, {
+            "event": "exit", "ticker": t, "date": today,
+            "pick_date": pdate, "exit_reason": reason,
+        })
+        n_exit += 1
+        log(f"ledger: exit {t} (picked {pdate}) — {reason}")
+    if n_exit:
+        log(f"ledger: recorded {n_exit} spell exits")
+
+
+def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
+    """Price-based thesis check for picks made within the last `track_days`.
+
+    Appends 'check' events (intact/watch/broken) to the ledger and returns
+    the status list. The daily agent does the news-based re-verification on
+    top and amends reasons; this function only measures price truth.
+
+    The 3mo price fetch is date-partitioned cached (keyed by ticker set), so
+    repeated same-day checks don't re-download.
+    """
+    import json as _json
+    from cache import StepCache
+    if cache is None:
+        # standalone invocation (e.g. python3 -c): use the default cache dir
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    picks = {}
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event") == "picked":
+                    # Key by (ticker, date): a re-picked ticker's earlier
+                    # prediction must not be shadowed — the audit measures
+                    # every prediction, not just the latest.
+                    picks[(e["ticker"], e.get("date"))] = e
+    except FileNotFoundError:
+        log("thesis_check: no ledger yet — 0 tracked")
+        return []
+    cutoff = (datetime.now() - timedelta(days=track_days)).strftime("%Y-%m-%d")
+    tracked = {k: e for k, e in picks.items()
+               if e.get("date", "") >= cutoff and e.get("pick_price")}
+    if not tracked:
+        log("thesis_check: 0 tracked (no picks with prices in window) — "
+            "not a fetch failure")
+        return []
+    out = []
+    try:
+        _track_tickers = sorted({t for t, _d in tracked})
+        tkey = "thesis_prices_" + StepCache.tickers_key(_track_tickers)
+        px = cache.get(tkey)
+        if px is None:
+            px = download_prices(_track_tickers, period="3mo")
+            cache.put(tkey, px)
+        else:
+            log(f"thesis_check: {len(px)} tickers' 3mo prices from cache")
+    except Exception as e:
+        log(f"thesis_check: price fetch failed ({e})")
+        return []
+    today = run_date()
+    # Today's existing check events, so reruns don't duplicate identical
+    # results (a status CHANGE still records — that's the timeline).
+    seen_checks = set()
+    try:
+        with open(THESIS_LEDGER) as f:
+            for line in f:
+                try:
+                    e = _json.loads(line)
+                except Exception:
+                    continue
+                if (e.get("event") == "check" and e.get("date") == today):
+                    seen_checks.add((e.get("ticker"), e.get("status"),
+                                     e.get("reason")))
+    except FileNotFoundError:
+        pass
+    for (t, _pick_date), e in tracked.items():
+        if t not in px:
+            continue
+        s = px[t].dropna()
+        # Anchor to the last available bar on or before the pick date, so
+        # weekend picks (dated Sat/Sun with no price bars) measure from
+        # Friday's close instead of tracking nothing.
+        _anchor = s.index[s.index <= pd.Timestamp(e["date"])]
+        if len(_anchor) == 0:
+            continue
+        s = s.loc[_anchor[-1]:]
+        if len(s) == 0:
+            continue
+        pp = float(e["pick_price"])
+        # Measure the return INSIDE the fetched series (fix 2026-11-10,
+        # Dan-approved): download_prices returns split/dividend-adjusted
+        # closes, while the ledger's pick_price is the raw price recorded
+        # on pick day. Dividing the adjusted series by the raw pick price
+        # mixed two bases and manufactured phantom losses after a split
+        # (MTUM, 4:1 on 2026-11-05, printed -79% against a true -17%).
+        # The series' own pick-date bar is the same-basis anchor; the raw
+        # pick_price stays in the record, alongside pick_price_adj.
+        pp_adj = float(s.iloc[0])
+        ret = float(s.iloc[-1] / pp_adj - 1)
+        dd = float(((s - s.cummax()) / s.cummax()).min())
+        days = (datetime.now() - datetime.fromisoformat(e["date"])).days
+        status = "intact"
+        reason = "price-based: within tolerance"
+        # Guardrail: a return worse than the spell's own max drawdown is
+        # arithmetically impossible on a single price basis. If it ever
+        # appears, the data (not the thesis) is the problem: flag it as a
+        # watch for review instead of recording a broken status.
+        data_suspect = ret < dd - 0.02
+        if data_suspect:
+            status, reason = "watch", (
+                f"data suspect: return {ret:+.0%} is worse than the max "
+                f"dip {dd:+.0%} since pick, which cannot happen on one "
+                f"price basis (possible split or bad price data); flagged "
+                f"for review, not treated as broken")
+        elif dd <= -0.15 or ret <= -0.15:
+            status, reason = "broken", f"price-based: {dd:+.0%} max dip since pick"
+        elif dd <= -0.08 or ret <= -0.08:
+            status, reason = "watch", f"price-based: {dd:+.0%} dip since pick"
+        if (t, status, reason) in seen_checks:
+            continue  # identical check already recorded today
+        rec = {"event": "check", "ticker": t, "date": today, "status": status,
+               "days_held": days, "ret_since_pick": round(ret, 4),
+               "dd_since_pick": round(dd, 4), "pick_price": pp,
+               "pick_price_adj": round(pp_adj, 4), "reason": reason,
+               "pick_date": e["date"]}
+        if data_suspect:
+            rec["data_suspect"] = True
+        ledger_append(THESIS_LEDGER, rec)
+        out.append(rec)
+    nb = sum(1 for r in out if r["status"] == "broken")
+    nw = sum(1 for r in out if r["status"] == "watch")
+    log(f"thesis_check: {len(out)} tracked, {nb} broken, {nw} watch")
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Free stock screener with dynamic news risk")
+    ap.add_argument("--benchmark", default="SPMO", choices=BENCHMARK_CHOICES)
+    ap.add_argument("--etf-benchmark", default=None, choices=BENCHMARK_CHOICES,
+                    help="separate benchmark for the ETF leg "
+                         "(default: same as --benchmark)")
+    ap.add_argument("--compare-benchmarks", action="store_true")
+    ap.add_argument("--test", action="store_true", help="quick test (caps outperformers at 60)")
+    ap.add_argument("--min-mcap", type=float, default=2e9,
+                    help="minimum market cap in USD for the screener universe (default 2B)")
+    ap.add_argument("--min-price", type=float, default=5.0,
+                    help="minimum share price in USD (default 5)")
+    ap.add_argument("--max-outperformers", type=int, default=800,
+                    help="safety cap on outperformers to score (default 800)")
+    ap.add_argument("--top-n", type=int, default=10)
+    ap.add_argument("--max-per-sector", type=int, default=2)
+    ap.add_argument("--with-llm", action="store_true",
+                    help="use the 3-layer LLM research stack instead of the rules news layer")
+    ap.add_argument("--llm-backend", default="agent", choices=["agent", "auto"],
+                    help="agent=file handoff (no keys); auto=free API failover chain")
+    ap.add_argument("--ev-mode", default="legacy",
+                    choices=["legacy", "shadow", "live"],
+                    help="research-redesign EV mode for stocks: legacy = "
+                         "production EV decides, v2 not recorded unless "
+                         "shadow; shadow = v2 computed and recorded in "
+                         "frames, production still decides; live = v2 "
+                         "IS the stock EV (ETFs always legacy)")
+    ap.add_argument("--llm-apply", nargs=2, metavar=("BUNDLE", "OUTPUTS"),
+                    help="phase B: rerank from a research bundle + filled llm outputs")
+    ap.add_argument("--watchlist",
+                    help="comma-separated tickers to run through the pipeline "
+                         "(Phase A: quant + headlines, writes watchlist bundle)")
+    ap.add_argument("--watchlist-apply", nargs=2, metavar=("BUNDLE", "OUTPUTS"),
+                    help="watchlist Phase B: apply research, sort by est, chart")
+    ap.add_argument("--max-vol", type=float, default=0.80,
+                    help="absolute risk gate: exclude vol60 above this (default 0.80)")
+    ap.add_argument("--min-dd", type=float, default=-0.40,
+                    help="absolute risk gate: exclude max drawdown below this (default -0.40)")
+    ap.add_argument("--min-score", type=float, default=0.0,
+                    help="quality floor for final picks (default 0.0)")
+    ap.add_argument("--veto-dep", type=float, default=0.7,
+                    help="LLM event-dependence above this is vetoed from final picks (default 0.7)")
+    ap.add_argument("--w-down", type=float, default=1.5,
+                    help="rerank weight: penalty per unit event_dependence (default 1.5)")
+    ap.add_argument("--w-up", type=float, default=1.0,
+                    help="rerank weight: reward per unit continuation (default 1.0)")
+    ap.add_argument("--w-outlier", type=float, default=0.5,
+                    help="rerank weight: extra penalty for outlier base_score * event_dependence (default 0.5)")
+    ap.add_argument("--n-stocks", type=int, default=10,
+                    help="final stock picks (default 10)")
+    ap.add_argument("--n-etfs", type=int, default=10,
+                    help="final ETF picks (default 10)")
+    ap.add_argument("--min-est", type=float, default=0.015,
+                    help="stock expected-value floor in steep-dampener EV units (default 0.015 since 2026-11-06; the +3% floor was denominated in the retired dampener's units — it admitted 48% of evaluated names there vs 26% in V6 units; +1.5% restores slightly-stricter-than-original selectivity while the iu/dep eligibility gate does the protective work; every pick still earns its place)")
+    ap.add_argument("--min-est-etf", type=float, default=0.0,
+                    help="ETF expected-value floor in no-momentum EV units (default 0.0 since 2026-11-06; the ETF eligibility gate does the protective work)")
+    ap.add_argument("--us-only", dest="us_only", action="store_true", default=True,
+                    help="US-domiciled stocks and US-focused ETFs only (default on)")
+    ap.add_argument("--no-us-only", dest="us_only", action="store_false",
+                    help="disable the US-only filter")
+    ap.add_argument("--n-etf-research", type=int, default=100,
+                    help="top ETF quant candidates entering research (default 100)")
+    ap.add_argument("--n-stock-research", type=int, default=100,
+                    help="top stock quant candidates entering research (default 100)")
+    ap.add_argument("--news-invalidate-threshold", type=float, default=0.65,
+                    help="news score (bad or good) at/above which a carried assessment "
+                         "is invalidated, forcing fresh research (default 0.65)")
+    ap.add_argument("--n-surge", type=int, default=10,
+                    help="max fast-movers (10d return >= 10%%) outside the research pool "
+                         "pulled in for fresh assessment (default 10)")
+    ap.add_argument("--surge-min-10d", type=float, default=0.10,
+                    help="min 10-day return for a surge candidate (default 0.10)")
+    ap.add_argument("--max-etf-overlap", type=float, default=0.30,
+                    help="max pairwise top-10 holdings overlap between picked ETFs (default 0.30; lower-EV member of over-threshold pairs is excluded)")
+    ap.add_argument("--max-per-etf-category", type=int, default=2,
+                    help="max final ETFs per fund category (default 4)")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="ignore the on-disk cache; make all calls fresh")
+    ap.add_argument("--cache-dir", default="cache",
+                    help="cache directory (default: cache/)")
+    args = ap.parse_args()
+
+    global _EV_MODE
+    _EV_MODE = getattr(args, "ev_mode", "legacy") or "legacy"
+
+    # Shared cache, constructed once: every branch (Phase A, Phase B,
+    # watchlist) uses this. Previously Phase B referenced `cache` before it
+    # was bound, raising UnboundLocalError (swallowed) and silently skipping
+    # ledger recording.
+    from cache import StepCache
+    cache = StepCache(args.cache_dir, enabled=not args.no_cache, log=log,
+                      date_str=pipeline_today())
+
+    # ---- Phase B: apply already-done LLM research, no re-fetching ----
+    if args.watchlist:
+        run_watchlist(args, args.watchlist.split(","))
+        return
+
+    if args.watchlist_apply:
+        run_watchlist_apply(args)
+        return
+
+    if args.llm_apply:
+        import json as _json
+        from llm_research import apply_llm_outputs
+        bundle = load_json_arg(args.llm_apply[0], "research bundle")
+        phase_a_log = (bundle.get("meta") or {}).get("phase_a_log")
+        if phase_a_log and os.path.exists(phase_a_log):
+            continue_logging(phase_a_log)
+            log("=== PHASE B: applying LLM research (same log as Phase A) ===")
+        else:
+            setup_logging()
+            log("Phase B: applying LLM research (no Phase A log found; new file)")
+        outputs = validate_outputs(
+            _adapt_research_store_outputs(
+                load_json_arg(args.llm_apply[1], "research outputs"),
+                "research outputs",
+                flow="mint-chip-daily"))
+        df = pd.DataFrame(bundle["candidates"])
+        log(f"Loaded {len(df)} candidates from bundle")
+        kinds = df["kind"].value_counts().to_dict() if "kind" in df.columns else {}
+        log(f"candidate kinds: {kinds}")
+        ranked = apply_llm_outputs(df, outputs,
+                                   w_down=args.w_down, w_up=args.w_up,
+                                   w_outlier=args.w_outlier)
+        log_world_layer(outputs)
+        log_research_assessments(ranked)
+        # auditability (2026-10-30): keep the pre-gate frame so the
+        # frame snapshot can cover every evaluated candidate, including
+        # pre-selection-gate drops (reference only — gates return a copy)
+        pre_gate_ranked = ranked
+        # absolute risk gates also apply on the Phase-B path
+        ranked, gate_report = apply_risk_gates(ranked, max_vol=args.max_vol,
+                                               min_dd=args.min_dd)
+        # Oct 30, 2026 inputs: typical earnings-day moves (earnings-gap
+        # EV downside floor) + pre-selection implied upside (risk gate)
+        ranked = attach_earnings_gap_inputs(ranked, cache)
+        ranked = attach_implied_upside(ranked, cache)
+        final_stocks, final_etfs = pick_final(ranked, args, llm_path=True)
+        final = pd.concat([final_stocks, final_etfs], ignore_index=True)
+        _print_llm_final(final_stocks, final_etfs, args)
+        out = (f"screener_results_{datetime.now().strftime('%Y%m%d')}_"
+               f"{args.benchmark}_llm.csv")
+        final.to_csv(out, index=False)
+        print(f"Saved: {out}")
+        # AUDITABILITY (2026-10-30, instrumentation only): honorable
+        # mentions are computed here instead of after the ledger write
+        # (pure computation on the same inputs — the chart below reuses
+        # this same list) so the frame snapshot can carry the exact HM
+        # reasons; frame + manifest are written BEFORE the self-check,
+        # whose frame_manifest_written assert verifies them. Neither
+        # step feeds selection.
+        hm = honorable_mentions(ranked, final, args)
+        try:
+            write_frame_snapshot_daily(ranked, pre_gate_ranked, final, hm,
+                                       args.llm_apply[0], args, gate_report)
+        except Exception as e:
+            log(f"frame snapshot: FAILED ({e}) — the self-check's "
+                f"frame_manifest_written assert will fail this run")
+            _mark_frame_failed(len(pre_gate_ranked))
+        # Self-check gates the run: a failure aborts BEFORE ledger appends
+        # and chart write, so a broken run never records picks or produces
+        # a publishable page.
+        checks, fails = run_self_check(final, args, out)
+        _patch_manifest_self_check(
+            f"{len(checks) - len(fails)}/{len(checks)}")
+        if fails:
+            print("\n!!! SELF-CHECK FAILURES:")
+            for c in fails:
+                print(f"    FAIL: {c['name']} {c['detail']}")
+            log_error(f"SELF-CHECK failed: {[c['name'] for c in fails]} — "
+                      f"aborting before ledger/chart")
+            sys.exit(1)
+        # thesis ledger: record picks + rejected control group (audit trail)
+        try:
+            record_picks_ledger(final, ranked, args, cache)
+        except Exception as e:
+            log(f"ledger: record_picks_ledger failed ({e})")
+        chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                      f"{args.benchmark}_llm.html")
+        # hm computed earlier (auditability frame snapshot) — reused here
+        # market chat (researcher-written, plain language) + business
+        # summaries for tomorrow's market chat — both optional files
+        mc = None
+        try:
+            import json as _json
+            with open("market_chat.json") as _f:
+                mc = _json.load(_f)
+            if not isinstance(mc, dict):
+                log(f"WARNING: market_chat.json is {type(mc).__name__}, "
+                    f"not an object — market chat skipped")
+                mc = None
+        except Exception:
+            mc = None
+        try:
+            _picks = list(final["ticker"]) if len(final) else []
+            _hm_t = [h.get("ticker") for h in (hm or []) if h.get("ticker")]
+            _all = list(dict.fromkeys(list(_picks) + _hm_t))
+            if _all:
+                fetch_pick_summaries(_all)
+        except Exception as e:
+            log(f"pick summaries: skipped ({e})")
+        make_chart_html(final_stocks, final_etfs, chart_path,
+                        {"benchmark": args.benchmark,
+                         "etf_benchmark": etf_benchmark(args),
+                         "asof": run_stamp()},
+                        honorable=hm, market_chat=mc)
+        print(f"Chart: {chart_path}")
+        # (self-check already gated above, before ledger/chart)
+        write_run_summary(
+            f"run_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}_llm.json",
+            {"timestamp": datetime.now().isoformat(),
+             "args": {k: v for k, v in vars(args).items()},
+             "log_file": LOG_FILE, "phase": "B",
+             "stages": {"candidates": len(df), "gated": gate_report.get("gated_total"),
+                        "final_stocks": len(final_stocks),
+                        "final_etfs": len(final_etfs)},
+             "gate_report": gate_report,
+             "self_check": checks,
+             "data_completeness": _LAST_DATA_COMPLETENESS or {},
+             "final_picks": [
+                 {"ticker": r["ticker"], "kind": r.get("kind"),
+                  "sector": r["sector"],
+                  "ret_1y": round(float(r["ret_1y"]), 4),
+                  "vol60": round(float(r["vol60"]), 4),
+                  "maxdd": round(float(r["maxdd"]), 4),
+                  "base_score": round(float(r["base_score"]), 3),
+                  "final_score": round(float(r["final_score"]), 3),
+                  "est_next_1y": round(float(r["est_next_1y"]), 4),
+                  "confidence": _safe(r.get("llm_confidence")),
+                  "stability": r.get("stability"),
+                  "pick_pass": int(r.get("pick_pass", 1)),
+                  "event_dependence": _safe(r.get("llm_event_dependence")),
+                  "continuation": _safe(r.get("llm_continuation"))}
+                 for _, r in final.iterrows()],
+             "chart": chart_path})
+        return
+
+    log_path = setup_logging()
+    log(f"Logging to {log_path}" if log_path else "File logging unavailable")
+    log_levers(args)
+
+    # cache was constructed once at the top of main() so Phase B can use it;
+    # just report it here.
+    if args.no_cache:
+        log("cache disabled (--no-cache): all calls fresh")
+    else:
+        log(f"cache dir: {cache.report()['dir']} (date-partitioned; --no-cache for fresh)")
+
+    print("=" * 70)
+    print("STOCK SCREENER — beat the benchmark, minimize post-buy drawdown")
+    print("Free APIs only. Not financial advice.")
+    print("=" * 70)
+
+    # 1) Benchmark 1y return
+    bench_tickers = BENCHMARK_CHOICES if args.compare_benchmarks else [args.benchmark]
+    _eb = etf_benchmark(args)
+    if _eb not in bench_tickers:
+        bench_tickers = bench_tickers + [_eb]
+    bench_closes = cache.get("bench_" + "_".join(bench_tickers))
+    if bench_closes is None:
+        bench_closes = download_prices(bench_tickers, period="1y")
+        cache.put("bench_" + "_".join(bench_tickers), bench_closes)
+    bench_rets = {t: calc_return(s) for t, s in bench_closes.items()}
+    for t, r in bench_rets.items():
+        print(f"Benchmark {t}: 1y return = {r:+.1%}" if not pd.isna(r) else f"Benchmark {t}: n/a")
+    if not args.compare_benchmarks:
+        bench_ret = bench_rets.get(args.benchmark, np.nan)
+        if pd.isna(bench_ret):
+            print(f"Could not get benchmark {args.benchmark} return. Exiting.")
+            sys.exit(1)
+        etf_bench_ret = bench_rets.get(_eb, np.nan)
+        if pd.isna(etf_bench_ret):
+            print(f"Could not get ETF benchmark {_eb} return. Exiting.")
+            sys.exit(1)
+    else:
+        # if comparing, use the best benchmark as the hurdle? No — use the user's chosen default SPMO
+        bench_ret = bench_rets.get("SPMO", np.nan)
+        etf_bench_ret = bench_rets.get(_eb, bench_ret)
+
+    # 2) Universe: FULL yfinance screener pull (paged), then outperformers only.
+    # No top-N cap: every stock beating the benchmark goes through fundamentals.
+    universe = cache.get("universe_v3")
+    if universe is None:
+        universe = get_all_screener_stocks(min_mcap=args.min_mcap, min_price=args.min_price)
+        if universe:
+            cache.put("universe_v3", universe)
+        # Never cache an empty universe: a 429/outage would otherwise poison
+        # every same-day retry (COMPLETE-only caching, same as ledger prices).
+    if not universe:
+        print("Could not fetch screener universe. Try again later.")
+        sys.exit(1)
+
+    # 3) Beat-the-benchmark filter (your rule: else just buy the benchmark).
+    # Pre-filter on the screener's 52w % with a little slack (methodology differs
+    # slightly from our adjusted-close calc), then verify precisely from prices.
+    bench_pct = bench_ret * 100
+    cands = [u for u in universe if u["pct_52w"] > bench_pct - 5]
+    cands.sort(key=lambda d: d["pct_52w"], reverse=True)
+    if args.test:
+        cands = cands[:60]
+    elif len(cands) > args.max_outperformers:
+        log(f"Capping outperformers at {args.max_outperformers} (safety cap)")
+        cands = cands[:args.max_outperformers]
+    print(f"\n{len(cands)} candidate outperformers from {len(universe)}-stock universe "
+          f"(screener 52w% > {bench_pct - 5:.0f}%)")
+    log(f"universe: {len(universe)} stocks pulled from yfinance screener "
+        f"(mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f})")
+    log(f"benchmark {args.benchmark}: 1y={bench_ret:+.1%} -> 52w% cutoff "
+        f">{bench_pct - 5:.0f}% (5pp slack for methodology drift)")
+    log(f"candidate outperformers: {len(cands)} (sorted by screener 52w%)")
+    log("raw input top 20 by screener 52w%: " +
+        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands[:20]))
+    log(f"all candidates by screener 52w% ({len(cands)}): " +
+        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands))
+
+    cand_tickers = [c["ticker"] for c in cands if c["ticker"] not in BENCHMARK_CHOICES]
+    prices_key = "prices_" + StepCache.tickers_key(cand_tickers)
+    closes = cache.get(prices_key)
+    if closes is None:
+        closes = download_prices(cand_tickers, period="1y")
+        cache.put(prices_key, closes)
+        _cache_put_px(cache, closes)
+
+    # Precise 1y return check vs benchmark, same methodology
+    outperformers = []
+    n_priced = 0
+    for c in cands:
+        t = c["ticker"]
+        s = closes.get(t)
+        r = calc_return(s) if s is not None else np.nan
+        if not pd.isna(r):
+            n_priced += 1
+        if not pd.isna(r) and r > bench_ret:
+            c["ret_1y"] = r
+            outperformers.append(c)
+    # Outage gate: a 429 storm that yields few closes must not degrade into a
+    # false methodological conclusion ("just buy the benchmark"). If we
+    # couldn't price most candidates, the data is broken, not the market.
+    if cands:
+        price_cov = n_priced / len(cands)
+        log(f"price coverage: {price_cov:.0%} ({n_priced}/{len(cands)} candidates priced)")
+        if price_cov < 0.5:
+            print(f"ABORT: only {price_cov:.0%} of candidates priced — likely "
+                  f"a Yahoo outage. Not publishing a false 'buy the benchmark' run.")
+            sys.exit(2)
+    outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
+    print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
+    log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
+        f"({bench_ret:+.1%} 1y): {len(outperformers)}")
+    log("confirmed outperformer tickers: " +
+        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers))
+    if not outperformers:
+        print(f"No stocks beat the benchmark. Per your rule: just buy {args.benchmark}.")
+        sys.exit(0)
+    print("Top 5 outperformers:")
+    for c in outperformers[:5]:
+        print(f"  {c['ticker']:8s} {c['ret_1y']:+.0%}  {c['name'][:45]}")
+    log("confirmed top 10 by precise 1y return: " +
+        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers[:10]))
+
+    # 4) Fundamentals for ALL outperformers (this is where trash gets identified)
+    out_tickers = [c["ticker"] for c in outperformers]
+    fund_key = "fundamentals_" + StepCache.tickers_key(out_tickers)
+    infos = cache.get(fund_key) or {}
+    missing = [t for t in out_tickers if t not in infos]
+    if missing:
+        log(f"fundamentals: {len(infos)} cached, fetching {len(missing)} missing")
+        fresh = get_fundamentals(missing)
+        infos.update(fresh)
+        cache.put(fund_key, infos)
+    else:
+        log(f"fundamentals: all {len(infos)} from cache")
+    infos = {t: i for t, i in infos.items() if t in closes}
+
+    # Outage gate: if Yahoo's .info endpoint is down, every candidate looks
+    # like it has $0 volume and gets trash-filtered as "illiquid" — a total
+    # outage masquerading as a clean "no picks" day. Fail loud instead.
+    if out_tickers:
+        cov = len([t for t in out_tickers if infos.get(t)]) / len(out_tickers)
+        log(f"fundamentals coverage: {cov:.0%} ({len([t for t in out_tickers if infos.get(t)])}/{len(out_tickers)})")
+        if cov < 0.5:
+            print(f"ABORT: fundamentals coverage only {cov:.0%} — likely a "
+                  f"Yahoo outage, not an empty market. Not publishing a "
+                  f"false 'no picks' run.")
+            sys.exit(2)
+
+    # 5) Hard trash filters (transparent rules, reported below)
+    kept, trash_report = apply_trash_filters(outperformers, closes, infos,
+                                               us_only=args.us_only)
+    log(f"Trash filter: {trash_report['dropped_total']} dropped, {trash_report['kept']} kept")
+    for k, v in trash_report.items():
+        if k not in ("kept", "dropped_total", "dropped_names") and v:
+            log(f"  trash reason - {k}: {v}")
+    for k, names in trash_report.get("dropped_names", {}).items():
+        # full name lists for the interesting (small) reasons; foreign_domicile
+        # is large and uninteresting, so cap it
+        shown = names if k != "foreign_domicile" else names[:20]
+        suffix = f" (+{len(names) - 20} more)" if k == "foreign_domicile" and len(names) > 20 else ""
+        log(f"  trash dropped[{k}]: {shown}{suffix}")
+    print(f"\nTrash filter: {trash_report['dropped_total']} dropped, {trash_report['kept']} kept")
+    for k, v in trash_report.items():
+        if k not in ("kept", "dropped_total", "dropped_names") and v:
+            print(f"  - {k}: {v}")
+    if not kept:
+        print("Everything was filtered as trash. Loosen filters and retry.")
+        sys.exit(0)
+
+    # 6) Score all survivors for your goal: continuation + minimum post-buy drawdown risk
+    keep_tickers = [c["ticker"] for c in kept]
+    infos = {t: i for t, i in infos.items() if t in keep_tickers}
+    df = build_scores(closes, infos)
+    if df.empty:
+        print("Scoring produced no results (data issues). Try again later.")
+        sys.exit(1)
+    print(f"Scored {len(df)} stocks. Top 5 pre-news:")
+    for _, r in df.head(5).iterrows():
+        print(f"  {r['ticker']:8s} {r['sector'][:22]:22s} base={r['base_score']:+.2f} 1y={r['ret_1y']:+.0%}")
+    log(f"base_score stats: {df['base_score'].describe().to_dict()}")
+    log_score_breakdown(df.head(args.n_stock_research), f"stocks (research pool: top {args.n_stock_research})",
+                        _STOCK_SCORE_GROUPS)
+    log_character_breakdown(df.head(args.n_stock_research), f"stocks (research pool: top {args.n_stock_research})",
+                            _CHAR_PARTS_STOCK)
+
+    # 6b) Enrich top 100 with insider + earnings signals, adjust scores
+    enrich_n = min(100, len(df))
+    enr_tickers = df.head(enrich_n)["ticker"].tolist()
+    enr_key = "enrich_" + StepCache.tickers_key(enr_tickers)
+    enr = cache.get(enr_key) or {}
+    enr_missing = [t for t in enr_tickers if t not in enr]
+    if enr_missing:
+        log(f"enrichment: {len(enr)} cached, fetching {len(enr_missing)} missing")
+        enr.update(enrich_candidates(enr_missing))
+        cache.put(enr_key, enr)
+    else:
+        log(f"enrichment: all {len(enr)} from cache")
+    df["insider_ratio"] = df["ticker"].map(lambda t: enr.get(t, {}).get("insider_ratio"))
+    df["earnings_in_days"] = df["ticker"].map(lambda t: enr.get(t, {}).get("earnings_in_days"))
+    mask = df["ticker"].isin(enr.keys())
+    df.loc[mask, "z_insider"] = zscore(
+        -pd.to_numeric(df.loc[mask, "insider_ratio"], errors="coerce").fillna(0)).values
+    df["z_insider"] = df["z_insider"].fillna(0)
+    df["earn_soon"] = df["earnings_in_days"].apply(
+        lambda d: 1.0 if d is not None and 0 <= d <= 14 else 0.0)
+    n_earn_soon = int(df["earn_soon"].sum())
+    log(f"earnings within 14d: {n_earn_soon} of top {enrich_n} "
+        f"({df[df['earn_soon'] == 1.0]['ticker'].tolist()[:10]})")
+    df["base_score"] = df["base_score"] + 0.06 * df["z_insider"]
+    # earn_soon dock REMOVED 2026-10-18 (Dan's call — fix 1): the -0.25 dock
+    # acted as a veto across half the pool's score range and fired before the
+    # researcher could judge. Earnings risk is now the researcher's job via
+    # event_dependence (EARNINGS-RISK RULE in the daily cron); earn_soon and
+    # days-to-earnings still flow into the research bundle as flags.
+    df = df.sort_values("base_score", ascending=False)
+    log("base_score adjusted for insider; re-sorted (earn_soon dock removed 2026-10-18)")
+
+    # 6c) Absolute risk gates before research/final selection
+    df, gate_report = apply_risk_gates(df, max_vol=args.max_vol, min_dd=args.min_dd)
+    df, stock_cap = winsorize_base(df)
+    df["kind"] = "stock"
+    df["base_cap"] = stock_cap
+    log(f"stocks winsorize cap={stock_cap:+.2f}")
+    # dedupe share classes: keep the best-scoring listing per company
+    # (e.g. GOOG vs GOOGL) so the final chart never holds the same firm twice
+    _n0 = len(df)
+    df["_ckey"] = df["name"].str.lower().str.replace(
+        r"\b(class [a-c]|inc\.?|corp\.?|corporation|company|co\.?|ltd\.?|plc|holdings?|group)\b",
+        "", regex=True).str.replace(r"[^a-z0-9]", "", regex=True)
+    df = df.sort_values("base_score", ascending=False).drop_duplicates("_ckey")
+    df = df.drop(columns=["_ckey"])
+    if len(df) < _n0:
+        log(f"share-class dedupe: {_n0 - len(df)} duplicate listings removed")
+
+    # 6d) ETF leg: separate universe + scorer (different fundamentals)
+    edf = run_etf_pipeline(args, cache, etf_bench_ret, _eb)
+
+    # research pool: core top-N by base_score + persistence seats +
+    # ret_1y overflow lane (2026-11-06 pool package — see _build_pool);
+    # the scored tail (ranks N+1..N+100 unseated) is recorded into the
+    # bundle meta and onward into the run manifest for the audit.
+    _persist = _persistence_tickers()
+    _pool_stocks, _tail_s = _build_pool(df, args.n_stock_research,
+                                        "stock", _persist)
+    if not edf.empty:
+        _pool_etfs, _tail_e = _build_pool(edf, args.n_etf_research,
+                                          "etf", _persist)
+    else:
+        _pool_etfs, _tail_e = edf, []
+    _pool_tail = _tail_s + _tail_e
+    pool = pd.concat([_pool_stocks, _pool_etfs], ignore_index=True)
+    _lane_counts = (pool["_pool_lane"].value_counts().to_dict()
+                    if "_pool_lane" in pool.columns else {})
+    log(f"research pool: {len(_pool_stocks)} stocks + "
+        f"{len(_pool_etfs)} ETFs (lanes: {_lane_counts}); "
+        f"persistence seats: "
+        f"{[t for t in _persist if t in set(pool['ticker'].astype(str))]}; "
+        f"tail logged: {len(_pool_tail)} names")
+
+    # Surge candidates: fast movers (10d return >= threshold) outside the
+    # quant pool get pulled in for fresh assessment. This is the "good news,
+    # buy quickly" path — the surge only buys an EVALUATION. Risk gates
+    # already applied above; the dep>=0.7 event veto and EV floor still
+    # decide. A meme spike gets researched and vetoed; a genuine repricing
+    # gets a fair EV within 24h instead of waiting for its base_score rank
+    # to climb.
+    if args.n_surge > 0:
+        _pool_tickers = set(pool["ticker"])
+        _surge_frames = []
+        for _sdf in (df, edf):
+            if _sdf is not None and not _sdf.empty and "ret_2w" in _sdf.columns:
+                _surge_frames.append(_sdf)
+        if _surge_frames:
+            _sall = pd.concat(_surge_frames, ignore_index=True)
+            _surg = _sall[(_sall["ret_2w"].fillna(0) >= args.surge_min_10d) &
+                          (~_sall["ticker"].isin(_pool_tickers))] \
+                .sort_values("ret_2w", ascending=False).head(args.n_surge)
+            if len(_surg):
+                for _, _r in _surg.iterrows():
+                    log(f"SURGE: {_r['ticker']} (+{_r['ret_2w']:.1%} 10d) — "
+                        f"added to research pool for fresh assessment")
+                _surg = _surg.copy()
+                _surg["_surge"] = True
+                pool = pd.concat([pool, _surg], ignore_index=True)
+                log(f"research pool after surge: {len(pool)} "
+                    f"({len(_surg)} surge added)")
+
+    # 7) News/research layer on top scorers (stocks + ETFs)
+    if args.with_llm:
+        # ---- LLM research stack (replaces the rules-based news layer) ----
+        import json as _json
+        from llm_research import build_research_bundle, run_auto_layers, \
+            apply_llm_outputs, NoLLMBackend
+        top = pool
+        log("LLM layer: fetching headlines for research pool...")
+        market_headlines = cache.get("market_headlines")
+        if market_headlines is None:
+            market_headlines = fetch_market_headlines()
+            cache.put("market_headlines", market_headlines)
+        # risk themes needed for news-triggered invalidation scoring
+        risk_themes = discover_risk_themes(cache)
+        cands = []
+        _hl = fetch_headlines_threaded(
+            [(r["ticker"], r["name"]) for _, r in top.iterrows()],
+            cache=cache, label="research headlines")
+        for _, r in top.iterrows():
+            t = r["ticker"]
+            headlines = _hl.get(t, [])
+            # News-triggered invalidation: if today's headlines carry
+            # significant bad news OR significant fundamental good news,
+            # any carried assessment is stale — flag it so the researcher
+            # does fresh research instead of carrying forward. The 7-day
+            # rule assumes "no significant news"; a score spike violates
+            # that assumption in either direction.
+            _bad = news_risk_penalty(headlines, risk_themes)
+            _good = positive_news_score(headlines)
+            _trig = None
+            if _bad >= args.news_invalidate_threshold:
+                _trig = f"bad:{_bad:.2f}"
+            elif _good >= args.news_invalidate_threshold:
+                _trig = f"good:{_good:.2f}"
+            if _trig:
+                log(f"NEWS INVALIDATION: {t} ({_trig}) — forcing fresh assessment")
+            _sv = r.get("_surge")
+            _is_surge = bool(_sv) and not (isinstance(_sv, float) and _sv != _sv)  # not NaN
+            cand = {
+                "ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
+                "kind": r.get("kind", "stock"),
+                "ret_1y": float(r["ret_1y"]), "ret_6m": _safe(r.get("ret_6m")),
+                "ret_6m_skip1m": _safe(r.get("ret_6m_skip1m")),
+                "ret_3m": _safe(r.get("ret_3m")), "ret_2w": _safe(r.get("ret_2w")),
+                "vol60": float(r["vol60"]),
+                "maxdd": float(r["maxdd"]),
+                "dd_freq": _safe(r.get("dd_freq")),
+                "character": _safe(r.get("character")),
+                "beta": _safe(r.get("beta")), "roe": _safe(r.get("roe")),
+                "margin": _safe(r.get("margin")), "fpe": _safe(r.get("fpe")),
+                "base_score": float(r["base_score"]),
+                "base_w": float(r["base_w"]) if "base_w" in r and pd.notna(r["base_w"]) else float(r["base_score"]),
+                "base_cap": _safe(r.get("base_cap")),
+                "z": _z_of(r),
+                "earnings_in_days": _safe(r.get("earnings_in_days")),
+                "earn_soon": bool(r.get("earn_soon", 0.0)),
+                "insider_ratio": _safe(r.get("insider_ratio")),
+                "headlines": headlines[:12],
+                "news_trigger": _trig,
+                "surge": _is_surge,
+                "pool_lane": (r.get("_pool_lane")
+                              if isinstance(r.get("_pool_lane"), str)
+                              else ("surge" if _is_surge else "core")),
+            }
+            if r.get("kind") == "etf":
+                cand["expense_ratio"] = _safe(r.get("expense_ratio"))
+                cand["aum"] = _safe(r.get("aum"))
+            cands.append(cand)
+
+        if args.llm_backend == "agent":
+            # Phase A: write bundle, stop. An agent fills llm_outputs.json,
+            # then: python3 screener.py --llm-apply <bundle> <outputs>
+            bundle = build_research_bundle(
+                cands, market_headlines,
+                {"benchmark": args.benchmark,
+                 "etf_benchmark": _eb,
+                 "pool_tail": _pool_tail,
+                 "pool_lane_counts": {str(k): int(v) for k, v in
+                                      Counter(c.get("pool_lane")
+                                              for c in cands).items()},
+                 "phase_a_log": os.path.abspath(LOG_FILE) if LOG_FILE else None,
+                 "note": "quant base scores included; LLM decides event_dependence/continuation. "
+                         "Stocks were filtered vs the stock benchmark; ETFs vs the ETF benchmark. "
+                         "phase_a_log: Phase B must append to this file so one run = one log."},
+                fetch_market_internals(cache))
+            bp = f"research_bundle_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}.json"
+            with open(bp, "w") as f:
+                _json.dump(bundle, f, indent=1, default=str)
+            log(f"Phase A complete. Bundle: {bp}")
+            print("\n" + "=" * 70)
+            print("LLM RESEARCH BUNDLE WRITTEN (agent backend)")
+            print("=" * 70)
+            print(f"Bundle: {bp}")
+            print("Next: have your research agent (e.g. Muse) read the bundle,")
+            print("research the web, and write llm_outputs.json per the schema")
+            print("inside the bundle. Then run:")
+            _eb_flag = f" --etf-benchmark {_eb}" if _eb != args.benchmark else ""
+            print(f"  python3 screener.py --llm-apply {bp} llm_outputs.json "
+                  f"--benchmark {args.benchmark}{_eb_flag}")
+            return
+
+        # auto backend: API failover chain, graceful fallback to rules
+        try:
+            outputs = run_auto_layers(cands, market_headlines, log=log)
+            adj = apply_llm_outputs(top, outputs,
+                                    w_down=args.w_down, w_up=args.w_up,
+                                    w_outlier=args.w_outlier)
+            llm_path = True
+        except NoLLMBackend as e:
+            log(f"No LLM backend available ({e}) — falling back to rules-based news layer")
+            risk_themes = discover_risk_themes(cache)
+            adj = apply_news_adjustment(pool, risk_themes, top_k=len(pool),
+                                        cache=cache, w_outlier=args.w_outlier)
+            adj = adj.rename(columns={"adj_score": "final_score"})
+            llm_path = False
+    else:
+        # ---- default: rules-based dynamic news risk layer ----
+        risk_themes = discover_risk_themes(cache)
+        adj = apply_news_adjustment(pool, risk_themes, top_k=len(pool),
+                                    cache=cache, w_outlier=args.w_outlier)
+        adj = adj.rename(columns={"adj_score": "final_score"})
+        llm_path = False
+
+    # 7b) Log biggest rank movers (quant base -> news/LLM adjusted)
+    if llm_path:
+        adj = adj.copy()
+        adj["base_rank"] = adj["base_score"].rank(ascending=False, method="min").astype(int)
+        adj["final_rank"] = adj["final_score"].rank(ascending=False, method="min").astype(int)
+        adj["rank_delta"] = adj["base_rank"] - adj["final_rank"]  # + = moved up
+        movers = adj.sort_values("rank_delta")
+        log("Biggest DOWN-movers (research downgraded):")
+        for _, r in movers.head(5).iterrows():
+            log(f"  {r['ticker']:8s} base_rank={r['base_rank']} -> final_rank={r['final_rank']} "
+                f"(dep={r.get('llm_event_dependence', '?')}, cont={r.get('llm_continuation', '?')})")
+        log("Biggest UP-movers (research upgraded):")
+        for _, r in movers.tail(5).iterrows():
+            log(f"  {r['ticker']:8s} base_rank={r['base_rank']} -> final_rank={r['final_rank']} "
+                f"(dep={r.get('llm_event_dependence', '?')}, cont={r.get('llm_continuation', '?')})")
+
+    # 8) Final picks: most-confident stocks + most-confident ETFs
+    adj = attach_earnings_gap_inputs(adj, cache)
+    adj = attach_implied_upside(adj, cache)
+    final_stocks, final_etfs = pick_final(adj, args, llm_path)
+    final = pd.concat([final_stocks, final_etfs], ignore_index=True)
+
+    def _print_group(title, g):
+        print(f"\n{title}")
+        print("-" * 70)
+        lines = []
+        for i, (_, r) in enumerate(g.iterrows(), 1):
+            try:
+                cf = f"{float(r['llm_confidence']):.0%}"
+            except Exception:
+                cf = "n/a"
+            line = (
+                f"{i:2d}. {r['ticker']:8s} | {r['sector'][:20]:20s} | "
+                f"1y {r['ret_1y']:+.0%} | est next 1y {r['est_next_1y']:+.1%} | "
+                f"conf {cf} | vol {r['vol60']:.0%} | dd {r['maxdd']:.0%} | "
+                f"stab {r.get('stability', '?')} | score {r['final_score']:+.2f}"
+            )
+            print(line)
+            lines.append(line)
+            print(f"    {r['name'][:60]}")
+            extra = r.get("llm_rationale") or r.get("news_sample", "")
+            if extra:
+                print(f"    note: {str(extra)[:140]}")
+        return lines
+
+    print("\n" + "=" * 70)
+    print(f"TOP PICKS vs {args.benchmark} — {args.n_stocks} stocks + {args.n_etfs} ETFs "
+          f"(floor {args.min_score:+.1f})")
+    print("=" * 70)
+    final_lines = _print_group(f"STOCKS (max {args.max_per_sector} per sector)", final_stocks)
+    final_lines += _print_group(f"ETFs (max {args.max_per_etf_category} per theme)", final_etfs)
+    log("FINAL PICKS:\n" + "\n".join(final_lines))
+    if len(final_stocks) < args.n_stocks or len(final_etfs) < args.n_etfs:
+        log("NOTE: some slots intentionally left empty (floor/veto)")
+        print("\nNOTE: some slots intentionally left empty (quality floor / veto).")
+    print("\nNote: past performance doesn't predict future returns. This is a")
+    print("screening tool, not financial advice. Consider position sizing,")
+    print("diversification, and your own risk tolerance.")
+
+    # Save CSV (stocks + ETFs, kind column)
+    tag = "_llm" if args.with_llm else ""
+    out = f"screener_results_{datetime.now().strftime('%Y%m%d')}_{args.benchmark}{tag}.csv"
+    final.to_csv(out, index=False)
+    print(f"\nSaved: {out}")
+
+    # Chart: 5+5 with 1y bars + estimated next-1y bars
+    chart_path = f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}{tag}.html"
+    make_chart_html(final_stocks, final_etfs, chart_path,
+                    {"benchmark": args.benchmark,
+                     "etf_benchmark": etf_benchmark(args),
+                     "asof": run_stamp()})
+    print(f"Chart: {chart_path}")
+
+    # ---- automatic post-run validation (the "analyze" half of self-correction) ----
+    checks, fails = run_self_check(final, args, out)
+    if fails:
+        print("\n!!! SELF-CHECK FAILURES — review the log before trusting results:")
+        for c in fails:
+            print(f"    FAIL: {c['name']} {c['detail']}")
+        log_error(f"SELF-CHECK failed: {[c['name'] for c in fails]}")
+
+    # ---- machine-readable run summary for analysis ----
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "args": {k: v for k, v in vars(args).items()},
+        "log_file": LOG_FILE,
+        "stages": {
+            "universe": len(universe),
+            "candidates": len(cands),
+            "outperformers": len(outperformers),
+            "trash_kept": trash_report.get("kept"),
+            "trash_dropped": trash_report.get("dropped"),
+            "gated": gate_report.get("gated_total"),
+            "final_stocks": len(final_stocks),
+            "final_etfs": len(final_etfs),
+        },
+        "trash_breakdown": {k: v for k, v in trash_report.items()
+                            if k not in ("kept", "dropped")},
+        "gate_report": gate_report,
+        "cache": cache.report(),
+        "base_score_stats": df["base_score"].describe().to_dict(),
+        "self_check": checks,
+        "final_picks": [
+            {"ticker": r["ticker"], "kind": r.get("kind"), "name": r["name"],
+             "sector": r["sector"],
+             "ret_1y": round(float(r["ret_1y"]), 4),
+             "vol60": round(float(r["vol60"]), 4),
+             "maxdd": round(float(r["maxdd"]), 4),
+             "base_score": round(float(r["base_score"]), 3),
+             "final_score": round(float(r["final_score"]), 3),
+             "est_next_1y": round(float(r["est_next_1y"]), 4),
+             "confidence": _safe(r.get("llm_confidence")),
+             "stability": r.get("stability"),
+             "event_dependence": _safe(r.get("llm_event_dependence")),
+             "continuation": _safe(r.get("llm_continuation"))}
+            for _, r in final.iterrows()
+        ],
+        "chart": chart_path,
+    }
+    summary_path = f"run_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.benchmark}{tag}.json"
+    write_run_summary(summary_path, summary)
+
+    log(f"Run complete. Results: {out} | Log: {LOG_FILE} | Summary: {summary_path}")
+    log(f"cache: {cache.report()}")
+    log(f"STATS universe={len(universe)} candidates={len(cands)} "
+        f"outperformers={len(outperformers)} kept={trash_report['kept']} "
+        f"gated={gate_report['gated_total']} final_picks={len(final)}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        log_error(f"FATAL unhandled exception: {e}")
+        raise
