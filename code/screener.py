@@ -1167,6 +1167,7 @@ def est_parts(row, dep, cont, conf=1.0):
     est_v2 = None
     fact_tilt, research_score, no_signal, dep_override = 0.0, None, None, False
     _f4_buy = None
+    _exec_only = None
     conf_adj = conf
     if not is_etf:
         _facts = _facts_of(row)
@@ -1176,8 +1177,15 @@ def est_parts(row, dep, cont, conf=1.0):
             _f4_raw = None
         _f4_buy = (int(_f4_raw) if _f4_raw in (0, 1, 0.0, 1.0, True, False)
                    else None)
+        try:
+            _exec_raw = row.get("exec_only")
+        except Exception:
+            _exec_raw = None
+        _exec_only = (int(_exec_raw)
+                      if _exec_raw in (0, 1, 0.0, 1.0, True, False)
+                      else None)
         fact_tilt, research_score, no_signal, dep_override = \
-            _fact_components(_facts, dep_ev, _f4_buy)
+            _fact_components(_facts, dep_ev, _f4_buy, _exec_only)
         conf_adj = 0.5 + 0.5 * conf
         est_v2 = conf_adj * (1 + 0.25 * char) * (
             base_rate + cont_tilt + fact_tilt)
@@ -1213,6 +1221,9 @@ def est_parts(row, dep, cont, conf=1.0):
             "f4_buy": _f4_buy,
             "f4_evidence": (str(row.get("f4_evidence") or "")
                             if not is_etf else ""),
+            "exec_only": _exec_only,
+            "exec_evidence": (str(row.get("exec_evidence") or "")
+                              if not is_etf else ""),
             "conf_adj": conf_adj, "ev_mode": _EV_MODE}
 
 
@@ -1463,6 +1474,24 @@ FACT_W_ACQUISITION = -0.071
 # judgment call, 2026-11-11).  It has NO watchlist-rating weight and
 # does not enter the recorded research score.
 FACT_W_FORM4 = 0.035
+# BUYBACK EXECUTION (2026-11-11, Dan approved adoption at the
+# conservative size): the filing-based exec_only marker graduated in
+# buyback_execution_2026-11-11 — a company that spent cash
+# repurchasing shares over the trailing twelve months while its
+# weighted share count still rose year over year (the buyback
+# entirely absorbed by issuance) carried a -17.0pp pooled return gap,
+# same-sign in both panel halves, 37 companies.  It joins the EV
+# terms at -0.050 rather than the -0.085 the house half-gap
+# convention would imply, because the effect is validation-heavy
+# (-4.8pp discovery vs -26.5pp validation); the Nov 30 audit
+# re-sizes it on the live record.  It is stamped mechanically by
+# exec_feed from SEC companyfacts — never coded from headlines —
+# is independent of the announcement buyback fact (a name may carry
+# both), and, as a NEGATIVE term, the dep >= 0.50 tanker override
+# does NOT zero it (the override zeroes positive terms only;
+# recorded judgment, 2026-11-11).  It has NO watchlist-rating
+# weight and does not enter the recorded research score.
+FACT_W_EXECONLY = -0.050
 FACT_DEP_OVERRIDE = 0.50
 RESEARCH_SCORE_W = {"dividend_up": 0.499, "buyback": 0.172,
                     "beat_streak": 0.081, "big_acquisition": -0.253}
@@ -1582,17 +1611,20 @@ def _cap_key_of(r):
     return str(sec) if sec is not None else ""
 
 
-def _fact_components(facts, dep_used, f4_buy=None):
+def _fact_components(facts, dep_used, f4_buy=None, exec_only=None):
     """(fact_tilt, research_score, no_signal, dep_override) for a stock.
 
     facts=None (not coded) -> tilt 0.0, score None, no_signal None,
-    unless the mechanical Form 4 fact is available, in which case it
+    unless a mechanical filing fact is available, in which case it
     alone supplies the tilt (the research score and no_signal remain
-    None: both describe the headline-research layer only).
+    None: both describe the headline-research layer only).  The
+    exec_only term is negative, so the dep >= 0.50 tanker override
+    (which zeroes the POSITIVE terms) never touches it.
     """
     f4 = 1.0 if f4_buy in (1, 1.0, True) else 0.0
+    eo = 1.0 if exec_only in (1, 1.0, True) else 0.0
     if not isinstance(facts, dict):
-        if not f4:
+        if not f4 and not eo:
             return 0.0, None, None, False
         override = False
         try:
@@ -1600,7 +1632,8 @@ def _fact_components(facts, dep_used, f4_buy=None):
                         and float(dep_used) >= FACT_DEP_OVERRIDE)
         except (TypeError, ValueError):
             pass
-        return (0.0 if override else FACT_W_FORM4), None, None, override
+        return ((0.0 if override else FACT_W_FORM4 * f4)
+                + FACT_W_EXECONLY * eo), None, None, override
     div = 1.0 if facts.get("dividend_up") else 0.0
     bb = 1.0 if facts.get("buyback") else 0.0
     acq = 1.0 if facts.get("big_acquisition") else 0.0
@@ -1613,7 +1646,7 @@ def _fact_components(facts, dep_used, f4_buy=None):
             override = (div or bb or f4)
     except (TypeError, ValueError):
         pass
-    tilt = pos + FACT_W_ACQUISITION * acq
+    tilt = pos + FACT_W_ACQUISITION * acq + FACT_W_EXECONLY * eo
     score = (RESEARCH_SCORE_W["dividend_up"] * div
              + RESEARCH_SCORE_W["buyback"] * bb
              + RESEARCH_SCORE_W["beat_streak"] * beat
@@ -1657,6 +1690,44 @@ def _stamp_form4_facts(recs):
             else:
                 seen[ticker] = (None, "")
         r["f4_buy"], r["f4_evidence"] = seen[ticker]
+    return recs
+
+
+def _stamp_exec_facts(recs):
+    """Stamp the mechanical buyback-execution marker onto stock rows.
+
+    Twin of _stamp_form4_facts: a recorded filing input stamped onto
+    the frame in the shared enrichment path, carrying a (negative) EV
+    term.  One feed call per distinct stock ticker; ETFs are never
+    queried.  Any feed failure leaves exec_only=None, which the EV
+    treats exactly like an unavailable fact (no term).
+    """
+    try:
+        from exec_feed import exec_only_fact as _exec_feed_fact
+    except Exception:
+        _exec_feed_fact = None
+    seen = {}
+    for r in recs:
+        if str(r.get("kind") or "").lower() != "stock":
+            r["exec_only"] = None
+            r["exec_evidence"] = ""
+            continue
+        ticker = str(r.get("ticker") or "")
+        if ticker not in seen:
+            result = None
+            if _exec_feed_fact is not None:
+                try:
+                    result = _exec_feed_fact(ticker)
+                except Exception:
+                    result = None
+            if isinstance(result, dict) and result.get("exec_only") in (0, 1):
+                evidence = result.get("evidence") or []
+                seen[ticker] = (
+                    int(result["exec_only"]),
+                    "; ".join(str(x) for x in evidence))
+            else:
+                seen[ticker] = (None, "")
+        r["exec_only"], r["exec_evidence"] = seen[ticker]
     return recs
 
 
@@ -4192,6 +4263,14 @@ def _frame_row(r, outcome, reason):
                    if str(r.get("kind", "")) == "stock" else None),
         "f4_evidence": (str(r.get("f4_evidence") or "")
                         if str(r.get("kind", "")) == "stock" else None),
+        # EXEC-ONLY RECORDING (2026-11-11): the mechanical filing
+        # marker and its compact evidence ride every stock frame row;
+        # None when the feed could not determine it, None for ETFs.
+        "exec_only": ((int(_safe(r.get("exec_only")))
+                       if _safe(r.get("exec_only")) in (0, 1) else None)
+                      if str(r.get("kind", "")) == "stock" else None),
+        "exec_evidence": (str(r.get("exec_evidence") or "")
+                          if str(r.get("kind", "")) == "stock" else None),
         "ev_mode": _EV_MODE,
         "facts": _facts_of(r),
         # THEME RECORDING (2026-11-10): this ETF row's category theme
@@ -4901,6 +4980,7 @@ def add_research_columns(df, llm_path=True):
         conf = pd.Series(0.5 if not llm_path else 0.7, index=sub.index)
     sub["llm_confidence"] = conf
     recs = _stamp_form4_facts(sub.to_dict("records"))
+    recs = _stamp_exec_facts(recs)
     # Fix B (2026-10-30): diversified-ETF dep ceiling — dep_used is the
     # dep EVERY downstream decision consumes (EV term, stability grade,
     # dep veto, risk-gate strike, watchlist rating). One shared helper,
@@ -4953,6 +5033,8 @@ def add_research_columns(df, llm_path=True):
     sub["dep_override"] = [p["dep_override"] for p in _parts]
     sub["f4_buy"] = [r.get("f4_buy") for r in recs]
     sub["f4_evidence"] = [str(r.get("f4_evidence") or "") for r in recs]
+    sub["exec_only"] = [r.get("exec_only") for r in recs]
+    sub["exec_evidence"] = [str(r.get("exec_evidence") or "") for r in recs]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
     sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
@@ -4997,6 +5079,7 @@ def add_research_columns(df, llm_path=True):
                    f"({p['base_rate']:.3f} base "
                    f"{p['fact_tilt']:+.4f} fact-tilt"
                    f"{' F4-BUY' if p.get('f4_buy') else ''}"
+                   f"{' EXEC-ONLY' if p.get('exec_only') else ''}"
                    f"{' DEP-OVERRIDE' if p.get('dep_override') else ''}; "
                    f"rs={p['research_score'] if p['research_score'] is not None else float('nan'):+.3f}"
                    f"{' NO-SIGNAL' if p.get('no_signal') else ''})")
@@ -6080,6 +6163,9 @@ def record_picks_ledger(final, ranked, args, cache=None):
         _f4v = _safe(r.get("f4_buy"))
         _pev["f4_buy"] = (int(_f4v) if _f4v in (0, 1)
                           and str(r.get("kind", "")) == "stock" else None)
+        _eov = _safe(r.get("exec_only"))
+        _pev["exec_only"] = (int(_eov) if _eov in (0, 1)
+                             and str(r.get("kind", "")) == "stock" else None)
         # Auditability (2026-10-30): the pick's two-strike risk-gate
         # inputs, from the same columns pick_final's gate consumed.
         _strikes = r.get("risk_strikes")
