@@ -1174,6 +1174,19 @@ def est_parts(row, dep, cont, conf=1.0):
         conf_adj = 0.5 + 0.5 * conf
         est_v2 = conf_adj * (1 + 0.25 * char) * (
             base_rate + cont_tilt + fact_tilt)
+    else:
+        # ETF FLAT EV (2026-11-10, Dan approved; etf_redesign_2026-11-10):
+        # the production form anti-sorted blowups (its top quartile blew
+        # up MORE than its bottom quartile in both panel halves) because
+        # the dep charge and the continuation tilt concentrate the
+        # ranking on riskier funds. The flat stock-form (compressed conf,
+        # base only, no tilt, no dep charge for ANY fund) flips blowup
+        # discrimination positive (+0.150) and halves the level error.
+        # est_v2 for ETFs = the flat form; effective in live mode via
+        # the same switch as stocks. dep keeps its gate, tier, veto and
+        # ratings jobs untouched.
+        conf_adj = 0.5 + 0.5 * conf
+        est_v2 = conf_adj * (1 + 0.25 * char) * base_rate
     est_legacy = est
     if _EV_MODE == "live" and est_v2 is not None:
         est = est_v2
@@ -2151,15 +2164,22 @@ def add_ratings(df):
             except Exception:
                 etf_barred = False
         _score, _nosig = None, None
+        _is_etf = str(r.get("kind")) == "etf"
+        _inf = None
         if str(r.get("kind")) == "stock":
             _fc = _fact_components(_facts_of(r), _dep_used_of(r))
             _score, _nosig = _fc[1], _fc[2]
+        elif _is_etf:
+            _ef = _facts_of(r)
+            if _ef is not None:
+                _inf = bool(_ef.get("big_inflows"))
         _rats.append(compute_rating(
             _dep_used_of(r), r.get("llm_continuation"),
             r.get("llm_confidence"), r.get("stability"),
             r.get("risk_strike_count"), etf_barred,
             latest_check.get(str(r.get("ticker"))),
-            research_score=_score, no_signal=_nosig))
+            research_score=_score, no_signal=_nosig,
+            is_etf=_is_etf, big_inflows=_inf))
     sub["rating"] = [x[0] for x in _rats]
     sub["rating_reason"] = [x[1] for x in _rats]
     for _, r in sub.iterrows():
@@ -2169,7 +2189,8 @@ def add_ratings(df):
 
 def compute_rating(dep, cont, conf, stability, strike_count,
                    etf_barred=False, check_status=None,
-                   research_score=None, no_signal=None):
+                   research_score=None, no_signal=None,
+                   is_etf=False, big_inflows=None):
     """Literal Buy/Hold/Sell — 'what Mint would do' (Dan's design,
     shipped 2026-11-06; replaces the EV-threshold design).
 
@@ -2204,8 +2225,20 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     rate from 62.5% to 55.9%) caps the rating at HOLD, and a coded
     checklist that fired nothing (no_signal — silent names blew up
     more often than signaled ones) also caps at HOLD. Both legs are
-    inert when facts were never coded (score None). ETFs have no
-    fact layer, so their legs stay dep/conf/stability/tier only.
+    inert when facts were never coded (score None).
+
+    ETF PACKAGE (2026-11-10, Dan approved; evidence in
+    etf_redesign_2026-11-10/results.md): two ETF-only legs change.
+    (1) The confidence >= 0.60 BUY bar is DROPPED for ETFs — in the
+    fund panel, high-confidence funds blew up MORE often than the rest
+    (57.1% vs 43.5%); the bar survives for stocks, where it is a
+    research-quality guard, a different claim. (2) A fund whose coded
+    flow facts carry big_inflows is capped at HOLD: inside the
+    BUY-eligible core its carriers blew up 61.5% vs 45.0% for
+    non-carriers. That finding is the program's most fragile
+    (permutation p=0.055 on the parent study), so it is sized as a
+    cap, never a price term or a SELL leg, and the Nov 30 audit
+    judges it on the live record. Inert when flows were never coded.
 
     Returns (rating, reason), the reason in plain words naming the
     deciding factor.
@@ -2239,15 +2272,18 @@ def compute_rating(dep, cont, conf, stability, strike_count,
         return ("SELL", "fragile, it has shown it can fall hard and fast")
 
     # BUY — the full pick test (v2: no continuation bar; the stock
-    # fact legs stand in for it when facts are coded).
+    # fact legs stand in for it when facts are coded). The conf bar
+    # applies to stocks only (ETF package, 2026-11-10).
+    conf_ok = True if is_etf else (conf is not None and conf >= 0.60)
     if (dep < 0.50
-            and conf is not None and conf >= 0.60
+            and conf_ok
             and stab in ("A", "B", None)
             and strikes <= 1
             and not etf_barred
             and check_status != "watch"
             and not (research_score is not None and research_score < 0)
-            and not no_signal):
+            and not no_signal
+            and not (is_etf and big_inflows)):
         return ("BUY", "passes the pick test: durable thesis, trusted "
                 "read, clean risk profile")
 
@@ -2272,6 +2308,9 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if no_signal:
         return ("HOLD", "story intact, but the research checklist "
                 "turned up no supporting facts")
+    if is_etf and big_inflows:
+        return ("HOLD", "story intact, but money has been pouring in, "
+                "and heavily bought funds have tended to stumble")
     if cont is not None and cont < 0.60:
         return ("HOLD", "story intact, but the outlook is only middling")
     if conf is not None and conf < 0.60:

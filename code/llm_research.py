@@ -304,7 +304,16 @@ confidence = how confident you are in THIS assessment (0..1): high when
   contradictory, or polluted with unrelated news.
 ETFs are diversified: judge the THEME's durability and the fund's structure
 (high fees, tiny AUM/closure risk, concentration). Penalize continuation when
-the theme is a vertical spike on an unwindable event."""
+the theme is a vertical spike on an unwindable event.
+
+FLOW FACTS: also return "facts": {{"big_inflows": 0, "big_outflows": 0}} and
+"facts_evidence": {{"<fact>": ["headline text + date"]}}. Code ONLY these two,
+from flow coverage in the trailing 6 months: big_inflows = 1 when coverage
+reports large or record net inflows into THIS fund, or into its category with
+this fund named among the recipients; big_outflows = 1 when coverage reports
+large net outflows or redemptions from this fund on the same basis. A flow
+fact is 1 ONLY with a named supporting headline in facts_evidence; no
+evidence, no fact."""
 
 
 def stock_research(ticker, name, sector, stats, headlines, world, log=None):
@@ -472,6 +481,12 @@ FACT_KEYS = ("guidance_raised", "guidance_cut", "beat_streak", "miss_recent",
              "regulatory_overhang", "management_upheaval", "debt_stress",
              "dividend_up", "sector_tailwind", "big_acquisition")
 
+# ETF flow facts (2026-11-10, ETF PACKAGE): the only fund facts coded in
+# production. The other ten fund facts from etf_research_2026-11-10 were
+# too rare to record (0-4 carriers per 240); the flow pair feeds the
+# watchlist ratings cap (big_inflows caps a fund at HOLD).
+ETF_FACT_KEYS = ("big_inflows", "big_outflows")
+
 
 def normalize_facts(raw):
     """Coerce a researcher's facts object into the canonical 14-key shape.
@@ -492,6 +507,13 @@ def normalize_facts(raw):
         if k == "sector_tailwind":
             out[k] = int(max(-1.0, min(1.0, v)))
         else:
+            out[k] = 1 if v else 0
+    for k in ETF_FACT_KEYS:
+        if k in raw:
+            try:
+                v = float(raw.get(k, 0))
+            except (TypeError, ValueError):
+                v = 0.0
             out[k] = 1 if v else 0
     return out
 
