@@ -2150,11 +2150,16 @@ def add_ratings(df):
                 etf_barred = _etf_tier_of(r)[0] is None
             except Exception:
                 etf_barred = False
+        _score, _nosig = None, None
+        if str(r.get("kind")) == "stock":
+            _fc = _fact_components(_facts_of(r), _dep_used_of(r))
+            _score, _nosig = _fc[1], _fc[2]
         _rats.append(compute_rating(
             _dep_used_of(r), r.get("llm_continuation"),
             r.get("llm_confidence"), r.get("stability"),
             r.get("risk_strike_count"), etf_barred,
-            latest_check.get(str(r.get("ticker")))))
+            latest_check.get(str(r.get("ticker"))),
+            research_score=_score, no_signal=_nosig))
     sub["rating"] = [x[0] for x in _rats]
     sub["rating_reason"] = [x[1] for x in _rats]
     for _, r in sub.iterrows():
@@ -2163,7 +2168,8 @@ def add_ratings(df):
 
 
 def compute_rating(dep, cont, conf, stability, strike_count,
-                   etf_barred=False, check_status=None):
+                   etf_barred=False, check_status=None,
+                   research_score=None, no_signal=None):
     """Literal Buy/Hold/Sell — 'what Mint would do' (Dan's design,
     shipped 2026-11-06; replaces the EV-threshold design).
 
@@ -2178,13 +2184,28 @@ def compute_rating(dep, cont, conf, stability, strike_count,
       the standing veto line), the researcher thinks the run is over
       (continuation < 0.40), or the name is a proven crumbler
       (stability grade D).
-    - BUY: passes the pick test — dep < 0.50, continuation >= 0.60,
-      confidence >= 0.60, stability A/B, at most one risk strike, ETFs
-      gate-eligible, and no open watch/broken thesis flag. A Mint pick
-      therefore always rates BUY here — the two pages cannot disagree.
+    - BUY: passes the pick test — dep < 0.50, confidence >= 0.60,
+      stability A/B, at most one risk strike, ETFs gate-eligible, and
+      no open watch/broken thesis flag — plus, for stocks whose facts
+      have been coded, the fact screen below.
     - HOLD: everything between — story intact, but something (a watch
       flag, stacked strikes, a C grade, an event lean, a middling
       outlook) says don't add, and nothing says get out.
+
+    RATINGS V2 (2026-11-10, Dan approved; evidence in
+    research_redesign_2026-11-10/tests/chosen_configuration.md):
+    continuation >= 0.60 is NO LONGER a BUY bar — it never validated
+    (1y correlation +0.03 stocks / -0.15 funds; a facts-only design
+    beat every judgment design in the ultimate study); it remains a
+    SELL fail below 0.40 and a HOLD reason below 0.60. In its place,
+    stocks carry two fact legs driven by the recorded research score:
+    a negative score (a big acquisition not offset by a dividend
+    raise — the battery's score block cut the BUY cohort's blowup
+    rate from 62.5% to 55.9%) caps the rating at HOLD, and a coded
+    checklist that fired nothing (no_signal — silent names blew up
+    more often than signaled ones) also caps at HOLD. Both legs are
+    inert when facts were never coded (score None). ETFs have no
+    fact layer, so their legs stay dep/conf/stability/tier only.
 
     Returns (rating, reason), the reason in plain words naming the
     deciding factor.
@@ -2217,14 +2238,16 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if stab == "D":
         return ("SELL", "fragile, it has shown it can fall hard and fast")
 
-    # BUY — the full pick test.
+    # BUY — the full pick test (v2: no continuation bar; the stock
+    # fact legs stand in for it when facts are coded).
     if (dep < 0.50
-            and cont is not None and cont >= 0.60
             and conf is not None and conf >= 0.60
             and stab in ("A", "B", None)
             and strikes <= 1
             and not etf_barred
-            and check_status != "watch"):
+            and check_status != "watch"
+            and not (research_score is not None and research_score < 0)
+            and not no_signal):
         return ("BUY", "passes the pick test: durable thesis, trusted "
                 "read, clean risk profile")
 
@@ -2243,6 +2266,12 @@ def compute_rating(dep, cont, conf, stability, strike_count,
                 "hold, don't add")
     if dep >= 0.50:
         return ("HOLD", "story intact, but it leans on outside events")
+    if research_score is not None and research_score < 0:
+        return ("HOLD", "story intact, but a big acquisition outweighs "
+                "the hard positives on its record")
+    if no_signal:
+        return ("HOLD", "story intact, but the research checklist "
+                "turned up no supporting facts")
     if cont is not None and cont < 0.60:
         return ("HOLD", "story intact, but the outlook is only middling")
     if conf is not None and conf < 0.60:
