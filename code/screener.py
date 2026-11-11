@@ -2718,8 +2718,11 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # strongest expected values run only a few percent, so a fixed
     # +20% scale left every EV bar a sliver, while a pure page-relative
     # scale crowns the top pick with a full bar even at +4.4%, which
-    # Dan rejected. The full-bar mark is therefore the page's
-    # strongest expected value stretched by EV_BAR_STRETCH (1.5x),
+    # Dan rejected. The full-bar mark is therefore the strongest
+    # value of the SAME KIND on the page (stocks size against stocks,
+    # ETFs against ETFs — per-kind scaling, Dan 2026-11-11, matching
+    # the per-kind labels "Expected return" / "ETF score") stretched
+    # by EV_BAR_STRETCH (1.5x),
     # generated from the day's own EVs rather than a hardcoded level:
     # the strongest bar fills two-thirds of its track, never all of
     # it, and the scale adapts across EV eras (if top EVs run at +14%
@@ -2728,36 +2731,43 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # replaced within the hour at Dan's direction. The printed
     # percentage beside each bar carries the absolute value. The
     # scale is two-sided where a page carries negative EVs (the
-    # watchlist), each side stretched from its own strongest value,
-    # so one outlier on one side cannot squash the other side's bars.
+    # watchlist), each side stretched from its own strongest value
+    # within its kind, so one outlier on one side cannot squash the
+    # other side's bars.
     REF_1Y = 1.50
     EV_BAR_STRETCH = 1.5
-    _ev_signed = []
-    for _df in (stocks_df, etfs_df):
+    _ev_by_kind = {"stock": [], "etf": []}
+    for _kind, _df in (("stock", stocks_df), ("etf", etfs_df)):
         if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
             for _v in _df["est_next_1y"]:
                 try:
-                    _ev_signed.append(float(_v))
+                    _ev_by_kind[_kind].append(float(_v))
                 except Exception:
                     pass
     if honorable:
         for _h in honorable:
+            _hk = str(_h.get("kind", "")).strip().lower()
+            if _hk not in ("stock", "etf"):
+                _hk = "stock"
             try:
-                _ev_signed.append(float(_h.get("est_next_1y")))
+                _ev_by_kind[_hk].append(float(_h.get("est_next_1y")))
             except Exception:
                 pass
-    _pos = [v for v in _ev_signed if v > 0]
-    _neg = [-v for v in _ev_signed if v < 0]
-    REF_EV_POS = EV_BAR_STRETCH * max(_pos) if _pos else 0.10
-    REF_EV_NEG = EV_BAR_STRETCH * max(_neg) if _neg else 0.10
+    REF_EV = {}
+    for _kind, _vals in _ev_by_kind.items():
+        _pos = [v for v in _vals if v > 0]
+        _neg = [-v for v in _vals if v < 0]
+        REF_EV[_kind] = (EV_BAR_STRETCH * max(_pos) if _pos else 0.10,
+                         EV_BAR_STRETCH * max(_neg) if _neg else 0.10)
 
-    def bar(val, gold=False):
+    def bar(val, gold=False, kind="stock"):
         try:
             v = float(val)
         except Exception:
             return ""
         if gold:
-            ref = REF_EV_NEG if v < 0 else REF_EV_POS
+            _pos_ref, _neg_ref = REF_EV.get(kind, REF_EV["stock"])
+            ref = _neg_ref if v < 0 else _pos_ref
         else:
             ref = REF_1Y
         w = max(2, min(100, abs(v) / ref * 100))
@@ -2799,21 +2809,23 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         for _t in market_chat["honorable"]:
             _bmap[str(_t.get("ticker", "")).upper()] = (
                 "hm", str(_t.get("what", "")), str(_t.get("why", "")))
-    header = """
+    def _header(ev_label):
+        return f"""
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
-  <div>1-year return</div><div>Expected value</div>
+  <div>1-year return</div><div>{ev_label}</div>
   <div>Confidence</div><div>Stability</div>
 </div>
 """
     rows_html = ""
     for si, (title, df) in enumerate(sections):
+        ev_label = "ETF score" if si == 1 else "Expected return"
         rows_html += f'<h2>{_html.escape(title)}</h2>\n'
         rows_html += (
             f'<div class="sortctl" data-pl="pl{si}"><span>Sort by:</span> '
             f'<button class="sbtn" data-k="r1y">1-year return</button>'
-            f'<button class="sbtn on" data-k="ev">Expected value</button></div>\n')
-        rows_html += header + f'<div class="picklist" id="pl{si}">\n'
+            f'<button class="sbtn on" data-k="ev">{ev_label}</button></div>\n')
+        rows_html += _header(ev_label) + f'<div class="picklist" id="pl{si}">\n'
         for i, (_, r) in enumerate(df.iterrows(), 1):
             est = r.get("est_next_1y")
             ctry = str(r.get("country") or "")
@@ -2830,6 +2842,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             _kk = str(r.get("kind", "")).strip().lower()
             if _kk not in ("stock", "etf"):
                 _kk = "stock" if si == 0 else "etf"
+            _cap = "ETF score" if _kk == "etf" else "Expected return"
             _b = _bmap.get(str(r["ticker"]).upper())
             _blurb_html, _chev, _hasb, _wchip = "", "", "", ""
             if _b:
@@ -2859,7 +2872,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
-  <div class="cell" data-cap="Expected value"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
+  <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True, kind=_kk)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
   {_blurb_html}
@@ -2996,8 +3009,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # page it is replaced by Fresh Off the Mint (sm_html), falling back to
     # this only if the researcher didn't write suggested_moves.
     _wl_para = ("<p>Watchlist mode: every ticker you supplied is researched "
-                "and scored, sorted by expected value &mdash; no benchmark, "
-                "no picking.</p>"
+                "and scored, sorted by expected return (ETF score for funds) "
+                "&mdash; no benchmark, no picking.</p>"
                 if meta.get("mode") == "watchlist" else "")
     if meta.get("mode") != "watchlist" or not sm_html:
         about_html = ("<div class=\"note\">\n"
@@ -3024,9 +3037,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 "it&apos;s out on the spot. For the rest: how likely is the strength to continue,\n"
 "and how much do we trust our own read?</p>\n"
 "<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those\n"
-"judgments become one number &mdash; expected value: the likely gains if it holds,\n"
-"minus the likely pain if it turns, adjusted for how much we trust our own\n"
-"read.</p>\n"
+"judgments become one number &mdash; expected return for a stock: the likely\n"
+"gains if it holds, minus the likely pain if it turns, adjusted for how much\n"
+"we trust our own read. A fund carries the same idea under its own label, the\n"
+"ETF score, and a fund&apos;s number is only ever sized against other funds.</p>\n"
 "<p>Mint is built around a simple idea: find strength, question the story, weigh\n"
 "the odds, and only make room for what earns it.</p>\n"
 "<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t predict\n"
@@ -3043,6 +3057,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             _hk = str(h.get("kind", "")).strip().lower()
             if _hk not in ("stock", "etf"):
                 _hk = "stock"
+            _hcap = "ETF score" if _hk == "etf" else "Expected return"
             try:
                 _hev = float(h.get("est_next_1y"))
             except Exception:
@@ -3069,7 +3084,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
   <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
-  <div class="cell" data-cap="Expected value"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
+  <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True, kind=_hk)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
 {_hblurb_html}</div>""")
@@ -3077,9 +3092,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
             '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
             '<button class="sbtn" data-k="r1y">1-year return</button>'
-            '<button class="sbtn on" data-k="ev">Expected value</button></div>\n'
+            '<button class="sbtn on" data-k="ev">Expected return / ETF score</button></div>\n'
             '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
-            '<div>1-year return</div><div>Expected value</div>'
+            '<div>1-year return</div><div>Expected return / ETF score</div>'
             '<div>Confidence</div><div>Why not picked</div></div>\n'
             '<div class="picklist" id="pl2">\n'
             + "\n".join(hm_rows) + "\n</div>\n"
@@ -5771,9 +5786,9 @@ def run_watchlist_apply(args):
     chart_path = f"watchlist_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     make_chart_html(sfinal, efinal, chart_path,
                     {"benchmark": "", "mode": "watchlist",
-                     "heading": "Watchlist: by est. next 1y",
+                     "heading": "Watchlist: by expected return / ETF score",
                      "asof": run_stamp()},
-                    titles=("Stocks: by est. next 1y", "ETFs: by est. next 1y"),
+                    titles=("Stocks: by expected return", "ETFs: by ETF score"),
                     watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
     checks = []
