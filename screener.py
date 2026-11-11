@@ -2703,6 +2703,34 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
             neg = False
         return f"lbl {base} neg" if neg else f"lbl {base}"
 
+    # --- Downside odds for funds (Dan, 2026-11-10): the blinded 240-fund
+    # panel measured how often funds in each dependence band had a bad year
+    # (finished down, or fell 15%+ at some point): dep <0.30: 35%,
+    # 0.30-0.50: 53%, 0.50-0.70: 62%, >=0.70: 80%. Expected value is a
+    # return fact; this is the matching risk fact, printed beside it.
+    def _odds_html_of(r):
+        try:
+            dep = r.get("dep")
+            if dep is None:
+                dep = r.get("dep_used")
+            dep = float(dep)
+            if dep != dep:
+                return ""
+        except Exception:
+            return ""
+        if dep < 0.30:
+            _o = 35
+        elif dep < 0.50:
+            _o = 53
+        elif dep < 0.70:
+            _o = 62
+        else:
+            _o = 80
+        return (f'<div class="blurb odds"><span class="mc-odds">Downside '
+                f'odds: in blind tests of 240 funds, funds in this '
+                f'dependence band had a bad year (finished down, or fell '
+                f'15% at some point) about {_o} times in 100.</span></div>')
+
     # --- Blurb maps: ticker -> story, rendered INSIDE the pick row and
     # revealed by clicking it (expand, not flip — a flip would hide the
     # stats the row exists to show). Main page: market_chat sector tickers
@@ -2782,6 +2810,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                         + (f'<br><span class="wl-rate-why">{_b[2].title()}: '
                            f'{_html.escape(_b[3])}</span>' if _b[3] else '')
                         + '</div>')
+            _odds_html = _odds_html_of(r) if _kk == "etf" else ""
+            if _odds_html and not _b:
+                _hasb = " has-blurb"
+                _chev = '<span class="chev" title="Tap to expand">▸</span>'
             rows_html += f"""
 <div class="row k-{_kk}{_hasb}" data-ev="{_evf}" data-r1y="{_r1yf}">
   <div class="id"><span class="rank">{i}</span>
@@ -2793,6 +2825,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
   {_blurb_html}
+  {_odds_html}
 </div>
 """
         rows_html += '</div>\n'  # close .picklist
@@ -2991,6 +3024,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                     f'<div class="blurb"><div class="mc-what">'
                     f'{_html.escape(_hb[1])}</div>'
                     f'<div class="mc-why">{_html.escape(_hb[2])}</div></div>')
+            _hodds_html = _odds_html_of(h) if _hk == "etf" else ""
+            if _hodds_html and not _hblurb_html:
+                _hhasb = " has-blurb"
+                _hchev = '<span class="chev" title="Tap to expand">▸</span>'
             hm_rows.append(f"""
 <div class="row hm k-{_hk}{_extra}{_hhasb}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
@@ -3002,7 +3039,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="cell" data-cap="Expected value"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
-{_hblurb_html}</div>""")
+{_hblurb_html}{_hodds_html}</div>""")
         hm_html = (
             '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
             '<div class="sortctl" data-pl="pl2"><span>Sort by:</span> '
@@ -3190,6 +3227,8 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   margin-top: 8px; padding: 8px 4px 6px 34px; }}
 .row.open .blurb {{ display: block; }}
 .row .blurb .mc-what {{ margin-bottom: 5px; }}
+.row .blurb.odds {{ border-top: none; margin-top: 0; padding-top: 0; }}
+.mc-odds {{ color: #9aa79a; font-size: 14px; }}
 .chev {{ display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
   border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
@@ -3957,6 +3996,7 @@ def honorable_mentions(ranked, final, args, top_k=30):
         out.append({"ticker": t, "kind": kind, "name": str(r.get("name", "")),
                     "sector": sec, "ret_1y": r.get("ret_1y"),
                     "est_next_1y": float(r["est_next_1y"]), "confidence": conf,
+                    "dep": r.get("dep"), "dep_used": r.get("dep_used"),
                     "reason": reason})
     if out:
         log(f"honorable mentions: {len(out)} near-misses "
