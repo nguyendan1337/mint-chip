@@ -1495,6 +1495,60 @@ def _theme_coded_date_of(r):
     return entry.get("coded_date") if entry is not None else None
 
 
+# ETF THEME CAP (2026-11-10, Dan's directive): the ETF pick cap binds
+# per economic THEME, not per exact Morningstar category string. The
+# Blend/Value/Growth splits inside one market-cap size are one theme:
+# their holdings overlap heavily and they draw down together, so
+# Large Blend + Large Value + Large Growth may hold at most
+# --max-per-etf-category picks COMBINED. Every other category is its
+# own theme. The raw category is still recorded on every row.
+_ETF_STYLEBOX_THEMES = {
+    "Large Blend": "Large-cap", "Large Value": "Large-cap",
+    "Large Growth": "Large-cap",
+    "Mid-Cap Blend": "Mid-cap", "Mid-Cap Value": "Mid-cap",
+    "Mid-Cap Growth": "Mid-cap",
+    "Small Blend": "Small-cap", "Small Value": "Small-cap",
+    "Small Growth": "Small-cap",
+}
+
+
+def _etf_theme_of(category):
+    """The economic theme a Morningstar category belongs to for the
+    ETF theme cap; falls back to the category itself."""
+    c = str(category or "")
+    return _ETF_STYLEBOX_THEMES.get(c, c or "Unknown")
+
+
+# Category data fixes (2026-11-10): the metadata feed leaves a few
+# well-known funds unclassified ('Unknown'), and a theme cap must not
+# treat a data gap as a theme of its own. Applied ONLY where the raw
+# category is missing/Unknown, and only for cap grouping and frame
+# theme recording - the raw category on the row is never rewritten,
+# so dependence classification and everything else sees the feed data.
+_ETF_CATEGORY_OVERRIDES = {"VO": "Mid-Cap Blend",
+                           "VTI": "Large Blend"}
+
+
+def _etf_category_of(r):
+    """The category used for theme grouping of an ETF row: the raw
+    category, repaired from the override map when the feed left it
+    Unknown."""
+    cat = str(r.get("sector") or "")
+    if cat in ("", "Unknown"):
+        return _ETF_CATEGORY_OVERRIDES.get(str(r.get("ticker") or ""),
+                                            cat)
+    return cat
+
+
+def _cap_key_of(r):
+    """The grouping key the pick caps enforce for a row: the theme for
+    ETF rows, the sector for stock rows."""
+    if str(r.get("kind", "")) == "etf":
+        return _etf_theme_of(_etf_category_of(r))
+    sec = r.get("sector")
+    return str(sec) if sec is not None else ""
+
+
 def _fact_components(facts, dep_used):
     """(fact_tilt, research_score, no_signal, dep_override) for a stock.
 
@@ -3595,7 +3649,9 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
         sel = sel[sel["ticker"] != loser].reset_index(drop=True)
         # refill the freed slot: same hard gates as selection, plus the
         # category cap against survivors and no overlap with survivors
-        counts = Counter(sel["sector"]) if len(sel) else Counter()
+        counts = (Counter(_etf_theme_of(_etf_category_of(r))
+                          for _, r in sel.iterrows())
+                  if len(sel) else Counter())
         cands = pool[~pool["ticker"].isin(set(sel["ticker"]) | evicted)].copy()
         cands = cands[cands["final_score"] >= min_score]
         if "llm_event_dependence" in cands.columns or "dep_used" in cands.columns:
@@ -3603,7 +3659,9 @@ def repair_etf_overlap(selected, pool, max_overlap=0.30, cap=2,
             # which pandas would read as a (zero-width) column selector
             cands = cands[cands.apply(
                 lambda r: _dep_ok(_dep_used_of(r)), axis=1).astype(bool)]
-        cands = cands[cands["sector"].map(lambda s: counts.get(s, 0) < cap).astype(bool)]
+        cands = cands[cands.apply(
+            lambda r: counts.get(_etf_theme_of(_etf_category_of(r)), 0) < cap,
+            axis=1).astype(bool)]
         surv_holds = {t: etf_top_holdings(t) for t in sel["ticker"]}
 
         def _clear(r):
@@ -3786,17 +3844,18 @@ def honorable_mentions(ranked, final, args, top_k=30):
         except Exception:
             pass
         contenders.append(r)
-    caps = {"stock": getattr(args, "max_per_sector", 3),
+    caps = {"stock": getattr(args, "max_per_sector", 2),
             "etf": getattr(args, "max_per_etf_category", 2)}
     sec_counts = {}
     for _, r in final.iterrows():
-        k = (str(r.get("kind", "")), str(r.get("sector", "")))
+        k = (str(r.get("kind", "")), _cap_key_of(r))
         sec_counts[k] = sec_counts.get(k, 0) + 1
     out = []
     for r in sorted(contenders, key=lambda r: float(r["est_next_1y"]),
                     reverse=True)[:top_k]:
         t = str(r["ticker"])
         kind, sec = str(r.get("kind", "stock")), str(r.get("sector", ""))
+        ckey = _cap_key_of(r)
         if t in _RISK_GATED:
             _rg = _RISK_GATED[t]
             reason = (f"risk-flag gate ({_rg['count']} strikes: "
@@ -3815,8 +3874,8 @@ def honorable_mentions(ranked, final, args, top_k=30):
         elif t in _LAST_OVERLAP_DROPS:
             w, ov = _LAST_OVERLAP_DROPS[t]
             reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
-        elif sec_counts.get((kind, sec), 0) >= caps.get(kind, 2):
-            reason = f"{sec} cap full"
+        elif sec_counts.get((kind, ckey), 0) >= caps.get(kind, 2):
+            reason = f"{ckey} cap full"
         elif t in _OFFENSE_RANKED:
             _rk, _n = _OFFENSE_RANKED[t]
             reason = (f"offense rank {_rk} of {_n} eligible — below the "
@@ -3837,10 +3896,13 @@ def honorable_mentions(ranked, final, args, top_k=30):
     return out
 
 
-def pick_top_with_sector_cap(df, n=10, max_per_sector=3, min_score=0.0,
+def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
                              veto_dep=None, initial_counts=None):
     """Pick top n with sector cap. Never fills slots with sub-floor or
     vetoed stocks: fewer strong picks beats 10 diluted ones.
+    Grouping is by _cap_key_of: sector for stocks, economic theme for
+    ETFs (the 2026-11-10 theme cap), so the cap binds the same way in
+    every pass that calls this.
     EV tiebreak: when the cap forces a choice inside a sector, the
     highest-expected-value names survive — a hard cap should cut the
     lowest-EV name, not whichever final_score happened to order last.
@@ -3864,7 +3926,7 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=3, min_score=0.0,
                     continue
             except Exception:
                 pass
-        sec = r["sector"]
+        sec = _cap_key_of(r)
         if sector_counts[sec] >= max_per_sector:
             cur_ev = _ev_of(r)
             incumbents = picked_by_sector.get(sec, [])
@@ -3951,6 +4013,10 @@ def _frame_row(r, outcome, reason):
         "kind": (str(r.get("kind")) if r.get("kind") is not None else None),
         "category": (str(r.get("sector"))
                      if r.get("sector") is not None else None),
+        # ETF THEME CAP (2026-11-10): the theme the pick cap grouped
+        # this fund under (style-box families merged); None for stocks.
+        "etf_theme": (_etf_theme_of(_etf_category_of(r))
+                      if str(r.get("kind", "")) == "etf" else None),
         "base_score": _safe(r.get("base_score")),
         "final_score": _safe(r.get("final_score")),
         "est_next_1y": _safe(r.get("est_next_1y")),
@@ -4174,7 +4240,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         for _, r in final.iterrows():
             k = (str(r.get("kind", "")), str(r.get("sector", "")))
             sec_counts[k] = sec_counts.get(k, 0) + 1
-    caps = {"stock": getattr(args, "max_per_sector", 3),
+    caps = {"stock": getattr(args, "max_per_sector", 2),
             "etf": getattr(args, "max_per_etf_category", 2)}
     rows = []
     for _, r0 in pre_gate.iterrows():
@@ -4334,8 +4400,15 @@ def run_self_check(final, args, out_csv):
                               ("etf", args.max_per_etf_category)):
                 sub = final[final["kind"] == kind]
                 if len(sub):
-                    # the category cap is hard across both pick passes
-                    sc = sub["sector"].value_counts()
+                    # the cap is hard across both pick passes; for ETFs
+                    # it binds per theme (2026-11-10), not per raw
+                    # category, so the check counts themes there
+                    if kind == "etf":
+                        sc = sub.apply(
+                            lambda r: _etf_theme_of(_etf_category_of(r)),
+                            axis=1).value_counts()
+                    else:
+                        sc = sub["sector"].value_counts()
                     check(f"sector_cap_{kind}",
                           bool((sc <= cap).all()), f"max/{kind}={sc.max()}")
         else:
@@ -5081,17 +5154,20 @@ def pick_final(adj, args, llm_path):
         # (Hard floors — score, est, veto, gates — never bend.)
         if len(first) < n:
             taken = set(first["ticker"]) if len(first) else set()
-            taken_counts = Counter(first["sector"]) if len(first) else Counter()
+            taken_counts = (Counter(_cap_key_of(r)
+                                    for _, r in first.iterrows())
+                            if len(first) else Counter())
             rest = est_ok[~est_ok["ticker"].isin(taken)].copy()
-            rest = rest[rest["sector"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
+            rest["_capkey"] = rest.apply(_cap_key_of, axis=1)
+            rest = rest[rest["_capkey"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
             if not rest.empty:
-                rest["_newcat"] = (~rest["sector"].isin(set(taken_counts))).astype(int)
+                rest["_newcat"] = (~rest["_capkey"].isin(set(taken_counts))).astype(int)
                 _fillkey = ("offense_score" if label == "stocks"
                             else "est_next_1y")
                 rest = rest.sort_values(["_newcat", _fillkey],
                                         ascending=[False, False],
                                         na_position="last")
-                rest = rest.drop(columns=["_newcat"])
+                rest = rest.drop(columns=["_newcat", "_capkey"])
             fill = pick_top_with_sector_cap(rest, n=n - len(first),
                                             max_per_sector=cap,
                                             min_score=args.min_score,
@@ -6153,7 +6229,7 @@ def main():
     ap.add_argument("--max-outperformers", type=int, default=800,
                     help="safety cap on outperformers to score (default 800)")
     ap.add_argument("--top-n", type=int, default=10)
-    ap.add_argument("--max-per-sector", type=int, default=3)
+    ap.add_argument("--max-per-sector", type=int, default=2)
     ap.add_argument("--with-llm", action="store_true",
                     help="use the 3-layer LLM research stack instead of the rules news layer")
     ap.add_argument("--llm-backend", default="agent", choices=["agent", "auto"],
@@ -6837,7 +6913,7 @@ def main():
           f"(floor {args.min_score:+.1f})")
     print("=" * 70)
     final_lines = _print_group(f"STOCKS (max {args.max_per_sector} per sector)", final_stocks)
-    final_lines += _print_group(f"ETFs (max {args.max_per_etf_category} per category)", final_etfs)
+    final_lines += _print_group(f"ETFs (max {args.max_per_etf_category} per theme)", final_etfs)
     log("FINAL PICKS:\n" + "\n".join(final_lines))
     if len(final_stocks) < args.n_stocks or len(final_etfs) < args.n_etfs:
         log("NOTE: some slots intentionally left empty (floor/veto)")
