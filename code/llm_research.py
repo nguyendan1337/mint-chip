@@ -313,7 +313,25 @@ reports large or record net inflows into THIS fund, or into its category with
 this fund named among the recipients; big_outflows = 1 when coverage reports
 large net outflows or redemptions from this fund on the same basis. A flow
 fact is 1 ONLY with a named supporting headline in facts_evidence; no
-evidence, no fact."""
+evidence, no fact.
+
+EVENT FACTS (RECORDING ONLY — these carry NO weight in expected value,
+gates, or ratings; they are recorded so the live record can judge them):
+in the same "facts" object also code these seven, each 1 ONLY with a named
+supporting headline or filing in facts_evidence (no evidence, no fact):
+fee_cut = the fund's expense ratio was reduced at any point in the trailing
+12 months (fund announcement, updated prospectus, or fee reporting);
+fee_hike = the expense ratio was raised in the trailing 12 months;
+manager_change = a named portfolio manager left or was replaced in the
+trailing 12 months; index_change = the tracked index, benchmark, or stated
+objective/methodology changed in the trailing 12 months; closure_notice =
+a liquidation, merger into another fund, or closure to new investors was
+announced in the trailing 12 months; sponsor_trouble = the fund's sponsor
+or fund family was under material distress in the trailing 12 months
+(forced merger, regulatory action, major scandal at the asset manager);
+holdings_shock = a top-5 holding collapsed (>30%) or was hit by a major
+scandal in the trailing 6 months with plausibly material exposure for
+this fund."""
 
 
 def stock_research(ticker, name, sector, stats, headlines, world, log=None):
@@ -485,7 +503,12 @@ FACT_KEYS = ("guidance_raised", "guidance_cut", "beat_streak", "miss_recent",
 # production. The other ten fund facts from etf_research_2026-11-10 were
 # too rare to record (0-4 carriers per 240); the flow pair feeds the
 # watchlist ratings cap (big_inflows caps a fund at HOLD).
-ETF_FACT_KEYS = ("big_inflows", "big_outflows")
+ETF_FACT_KEYS = ("big_inflows", "big_outflows",
+                 # Event facts (2026-11-11, Dan approved): RECORDING ONLY —
+                 # no EV, gate, or rating weight anywhere. Coded daily so
+                 # the live record can judge them (Feb 2027 audit, R-I).
+                 "fee_cut", "fee_hike", "manager_change", "index_change",
+                 "closure_notice", "sponsor_trouble", "holdings_shock")
 
 
 def normalize_facts(raw):
