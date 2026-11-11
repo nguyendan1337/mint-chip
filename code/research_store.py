@@ -50,11 +50,13 @@ BY_WATCHLIST = "mint-chip-watchlist-daily"
 _ASSESSMENT_FIELDS = ("event_dependence", "continuation", "confidence",
                       "risks", "rationale", "assessed_date",
                       "news_checked_through", "earnings_note",
-                      "exclude", "exclude_reason")
+                      "exclude", "exclude_reason",
+                      "facts", "facts_evidence")
 _COMPARE_FIELDS = ("event_dependence", "continuation", "confidence",
                    "risks", "rationale", "assessed_date",
                    "news_checked_through", "earnings_note",
-                   "exclude", "exclude_reason")
+                   "exclude", "exclude_reason",
+                   "facts", "facts_evidence")
 
 
 def _today_str():

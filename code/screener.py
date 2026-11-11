@@ -1162,6 +1162,21 @@ def est_parts(row, dep, cont, conf=1.0):
     gamma = EV_GAMMA_ETF if is_etf else EV_GAMMA_STOCK
     cont_tilt = gamma * (cont - 0.50)
     est = conf * (1 + 0.25 * char) * (base_rate + cont_tilt - dep_ev * 0.20)
+    # RESEARCH REDESIGN v2 EV (stocks only; see the FACT_W_* block):
+    # recorded in every mode; effective only when _EV_MODE == "live".
+    est_v2 = None
+    fact_tilt, research_score, no_signal, dep_override = 0.0, None, None, False
+    conf_adj = conf
+    if not is_etf:
+        _facts = _facts_of(row)
+        fact_tilt, research_score, no_signal, dep_override = \
+            _fact_components(_facts, dep_ev)
+        conf_adj = 0.5 + 0.5 * conf
+        est_v2 = conf_adj * (1 + 0.25 * char) * (
+            base_rate + cont_tilt + fact_tilt)
+    est_legacy = est
+    if _EV_MODE == "live" and est_v2 is not None:
+        est = est_v2
     return {"r6": r6, "upside": upside, "upside_momentum": upside_momentum,
             "etf_ev": is_etf, "dd": dd, "dd_freq": ddf,
             "downside": downside, "downside_base": downside_base,
@@ -1172,7 +1187,10 @@ def est_parts(row, dep, cont, conf=1.0):
             "character": char, "base_rate": base_rate,
             "cont_tilt": cont_tilt,
             "dep": dep, "dep_ev": dep_ev, "cont": cont, "conf": conf,
-            "est": est}
+            "est": est, "est_legacy": est_legacy, "est_v2": est_v2,
+            "fact_tilt": fact_tilt, "research_score": research_score,
+            "no_signal": no_signal, "dep_override": dep_override,
+            "conf_adj": conf_adj, "ev_mode": _EV_MODE}
 
 
 def estimate_next_year(row, dep, cont, conf=1.0):
@@ -1376,6 +1394,104 @@ EV_BASE_ETF = 0.0620
 #    pre-registered adoption rule (this shipped state is what runs).
 EV_GAMMA_STOCK = 0.0
 EV_GAMMA_ETF = 0.0177
+# 8) RESEARCH REDESIGN — FACT-BASED EV, STOCKS ONLY (approved by Dan
+#    2026-11-10 after the research_backtest + research_redesign +
+#    research_ultimate studies of 2026-11-10 and the verification
+#    battery in research_redesign_2026-11-10/tests/). For stocks, the
+#    v2 EV replaces the dep charge and the raw-conf multiplier with:
+#      EV_v2 = (0.5 + 0.5 x conf) x (1 + 0.25 x character)
+#              x (BASE_STOCK + fact_tilt)
+#      fact_tilt = 0.044 x dividend_up + 0.046 x buyback
+#                  - 0.071 x big_acquisition
+#    Terms are 50% x the POOLED forward-1y return gaps from the
+#    completed 240-name blinded reconstruction (design validated
+#    out-of-sample on the 2024-2025 as-of half; final weights fitted
+#    on all history once the design was chosen). DEPENDENCE OVERRIDE:
+#    the positive terms (dividend/buyback) are zeroed when
+#    dep_used >= 0.50 — inside high-dependence names the dividend gap
+#    flips sign (windfall/event-linked payers; the tanker case) and
+#    buyback turns into a risk marker, while the acquisition penalty
+#    deepens (interaction test, tests/chosen_configuration.md). The
+#    acquisition charge applies at every dependence level. dep itself
+#    is unchanged everywhere else: the 0.30 eligibility gate, the
+#    two-strike dep strike, the 0.70 veto, watchlist ratings.
+#    A recorded research score (no EV weight) rides along:
+#      0.499 x dividend_up + 0.172 x buyback + 0.081 x beat_streak
+#        - 0.253 x big_acquisition   (beat_streak is a downside-only
+#      graduate; it is deliberately NOT an EV return term).
+#    Names whose facts were coded with every fact 0 get no_signal=True
+#    (the research stage found nothing either way — never filled with
+#    a judgment estimate). ETFs are untouched by this block.
+#    MODES (--ev-mode): "legacy" = v2 computed and recorded only if
+#    mode is shadow; "shadow" = v2 computed and recorded alongside the
+#    production EV, production still decides (Nov 11-13 runs);
+#    "live" = v2 IS the stock EV (from Mon 2026-11-16). In every mode
+#    the non-effective variant is recorded in frames for the audit.
+FACT_W_DIVIDEND = 0.044
+FACT_W_BUYBACK = 0.046
+FACT_W_ACQUISITION = -0.071
+FACT_DEP_OVERRIDE = 0.50
+RESEARCH_SCORE_W = {"dividend_up": 0.499, "buyback": 0.172,
+                    "beat_streak": 0.081, "big_acquisition": -0.253}
+_EV_MODE = "legacy"
+
+
+def _facts_of(row):
+    """Normalized 14-fact dict for a row, or None when facts were not
+    coded for it. Reads the llm_facts column (JSON string set by
+    llm_research.apply_llm_outputs) or a dict on the row."""
+    raw = None
+    try:
+        raw = row.get("llm_facts")
+    except Exception:
+        raw = None
+    if raw is None or (isinstance(raw, float) and raw != raw):
+        return None
+    if isinstance(raw, dict):
+        nf = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            import json as _json
+            nf = _json.loads(raw)
+        except Exception:
+            return None
+    else:
+        return None
+    try:
+        from llm_research import normalize_facts
+        return normalize_facts(nf)
+    except Exception:
+        return nf if isinstance(nf, dict) else None
+
+
+def _fact_components(facts, dep_used):
+    """(fact_tilt, research_score, no_signal, dep_override) for a stock.
+
+    facts=None (not coded) -> tilt 0.0, score None, no_signal None.
+    """
+    if not isinstance(facts, dict):
+        return 0.0, None, None, False
+    div = 1.0 if facts.get("dividend_up") else 0.0
+    bb = 1.0 if facts.get("buyback") else 0.0
+    acq = 1.0 if facts.get("big_acquisition") else 0.0
+    beat = 1.0 if facts.get("beat_streak") else 0.0
+    override = False
+    pos = FACT_W_DIVIDEND * div + FACT_W_BUYBACK * bb
+    try:
+        if dep_used is not None and float(dep_used) >= FACT_DEP_OVERRIDE:
+            pos = 0.0
+            override = (div or bb)
+    except (TypeError, ValueError):
+        pass
+    tilt = pos + FACT_W_ACQUISITION * acq
+    score = (RESEARCH_SCORE_W["dividend_up"] * div
+             + RESEARCH_SCORE_W["buyback"] * bb
+             + RESEARCH_SCORE_W["beat_streak"] * beat
+             + RESEARCH_SCORE_W["big_acquisition"] * acq)
+    no_signal = not any(facts.get(k) for k in facts)
+    return tilt, score, bool(no_signal), bool(override)
+
+
 DOWNSIDE_FLOOR = 0.15       # stocks (raised from 0.10, see est_parts)
 ETF_DOWNSIDE_FLOOR = 0.10   # ETFs: 10% already calibrated historically
 _ETF_SECTOR_KEYWORDS = (
@@ -3809,6 +3925,18 @@ def _frame_row(r, outcome, reason):
         "est_next_1y": _safe(r.get("est_next_1y")),
         "base_rate": _safe(r.get("base_rate")),
         "cont_tilt": _safe(r.get("cont_tilt")),
+        # RESEARCH REDESIGN recording (2026-11-10): the shadow/live v2
+        # EV, its fact components, and the coded facts themselves, so
+        # the Nov 30 audit can score the redesign from frames alone.
+        "est_legacy": _safe(r.get("est_legacy")),
+        "est_v2": _safe(r.get("est_v2")),
+        "fact_tilt": _safe(r.get("fact_tilt")),
+        "research_score": _safe(r.get("research_score")),
+        "no_signal": (bool(r.get("no_signal"))
+                      if r.get("no_signal") is not None else None),
+        "dep_override": bool(r.get("dep_override") or False),
+        "ev_mode": _EV_MODE,
+        "facts": _facts_of(r),
         "offense_score": (_offense_score_of(r)
                           if str(r.get("kind", "")) == "stock" else None),
         "dep": dep_raw,
@@ -4540,8 +4668,18 @@ def add_research_columns(df, llm_path=True):
         if cap:
             log(f"dep ceiling (diversified fund): {r.get('ticker')} "
                 f"dep {float(d):.2f} -> {float(u):.2f}")
-    sub["est_next_1y"] = [estimate_next_year(r, d, c, f)
-                          for r, d, c, f in zip(recs, dep_used, cont, conf)]
+    _parts = [est_parts(r, d, c, f)
+              for r, d, c, f in zip(recs, dep_used, cont, conf)]
+    sub["est_next_1y"] = [p["est"] for p in _parts]
+    # RESEARCH REDESIGN recording (2026-11-10): both EV variants and the
+    # fact layer ride the frame in every mode; "est" above is whichever
+    # variant _EV_MODE makes effective (legacy unless live).
+    sub["est_legacy"] = [p["est_legacy"] for p in _parts]
+    sub["est_v2"] = [p["est_v2"] for p in _parts]
+    sub["fact_tilt"] = [p["fact_tilt"] for p in _parts]
+    sub["research_score"] = [p["research_score"] for p in _parts]
+    sub["no_signal"] = [p["no_signal"] for p in _parts]
+    sub["dep_override"] = [p["dep_override"] for p in _parts]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
     sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
@@ -4578,6 +4716,16 @@ def add_research_columns(df, llm_path=True):
                     f"earnings-day move {p['earn_move_typ']:.1%}"
                     f"{', FALLBACK 12%' if p.get('earn_move_fallback') else ''}; "
                     f"earnings in {p['earnings_in_days']:.0f}d)")
+        _v2 = ""
+        if p.get("est_v2") is not None:
+            _v2 = (f"; v2[{p.get('ev_mode')}]={p['est_v2']:+.1%} = "
+                   f"{p['conf_adj']:.2f}conf-adj x "
+                   f"{1 + 0.25 * p['character']:.2f}char x "
+                   f"({p['base_rate']:.3f} base "
+                   f"{p['fact_tilt']:+.4f} fact-tilt"
+                   f"{' DEP-OVERRIDE' if p.get('dep_override') else ''}; "
+                   f"rs={p['research_score'] if p['research_score'] is not None else float('nan'):+.3f}"
+                   f"{' NO-SIGNAL' if p.get('no_signal') else ''})")
         log(f"  {r['ticker']:6s} est={p['est']:+.1%} = {p['conf']:.2f} x "
             f"{1 + 0.25 * p['character']:.2f}char x "
             f"({p['base_rate']:.3f} base + {p['cont_tilt']:+.4f} tilt "
@@ -4585,7 +4733,7 @@ def add_research_columns(df, llm_path=True):
             f"[r6={p['r6']:+.1%} -> upside {p['upside']:.1%} (record only); "
             f"dd={p['dd']:+.0%} x(1+{p['dd_freq']:.2f}freq) -> down {p['downside']:.1%} (record only); "
             f"cont={p['cont']:.2f}; "
-            f"char={p['character']:+.2f}]{_gap}")
+            f"char={p['character']:+.2f}]{_gap}{_v2}")
     return sub
 
 
@@ -5969,6 +6117,13 @@ def main():
                     help="use the 3-layer LLM research stack instead of the rules news layer")
     ap.add_argument("--llm-backend", default="agent", choices=["agent", "auto"],
                     help="agent=file handoff (no keys); auto=free API failover chain")
+    ap.add_argument("--ev-mode", default="legacy",
+                    choices=["legacy", "shadow", "live"],
+                    help="research-redesign EV mode for stocks: legacy = "
+                         "production EV decides, v2 not recorded unless "
+                         "shadow; shadow = v2 computed and recorded in "
+                         "frames, production still decides; live = v2 "
+                         "IS the stock EV (ETFs always legacy)")
     ap.add_argument("--llm-apply", nargs=2, metavar=("BUNDLE", "OUTPUTS"),
                     help="phase B: rerank from a research bundle + filled llm outputs")
     ap.add_argument("--watchlist",
@@ -6023,6 +6178,9 @@ def main():
     ap.add_argument("--cache-dir", default="cache",
                     help="cache directory (default: cache/)")
     args = ap.parse_args()
+
+    global _EV_MODE
+    _EV_MODE = getattr(args, "ev_mode", "legacy") or "legacy"
 
     # Shared cache, constructed once: every branch (Phase A, Phase B,
     # watchlist) uses this. Previously Phase B referenced `cache` before it

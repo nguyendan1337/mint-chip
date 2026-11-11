@@ -231,7 +231,14 @@ Return JSON:
   "continuation": 0.0-1.0,
   "confidence": 0.0-1.0,
   "risks": ["short risk phrases"],
-  "rationale": "2 sentences max"
+  "rationale": "2 sentences max",
+  "facts": {{"guidance_raised": 0, "guidance_cut": 0, "beat_streak": 0,
+             "miss_recent": 0, "buyback": 0, "insider_buying": 0,
+             "contract_win": 0, "customer_problem": 0,
+             "regulatory_overhang": 0, "management_upheaval": 0,
+             "debt_stress": 0, "dividend_up": 0, "sector_tailwind": 0,
+             "big_acquisition": 0}},
+  "facts_evidence": {{"<fact_key>": [{{"title": "<headline>", "date": "YYYY-MM-DD"}}]}}
 }}
 event_dependence = how much the run-up depends on the risky event drivers above
   (0 = pure business quality, 1 = entirely riding a spiking event).
@@ -241,7 +248,32 @@ confidence = how confident you are in THIS assessment (0..1): high when
   headlines are specific and corroborated, low when coverage is thin,
   contradictory, or polluted with unrelated news.
 Penalize continuation when: earnings are within 14 days, insiders are selling
-heavily, or the move is a vertical spike on thin operating news."""
+heavily, or the move is a vertical spike on thin operating news.
+facts (RESEARCH REDESIGN, 2026-11-10): checkable events, coded ONLY from
+  headlines dated within the trailing windows below. A fact is 1 ONLY with
+  a named supporting headline recorded in facts_evidence (title + date);
+  no evidence, no fact. Windows and rules:
+  guidance_raised / guidance_cut: outlook raised / cut or withdrawn, 6m.
+  beat_streak: 2+ consecutive earnings beats reported, 9m.
+  miss_recent: earnings miss in the most recent reported quarter.
+  buyback: a buyback program ANNOUNCED or EXPANDED in the trailing 12m —
+    repurchases executed under a pre-existing authorization do NOT count.
+  insider_buying: reported open-market insider purchases, 6m.
+  contract_win: material contract/customer/order win, 6m.
+  customer_problem: major customer loss, cancellation, or disclosed
+    customer-concentration problem, 12m.
+  regulatory_overhang: active investigation, major litigation, regulatory
+    rejection/delay, or large fine, 12m.
+  management_upheaval: CEO/CFO departure, activist campaign, board fight, 12m.
+  debt_stress: downgrade, covenant trouble, distressed refinancing,
+    going-concern language, 12m.
+  dividend_up: dividend initiated or raised, 12m — ONLY a commitment to a
+    higher RECURRING payout counts; windfall, special, or variable payouts
+    tied to spot prices or one-off events do NOT count.
+  sector_tailwind: -1 / 0 / +1 sector-level wind from sector coverage, 3m.
+  big_acquisition: large acquisition closed or announced, 12m — material
+    means roughly >= 5% of the acquirer's market value, or >= $1B and
+    transformational; ordinary tuck-ins do NOT count."""
 
 
 ETF_USER = """ETF: {ticker} ({name}) — category: {sector}
@@ -435,6 +467,35 @@ def build_research_bundle(candidates, market_headlines, meta, market_internals=N
     }
 
 
+FACT_KEYS = ("guidance_raised", "guidance_cut", "beat_streak", "miss_recent",
+             "buyback", "insider_buying", "contract_win", "customer_problem",
+             "regulatory_overhang", "management_upheaval", "debt_stress",
+             "dividend_up", "sector_tailwind", "big_acquisition")
+
+
+def normalize_facts(raw):
+    """Coerce a researcher's facts object into the canonical 14-key shape.
+
+    Binary facts become 0/1 ints; sector_tailwind is clamped to -1/0/+1.
+    Returns None when raw is not a dict (facts not coded for this name).
+    Mirrored by screener._facts_of — keep the key list in one place: here.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for k in FACT_KEYS:
+        v = raw.get(k, 0)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = 0.0
+        if k == "sector_tailwind":
+            out[k] = int(max(-1.0, min(1.0, v)))
+        else:
+            out[k] = 1 if v else 0
+    return out
+
+
 def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
     """Rerank: event-dependent stocks go DOWN, likely-continuers go UP.
 
@@ -506,6 +567,15 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
             c = 0.7
         confs.append(c)
     df["llm_confidence"] = confs
+    # RESEARCH REDESIGN facts (2026-11-10): the checkable-events layer,
+    # carried as a JSON string column ("" when the researcher coded none).
+    import json as _json
+    fact_strs = []
+    for _, r in df.iterrows():
+        s = stocks.get(r["ticker"], {})
+        nf = normalize_facts(s.get("facts"))
+        fact_strs.append(_json.dumps(nf) if nf is not None else "")
+    df["llm_facts"] = fact_strs
     df["final_score"] = base - w_down * df["llm_event_dependence"] \
         + w_up * df["llm_continuation"] \
         - w_outlier * excess * df["llm_event_dependence"]
