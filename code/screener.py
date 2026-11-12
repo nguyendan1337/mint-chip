@@ -606,7 +606,7 @@ def build_scores(closes, infos, min_rows=120):
         0.08 * df["z_6m"] + 0.06 * df["z_3m"] + 0.04 * df["z_ext"] + 0.04 * df["z_trend"]
         + 0.08 * df["z_blowoff"]
         + 0.10 * df["z_roe"] + 0.08 * df["z_margin"] + 0.07 * df["z_earn"] + 0.05 * df["z_fcf"]
-        + 0.12 * df["z_vol"] + 0.12 * df["z_dd"] + 0.06 * df["z_beta"]
+        + 0.00 * df["z_vol"] + 0.00 * df["z_dd"] + 0.00 * df["z_beta"]
         + 0.05 * df["z_dte"]
         + 0.03 * df["z_fpe"] + 0.02 * df["z_ptb"]
     )
@@ -700,9 +700,9 @@ def log_levers(args):
         "base_w = base_score winsorized at p95, excess = amount above cap)")
     log("base_score(stocks) = 0.08*z_6m + 0.06*z_3m + 0.04*z_ext + 0.04*z_trend "
         "+ 0.08*z_blowoff + 0.10*z_roe + 0.08*z_margin + 0.07*z_earn + 0.05*z_fcf "
-        "+ 0.12*z_vol + 0.12*z_dd + 0.06*z_beta + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
+        "+ 0.00*z_vol + 0.00*z_dd + 0.00*z_beta + 0.05*z_dte + 0.03*z_fpe + 0.02*z_ptb")
     log("base_score(ETFs)   = 0.12*z_6m + 0.08*z_3m + 0.10*z_1m + 0.05*z_trend "
-        "+ 0.05*z_blowoff + 0.15*z_vol + 0.15*z_dd + 0.10*z_dvol + 0.10*z_expense + 0.10*z_aum")
+        "+ 0.05*z_blowoff + 0.00*z_vol + 0.00*z_dd + 0.10*z_dvol + 0.10*z_expense + 0.10*z_aum")
     log("  z glossary: z_6m/3m/1m = trailing returns; z_ext = not extended far below high; "
         "z_trend = above 50/200DMA; z_blowoff = penalizes 2-week vertical spikes (don't buy the top); "
         "z_roe/margin = profitability; z_earn = earnings growth; z_fcf = positive FCF; "
@@ -818,14 +818,14 @@ _STOCK_SCORE_GROUPS = {
     "mom": [(0.08, "z_6m"), (0.06, "z_3m"), (0.04, "z_ext"), (0.04, "z_trend")],
     "blowoff": [(0.08, "z_blowoff")],
     "qual": [(0.10, "z_roe"), (0.08, "z_margin"), (0.07, "z_earn"), (0.05, "z_fcf")],
-    "risk": [(0.12, "z_vol"), (0.12, "z_dd"), (0.06, "z_beta")],
+    "risk": [(0.00, "z_vol"), (0.00, "z_dd"), (0.00, "z_beta")],
     "lev": [(0.05, "z_dte")],
     "val": [(0.03, "z_fpe"), (0.02, "z_ptb")],
 }
 _ETF_SCORE_GROUPS = {
     "mom": [(0.12, "z_6m"), (0.08, "z_3m"), (0.10, "z_1m"),
             (0.05, "z_trend"), (0.05, "z_blowoff")],
-    "risk": [(0.15, "z_vol"), (0.15, "z_dd")],
+    "risk": [(0.00, "z_vol"), (0.00, "z_dd")],
     "liq": [(0.10, "z_dvol")],
     "struct": [(0.10, "z_expense"), (0.10, "z_aum")],
 }
@@ -2266,9 +2266,16 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
     s = n - b - h
     try:
         evf = [float(e) for e in evs]
-        avg = sum(evf) / n
     except Exception:
-        evf, avg = [], 0.0
+        evf = []
+    # ETF SCORE (2026-11-12): fund rows carry a 0-100 score, not a
+    # percent expected value. The percent average and the leader/drag
+    # callout run on the percent-scale rows (stocks) only; the fund
+    # leader is named on its own scale, so a score can never swamp
+    # a percent average or print as a percent.
+    _pct_i = [i for i, e in enumerate(evf) if abs(e) <= 1.5]
+    _scr_i = [i for i, e in enumerate(evf) if abs(e) > 1.5]
+    avg = (sum(evf[i] for i in _pct_i) / len(_pct_i)) if _pct_i else 0.0
     score = b - s
     if score >= 5:
         q = "strong"
@@ -2291,10 +2298,16 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
                 "; the sells drag the average expected value below zero")
     if tickers and evf and n > 1:
         try:
-            order = sorted(range(n), key=lambda i: evf[i], reverse=True)
-            lead, drag = order[0], order[-1]
-            out += (f"; {tickers[lead]} ({evf[lead]:+.1%}) leads, "
-                    f"{tickers[drag]} ({evf[drag]:+.1%}) drags")
+            if len(_pct_i) > 1:
+                order = sorted(_pct_i, key=lambda i: evf[i],
+                               reverse=True)
+                lead, drag = order[0], order[-1]
+                out += (f"; {tickers[lead]} ({evf[lead]:+.1%}) leads, "
+                        f"{tickers[drag]} ({evf[drag]:+.1%}) drags")
+            if _scr_i:
+                _top = max(_scr_i, key=lambda i: evf[i])
+                out += (f"; {tickers[_top]} (ETF score {evf[_top]:.0f}) "
+                        f"leads the funds")
         except Exception:
             pass
     return out + "."
@@ -2751,6 +2764,36 @@ def build_etf_scores(closes, infos):
     df = pd.DataFrame(rows)
     if df.empty:
         return df
+    # EXPENSE FEED (SEC prospectus filings; expense_feed.py): yfinance
+    # returns no expenseRatio for essentially any researched fund,
+    # which left z_expense a filled constant.  The filings feed (the
+    # ETF rank audit's Phase 2 construction, productionized) supplies
+    # the prospectus ratio where it can determine one; funds it cannot
+    # determine keep the yfinance value if any, else the median /
+    # constant fill at the z_expense line below — exactly today's
+    # behaviour.  Fail-safe by construction: the feed never raises,
+    # and any import or batch failure skips the override entirely.
+    try:
+        from expense_feed import expense_ratios as _expense_feed_ratios
+    except Exception:
+        _expense_feed_ratios = None
+    if _expense_feed_ratios is not None:
+        try:
+            _feed_exp = _expense_feed_ratios(
+                [str(t) for t in df["ticker"]],
+                names={str(r["ticker"]): r["name"]
+                       for _, r in df.iterrows()})
+        except Exception:
+            _feed_exp = {}
+        _n_feed_exp = 0
+        for _i, _r in df.iterrows():
+            _v = (_feed_exp or {}).get(str(_r["ticker"]))
+            if _v is not None:
+                df.at[_i, "expense_ratio"] = float(_v)
+                _n_feed_exp += 1
+        if _n_feed_exp:
+            log(f"expense feed: {_n_feed_exp}/{len(df)} expense ratios "
+                f"from SEC prospectus filings")
     df["z_6m"] = zscore(df["ret_6m"].fillna(0))
     df["z_3m"] = zscore(df["ret_3m"].fillna(0))
     df["z_1m"] = zscore(df["ret_1m"].fillna(0))
@@ -2769,7 +2812,7 @@ def build_etf_scores(closes, infos):
     df["base_score"] = (
         0.12 * df["z_6m"] + 0.08 * df["z_3m"] + 0.10 * df["z_1m"]
         + 0.05 * df["z_trend"] + 0.05 * df["z_blowoff"]
-        + 0.15 * df["z_vol"] + 0.15 * df["z_dd"] + 0.10 * df["z_dvol"]
+        + 0.00 * df["z_vol"] + 0.00 * df["z_dd"] + 0.10 * df["z_dvol"]
         + 0.10 * df["z_expense"] + 0.10 * df["z_aum"]
     )
     # character: the ETF parts the EV doesn't already see — structure/cost/
@@ -2839,7 +2882,10 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     REF_1Y = 1.50
     EV_BAR_STRETCH = 1.5
     _ev_signed = []
-    for _df in (stocks_df, etfs_df):
+    # ETF SCORE (2026-11-12): fund bars scale on their own 0-100
+    # score (full bar = 100), so fund values no longer enter the
+    # shared stock scale below.
+    for _df in (stocks_df,):
         if _df is not None and "est_next_1y" in getattr(_df, "columns", []):
             for _v in _df["est_next_1y"]:
                 try:
@@ -2848,6 +2894,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                     pass
     if honorable:
         for _h in honorable:
+            if str(_h.get("kind", "")).strip().lower() == "etf":
+                continue  # ETF SCORE: fund scores stay off the stock scale
             try:
                 _ev_signed.append(float(_h.get("est_next_1y")))
             except Exception:
@@ -2870,6 +2918,28 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         cls = "neg" if v < 0 else ("est" if gold else "pos")
         return (f'<div class="track"><div class="bar {cls}" style="width:{w:.1f}%">'
                 f"</div></div>")
+
+    def ev_bar(val, is_etf):
+        # ETF SCORE (2026-11-12): fund score bars, full bar = 100.
+        if is_etf:
+            try:
+                v = float(val)
+            except Exception:
+                return ""
+            w = max(2, min(100, v))
+            return (f'<div class="track"><div class="bar est" '
+                    f'style="width:{w:.1f}%"></div></div>')
+        return bar(val, gold=True)
+
+    def ev_fmt(val, is_etf):
+        # ETF SCORE (2026-11-12): the fund figure prints as a plain
+        # 0-100 number (no % sign, no leading +); stocks keep percent.
+        if is_etf:
+            try:
+                return f"{float(val):.0f}"
+            except Exception:
+                return ""
+        return pct(val)
 
     def lbl(val, base):
         """Label div class: green 1y / gold est / red when negative."""
@@ -2968,7 +3038,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
   <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
-  <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{pct(est)}</div>{bar(est, gold=True)}</div>
+  <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{ev_fmt(est, _kk == "etf")}</div>{ev_bar(est, _kk == "etf")}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
   <div class="stab" data-cap="Stability">{_html.escape(str(r.get('stability', '?')))}</div>
   {_blurb_html}
@@ -3136,9 +3206,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 "judgments become one number &mdash; expected return for a stock: the likely\n"
 "gains if it holds, minus the likely pain if it turns, adjusted for how much\n"
 "we trust our own read. A fund carries the same idea under its own label, the\n"
-"ETF score: a standing score anchored on what funds like it have typically\n"
-"returned, not a forecast for that one fund, and its bar is drawn on the same\n"
-"scale as every other pick so the sizes can be compared directly.</p>\n"
+"ETF score: a standing score from 0 to 100 that ranks the fund\n"
+"against the other researched funds on cost, size and short-term\n"
+"price strength \u2014 not a forecast for that one fund.</p>\n"
 "<p>Mint is built around a simple idea: find strength, question the story, weigh\n"
 "the odds, and only make room for what earns it.</p>\n"
 "<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t predict\n"
@@ -3181,7 +3251,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
   <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
-  <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{pct(h.get('est_next_1y'))}</div>{bar(h.get('est_next_1y'), gold=True)}</div>
+  <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{ev_fmt(h.get('est_next_1y'), _hk == "etf")}</div>{ev_bar(h.get('est_next_1y'), _hk == "etf")}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
   <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
 {_hblurb_html}</div>"""
@@ -4109,7 +4179,10 @@ def honorable_mentions(ranked, final, args, top_k=15):
     picked = set(final["ticker"]) if len(final) else set()
     veto = getattr(args, "veto_dep", 0.7) or 0.7
     floor = getattr(args, "min_est", 0.03)
-    floor_etf = getattr(args, "min_est_etf", 0.0)
+    # ETF SCORE (2026-11-12): honorable mentions carry no fund floor
+    # (the score floor of 50 binds picks only, in pick_group).
+    floor_etf = (float("-inf") if _EV_MODE == "live"
+                 else getattr(args, "min_est_etf", 0.0))
     contenders = []
     for _, r in ranked.iterrows():
         t = str(r["ticker"])
@@ -4281,6 +4354,32 @@ def _mirror_risk_strikes(r, dep_used):
     return strikes
 
 
+def _chart_record(r):
+    """One row exactly as make_chart_html consumes it (ticker, name,
+    sector, country, kind, ret_1y, est_next_1y, llm_confidence,
+    stability), serialized for the frame's chart block so a later
+    render-only pass can rebuild the identical chart without
+    recomputing anything. Recording only — selects nothing."""
+    ctry = r.get("country")
+    name = r.get("name")
+    sector = r.get("sector")
+    stab = r.get("stability")
+    return {
+        "ticker": str(r.get("ticker")),
+        "kind": (str(r.get("kind")) if r.get("kind") is not None
+                 else None),
+        "name": (name if isinstance(name, str)
+                 else (None if name is None else str(name))),
+        "sector": (sector if isinstance(sector, str)
+                   else (None if sector is None else str(sector))),
+        "country": ctry if isinstance(ctry, str) else None,
+        "ret_1y": _safe(r.get("ret_1y")),
+        "est_next_1y": _safe(r.get("est_next_1y")),
+        "llm_confidence": _safe(r.get("llm_confidence")),
+        "stability": stab if isinstance(stab, str) else None,
+    }
+
+
 def _frame_row(r, outcome, reason):
     dep_raw = _safe(r.get("llm_event_dependence"))
     dep_used = _safe(r.get("dep_used"))
@@ -4384,6 +4483,17 @@ def _frame_row(r, outcome, reason):
         "dd_freq": _safe(r.get("dd_freq")),
         "etf_strikes": (_etf_strike_count(r)
                         if str(r.get("kind", "")) == "etf" else None),
+        # ETF SCORE (2026-11-12): the composite's own audit record:
+        # the score, how many legs it stands on, and whether it is
+        # the no-leg fallback (exactly 50.0). None for stocks.
+        "etf_r2_score": (_safe(r.get("etf_r2_score"))
+                         if str(r.get("kind", "")) == "etf" else None),
+        "etf_r2_legs": ((int(_safe(r.get("etf_r2_legs")))
+                         if _safe(r.get("etf_r2_legs")) is not None
+                         else None)
+                        if str(r.get("kind", "")) == "etf" else None),
+        "score_fallback": (bool(r.get("score_fallback"))
+                           if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
         "outcome_reason": reason,
         "rating": None,
@@ -4391,7 +4501,7 @@ def _frame_row(r, outcome, reason):
 
 
 def _write_frame_manifest(rows, flow, bundle_path, counts,
-                          expected_candidates):
+                          expected_candidates, chart=None):
     """Write frames/frame_<stamp>_<flow>.json and
     manifests/manifest_<stamp>_<flow>.json (same stamp) under the project
     dir and record _FRAME_SNAPSHOT for verification. Returns
@@ -4420,10 +4530,16 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     .get("pool_tail")
     except Exception:
         _pool_tail = None
+    _frame_doc = {"date": run_date(), "flow": flow,
+                  "bundle": bundle_name, "rows": rows}
+    if chart is not None:
+        # RERENDER BLOCK (2026-11-11 runtime package): the exact chart
+        # inputs the apply is about to render with, so passes 2-3 can
+        # re-bake new chat text via --rerender / --watchlist-rerender
+        # instead of a full re-apply. Recording only.
+        _frame_doc["chart"] = chart
     with open(frame_path, "w") as f:
-        _json.dump({"date": run_date(), "flow": flow,
-                    "bundle": bundle_name, "rows": rows},
-                   f, indent=1, default=str)
+        _json.dump(_frame_doc, f, indent=1, default=str)
     try:
         with open(os.path.abspath(__file__), "rb") as f:
             sha = hashlib.sha256(f.read()).hexdigest()
@@ -4525,7 +4641,11 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
     and globals only — selects nothing."""
     veto = getattr(args, "veto_dep", 0.7) or 0.7
     floor = getattr(args, "min_est", 0.03)
-    floor_etf = getattr(args, "min_est_etf", 0.0)
+    # ETF SCORE (2026-11-12): the contender test mirrors honorable
+    # mentions (no fund floor in live mode); the pick floor of 50 is
+    # applied in the floor-reason branch below.
+    floor_etf = (float("-inf") if _EV_MODE == "live"
+                 else getattr(args, "min_est_etf", 0.0))
     picked = (set(final["ticker"])
               if final is not None and len(final) else set())
     hm_map = {str(h.get("ticker")): str(h.get("reason", ""))
@@ -4609,10 +4729,15 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
         elif dep_used is not None and dep_used > veto:
             outcome = "rejected"
             reason = f"event-dependence veto (dep={dep_used:.2f} > {veto})"
-        elif est is not None and est < _fl:
+        elif est is not None and ((str(r.get("kind", "")) == "etf"
+                                   and _EV_MODE == "live" and est < 50.0)
+                                  or est < _fl):
             outcome = "rejected"
-            reason = (f"expected-value floor (est={est:+.1%} "
-                      f"< {_fl:+.0%})")
+            if str(r.get("kind", "")) == "etf" and _EV_MODE == "live":
+                reason = f"ETF score floor (score={est:.0f} < 50)"
+            else:
+                reason = (f"expected-value floor (est={est:+.1%} "
+                          f"< {_fl:+.0%})")
         else:
             _k = (str(r.get("kind", "")), str(r.get("sector", "")))
             if sec_counts.get(_k, 0) >= caps.get(str(r.get("kind",
@@ -4644,8 +4769,40 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
                       and row["dep_used"] is not None
                       and row["dep_used"] > veto),
     }
+    # RERENDER BLOCK (2026-11-11 runtime package): the chart inputs
+    # for this run — the pick rows in chart order (final is the concat
+    # of the two pick tables, so kind-filtering preserves each table's
+    # order) and the honorable-mention dicts exactly as they will be
+    # passed to make_chart_html. Recording only — selects nothing.
+    chart = None
+    try:
+        if final is not None and len(final):
+            chart = {
+                "version": 1, "mode": "daily",
+                "benchmark": getattr(args, "benchmark", ""),
+                "etf_benchmark": etf_benchmark(args),
+                "stocks": [_chart_record(r) for _, r in final.iterrows()
+                           if str(r.get("kind")) == "stock"],
+                "etfs": [_chart_record(r) for _, r in final.iterrows()
+                         if str(r.get("kind")) == "etf"],
+                "honorable": [
+                    {"ticker": str(h.get("ticker")),
+                     "kind": h.get("kind"),
+                     "name": h.get("name"),
+                     "sector": h.get("sector"),
+                     "ret_1y": _safe(h.get("ret_1y")),
+                     "est_next_1y": _safe(h.get("est_next_1y")),
+                     "confidence": _safe(h.get("confidence")),
+                     "reason": h.get("reason")}
+                    for h in (hm or []) if h.get("ticker")],
+            }
+    except Exception as e:
+        log(f"frame snapshot: chart block skipped ({e}) — rerender "
+            f"will be unavailable for this run")
+        chart = None
     return _write_frame_manifest(rows, "daily", bundle_path, counts,
-                                 expected_candidates=len(pre_gate))
+                                 expected_candidates=len(pre_gate),
+                                 chart=chart)
 
 
 def write_frame_snapshot_watchlist(final, bundle_path, args):
@@ -4673,8 +4830,29 @@ def write_frame_snapshot_watchlist(final, bundle_path, args):
                       and row["dep_used"] is not None
                       and row["dep_used"] > veto),
     }
+    # RERENDER BLOCK (2026-11-11 runtime package): every rated row in
+    # final order, carrying the computed rating the apply injects into
+    # watchlist_chat, so --watchlist-rerender can rebuild the identical
+    # chart. Recording only — selects nothing.
+    chart = None
+    try:
+        chart = {
+            "version": 1, "mode": "watchlist",
+            "rows": [dict(_chart_record(r),
+                          rating=(str(r.get("rating"))
+                                  if r.get("rating") is not None
+                                  else None),
+                          rating_reason=str(r.get("rating_reason")
+                                            or ""))
+                     for _, r in final.iterrows()],
+        }
+    except Exception as e:
+        log(f"frame snapshot (watchlist): chart block skipped ({e}) — "
+            f"rerender will be unavailable for this run")
+        chart = None
     return _write_frame_manifest(rows, "watchlist", bundle_path, counts,
-                                 expected_candidates=len(final))
+                                 expected_candidates=len(final),
+                                 chart=chart)
 
 
 def run_self_check(final, args, out_csv):
@@ -4782,7 +4960,10 @@ def run_self_check(final, args, out_csv):
                   f"{len(_DEP_CEILING_EVIDENCE)} ETF rows recomputed, "
                   f"{len(_DEP_CEILING_BINDS)} binds match")
         if "est_next_1y" in final.columns:
-            _etf_floor = getattr(args, "min_est_etf", 0.0)
+            # ETF SCORE (2026-11-12): fund picks are checked against
+            # the score floor of 50 in live mode, as in pick_group.
+            _etf_floor = (50.0 if _EV_MODE == "live"
+                          else getattr(args, "min_est_etf", 0.0))
             if "kind" in final.columns:
                 _floor_ok = bool(all(
                     float(r["est_next_1y"]) >=
@@ -4878,7 +5059,9 @@ def _print_llm_final(final_stocks, final_etfs, args):
             dep = r.get("llm_event_dependence", float("nan"))
             cont = r.get("llm_continuation", float("nan"))
             try:
-                est = f"{float(r['est_next_1y']):+.1%}"
+                est = (f"{float(r['est_next_1y']):.0f}"
+                       if str(r.get("kind", "")) == "etf"
+                       else f"{float(r['est_next_1y']):+.1%}")
             except Exception:
                 est = "n/a"
             try:
@@ -4903,7 +5086,9 @@ def _print_llm_final(final_stocks, final_etfs, args):
     for title, grp in (("stocks", final_stocks), ("etfs", final_etfs)):
         for i, (_, r) in enumerate(grp.iterrows(), 1):
             try:
-                est = f"{float(r['est_next_1y']):+.1%}"
+                est = (f"{float(r['est_next_1y']):.0f}"
+                       if str(r.get("kind", "")) == "etf"
+                       else f"{float(r['est_next_1y']):+.1%}")
             except Exception:
                 est = "n/a"
             try:
@@ -5025,6 +5210,94 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     return edf
 
 
+def _etf_r2_override(sub):
+    """ETF SCORE (2026-11-12, Dan approved; design settled after the
+    ETF rank audit, etf_rank_audit_2026-11-11): the fund figure is the
+    audit's minimal composite ("R2"), not the pinned-confidence
+    percent. For every researched fund row in this frame population,
+    the score is the mean of the within-population percentile ranks
+    (0-100, higher = better, production orientation) of three legs:
+    expense (cheaper = better), z_blowoff (calmer = better), z_aum
+    (larger = better). Rules: a leg counts for a fund when its value
+    is present AND the leg varies across the population (a constant
+    leg carries no ranking information and is excluded for everyone
+    that day); a fund with no usable leg scores exactly 50.0 and is
+    flagged score_fallback=True. Research does not adjust this score;
+    it only gates (strike tiers, the floor, ratings).
+
+    The expense leg is sourced from the SEC filings feed
+    (expense_feed.py) directly: rows reach Phase B with expense_ratio
+    None (yfinance supplies none for researched funds) and the
+    Phase A wiring's ratios live on the quant frame, not here. The
+    feed never raises; on any failure the row's own expense_ratio is
+    the fallback, then no leg. Overrides est_v2 for fund rows, and
+    est_next_1y too when the live mode made est_v2 the effective est.
+    etf_r2_score / etf_r2_legs ride along for audit.
+    """
+    if "kind" not in sub.columns:
+        return sub
+    mask = sub["kind"].astype(str).str.lower() == "etf"
+    if not mask.any():
+        return sub
+    rows = [r for _, r in sub[mask].iterrows()]
+
+    _feed_exp = {}
+    try:
+        from expense_feed import expense_ratios as _erf
+        _feed_exp = _erf(
+            [str(r.get("ticker")) for r in rows],
+            names={str(r.get("ticker")): r.get("name")
+                   for r in rows}) or {}
+    except Exception:
+        _feed_exp = {}
+
+    def _pct(values):
+        s = pd.Series(values, dtype=float)
+        if s.notna().sum() < 2 or s.nunique(dropna=True) < 2:
+            return [None] * len(s)
+        return [None if v != v else float(v)
+                for v in (s.rank(pct=True) * 100.0)]
+
+    def _exp_val(r):
+        v = _feed_exp.get(str(r.get("ticker")))
+        if v is None:
+            v = _safe(r.get("expense_ratio"))
+        return -float(v) if v is not None else None
+
+    p_blow = _pct([_z_of(r).get("z_blowoff") for r in rows])
+    p_aum = _pct([(np.log1p(float(r.get("aum")))
+                   if _safe(r.get("aum")) is not None
+                   and float(r.get("aum")) > -1 else None)
+                  for r in rows])
+    p_exp = _pct([_exp_val(r) for r in rows])
+    leg_names = ["z_blowoff", "z_aum", "z_expense"]
+    leg_ok = [any(v is not None for v in p)
+              for p in (p_blow, p_aum, p_exp)]
+    scores, leg_counts, fallbacks = [], [], []
+    for j, r in enumerate(rows):
+        av = [p[j] for p in (p_blow, p_aum, p_exp) if p[j] is not None]
+        leg_counts.append(len(av))
+        if av:
+            scores.append(sum(av) / len(av))
+            fallbacks.append(False)
+        else:
+            scores.append(50.0)
+            fallbacks.append(True)
+            log(f"etf score: {r.get('ticker')} has no usable leg - "
+                f"fallback score 50.0 (score_fallback)")
+    log(f"etf score: {len(rows)} funds scored; usable legs: "
+        f"{[n for n, ok in zip(leg_names, leg_ok) if ok]}; "
+        f"funds on <3 legs: {sum(1 for c in leg_counts if c < 3)}; "
+        f"fallbacks: {sum(fallbacks)}")
+    sub.loc[mask, "etf_r2_score"] = scores
+    sub.loc[mask, "etf_r2_legs"] = leg_counts
+    sub.loc[mask, "score_fallback"] = fallbacks
+    sub.loc[~mask, "score_fallback"] = False
+    sub.loc[mask, "est_v2"] = scores
+    if _EV_MODE == "live":
+        sub.loc[mask, "est_next_1y"] = scores
+    return sub
+
 def add_research_columns(df, llm_path=True):
     """Add dep/cont/conf/est/stability columns from the research layer.
 
@@ -5096,6 +5369,10 @@ def add_research_columns(df, llm_path=True):
     # variant _EV_MODE makes effective (legacy unless live).
     sub["est_legacy"] = [p["est_legacy"] for p in _parts]
     sub["est_v2"] = [p["est_v2"] for p in _parts]
+    # ETF SCORE (2026-11-12): the fund figure is the minimal
+    # composite over this frame's researched funds, not the
+    # pinned-confidence percent. See _etf_r2_override.
+    sub = _etf_r2_override(sub)
     sub["conf_used"] = [p["conf_used"] for p in _parts]
     sub["fact_tilt"] = [p["fact_tilt"] for p in _parts]
     sub["research_score"] = [p["research_score"] for p in _parts]
@@ -5400,11 +5677,19 @@ def pick_final(adj, args, llm_path):
         # the validated floor is 0% — the gate and the dep/downside
         # terms do the protective work the old +3% did in momentum
         # units. Stocks keep --min-est.
-        _floor = (getattr(args, "min_est_etf", 0.0) if label == "ETFs"
-                  else args.min_est)
+        # ETF SCORE (2026-11-12): in live mode the fund figure is
+        # the 0-100 score and the fund floor is 50 on that scale
+        # (picks only). The percent --min-est-etf semantics died with
+        # the old formula. Stocks keep --min-est.
+        _floor = ((50.0 if _EV_MODE == "live"
+                   else getattr(args, "min_est_etf", 0.0))
+                  if label == "ETFs" else args.min_est)
         cut = ranked[ranked["est_next_1y"] < _floor]
         if len(cut):
-            log(f"est floor ({_floor:+.1%}): {len(cut)} {label} excluded: "
+            _floor_lbl = (f"score {_floor:.0f}"
+                          if label == "ETFs" and _EV_MODE == "live"
+                          else f"{_floor:+.1%}")
+            log(f"est floor ({_floor_lbl}): {len(cut)} {label} excluded: "
                 f"{cut['ticker'].tolist()}")
         est_ok = ranked[ranked["est_next_1y"] >= _floor]
         # EV shortlist: final_score's job is the quality floor (min_score);
@@ -5871,7 +6156,9 @@ def run_watchlist_apply(args):
     print("=" * 70)
     for i, (_, r) in enumerate(final.iterrows(), 1):
         try:
-            est = f"{float(r['est_next_1y']):+.1%}"
+            est = (f"{float(r['est_next_1y']):.0f}"
+                   if str(r.get("kind", "")) == "etf"
+                   else f"{float(r['est_next_1y']):+.1%}")
         except Exception:
             est = "n/a"
         flag = " [non-US]" if r.get("country") and r["country"] != "United States" else ""
@@ -5971,6 +6258,164 @@ def run_watchlist_apply(args):
               "rationale": r.get("llm_rationale", "")}
              for _, r in final.iterrows()],
          "chart": chart_path})
+
+
+# ---------------- Render-only re-bakes (2026-11-11 runtime package) ----
+# Passes 2-3 of each flow exist only to bake new chat text (market today /
+# watchlist today / suggested moves) into the chart, yet a full apply
+# re-fetches summaries and recomputes everything to do it. The rerender
+# instead rebuilds the chart from the chart block the frame snapshot
+# recorded at apply time (the exact rows make_chart_html consumed) plus
+# the CURRENT chat JSON. No network fetches, no feed stamping, no ledger
+# writes, no recomputation. The one intended difference from a full
+# re-apply is the page's generation stamp (run_stamp at rerender time),
+# exactly as a full re-apply would also re-stamp.
+
+def _load_chat_json(path):
+    """Chat JSON exactly as the apply paths load it: a parsed dict, or
+    None when the file is missing, unreadable, or not an object."""
+    import json as _json
+    try:
+        with open(path) as f:
+            data = _json.load(f)
+        if not isinstance(data, dict):
+            log(f"WARNING: {path} is {type(data).__name__}, "
+                f"not an object — chat skipped")
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _rerender_verify(html_text, sections):
+    """sections: list of (label, marker, leads). Prints one RERENDER
+    CHECK line per section; returns True iff every section marker and
+    every block lead is present in the baked HTML."""
+    import html as _html
+    ok_all = True
+    for label, marker, leads in sections:
+        ok = marker in html_text
+        missing = [ld for ld in leads
+                   if ld and _html.escape(str(ld)) not in html_text]
+        if missing:
+            ok = False
+        print(f"RERENDER CHECK: {label}: "
+              f"{'PASS' if ok else 'FAIL'}"
+              + (f" (missing leads: {missing})" if missing else ""))
+        ok_all = ok_all and ok
+    return ok_all
+
+
+def run_rerender(frame_path):
+    """Daily flow, render-only: rebuild the chart from the frame's
+    chart block + the current market_chat.json."""
+    import json as _json
+    setup_logging()
+    log(f"RERENDER (daily): rebuilding chart from {frame_path} — "
+        f"no fetches, no recomputation, no ledger writes")
+    with open(frame_path) as f:
+        frame = _json.load(f)
+    chart = frame.get("chart") or {}
+    if chart.get("mode") != "daily" or "stocks" not in chart:
+        print("RERENDER ERROR: frame has no daily chart block (written "
+              "before the rerender ship?) — run the full --llm-apply")
+        sys.exit(1)
+    mc = _load_chat_json("market_chat.json")
+    chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                  f"{chart.get('benchmark') or 'VGT'}_llm.html")
+    make_chart_html(pd.DataFrame(chart.get("stocks") or []),
+                    pd.DataFrame(chart.get("etfs") or []),
+                    chart_path,
+                    {"benchmark": chart.get("benchmark", ""),
+                     "etf_benchmark": chart.get("etf_benchmark")
+                     or chart.get("benchmark", ""),
+                     "asof": run_stamp()},
+                    honorable=chart.get("honorable") or [],
+                    market_chat=mc)
+    print(f"Chart: {chart_path}")
+    with open(chart_path) as f:
+        html_text = f.read()
+    sections = []
+    if mc and mc.get("market_today"):
+        sections.append(
+            ("market_today", "<h2>Market today</h2>",
+             [b.get("lead") for b in mc["market_today"]
+              if isinstance(b, dict)]))
+    if not sections:
+        print("RERENDER CHECK: no chat sections to verify "
+              "(market_chat.json has no market_today)")
+        return
+    if not _rerender_verify(html_text, sections):
+        sys.exit(1)
+
+
+def run_watchlist_rerender(frame_path):
+    """Watchlist flow, render-only: rebuild the watchlist chart from the
+    frame's chart block + the current watchlist_chat.json, reapplying
+    the apply path's own chat mutations (rating injection + the
+    computed quality summary) from the recorded rows."""
+    import json as _json
+    setup_logging()
+    log(f"RERENDER (watchlist): rebuilding chart from {frame_path} — "
+        f"no fetches, no recomputation, no ledger writes")
+    with open(frame_path) as f:
+        frame = _json.load(f)
+    chart = frame.get("chart") or {}
+    if chart.get("mode") != "watchlist" or "rows" not in chart:
+        print("RERENDER ERROR: frame has no watchlist chart block "
+              "(written before the rerender ship?) — run the full "
+              "--watchlist-apply")
+        sys.exit(1)
+    rows = chart["rows"]
+    wl_chat = _load_chat_json("watchlist_chat.json")
+    if wl_chat and wl_chat.get("tickers"):
+        _rmap = {str(rec.get("ticker")): (rec.get("rating"),
+                                          rec.get("rating_reason"))
+                 for rec in rows}
+        for _t in wl_chat["tickers"]:
+            _rt, _rr = _rmap.get(str(_t.get("ticker")), ("HOLD", ""))
+            _t["rating"] = _t.get("rating") or _rt
+            _t["rating_reason"] = _t.get("rating_reason") or _rr
+    if wl_chat is not None:
+        wl_chat["summary"] = watchlist_quality_summary(
+            [rec.get("rating") for rec in rows],
+            [rec.get("est_next_1y") for rec in rows],
+            [rec.get("ticker") for rec in rows])
+        log(f"  watchlist summary: {wl_chat['summary']}")
+    final = pd.DataFrame(rows)
+    sfinal = final[final["kind"] == "stock"]
+    efinal = final[final["kind"] == "etf"]
+    chart_path = (f"watchlist_chart_"
+                  f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+    make_chart_html(sfinal, efinal, chart_path,
+                    {"benchmark": "", "mode": "watchlist",
+                     "heading": "Watchlist: by expected return / "
+                                "ETF score",
+                     "asof": run_stamp()},
+                    titles=("Stocks: by expected return",
+                            "ETFs: by ETF score"),
+                    watchlist_chat=wl_chat)
+    print(f"Chart: {chart_path}")
+    with open(chart_path) as f:
+        html_text = f.read()
+    sections = []
+    if wl_chat and wl_chat.get("watchlist_today"):
+        sections.append(
+            ("watchlist_today", "<h2>Watchlist today</h2>",
+             [b.get("lead") for b in wl_chat["watchlist_today"]
+              if isinstance(b, dict)]))
+    if wl_chat and wl_chat.get("suggested_moves"):
+        sections.append(
+            ("suggested_moves", "<h2>Fresh Off the Mint</h2>",
+             [b.get("lead") for b in wl_chat["suggested_moves"]
+              if isinstance(b, dict)]))
+    if not sections:
+        print("RERENDER CHECK: no chat sections to verify "
+              "(watchlist_chat.json has no watchlist_today or "
+              "suggested_moves)")
+        return
+    if not _rerender_verify(html_text, sections):
+        sys.exit(1)
 
 
 # ---------------- Thesis ledger: post-buy accountability ----------------
@@ -6285,6 +6730,15 @@ def record_picks_ledger(final, ranked, args, cache=None):
             reason = _ETF_TIER2_CAPPED[t]
         elif d is not None and d_used > veto:
             reason = f"event-dependence veto (dep={d_used:.2f} > {veto})"
+        elif (r.get("kind") == "etf" and _EV_MODE == "live"
+              and _safe(r.get("est_next_1y")) is not None
+              and _safe(r.get("est_next_1y")) < 50.0):
+            # ETF SCORE (2026-11-12): a fund under the score floor is
+            # recorded with its score, not the old percent.
+            _s = _safe(r.get("est_next_1y"))
+            reason = f"ETF score floor (score={_s:.0f} < 50)"
+            p = dict(p)
+            p["est"] = _s
         elif p["est"] < (getattr(args, "min_est_etf", 0.0)
                          if r.get("kind") == "etf" else args.min_est):
             _fl2 = (getattr(args, "min_est_etf", 0.0)
@@ -6395,10 +6849,18 @@ def _record_spell_exits(final_set, ranked, args, today):
                 p = est_parts(r, d_used,
                               c if c is not None else 0.5,
                               f_ if f_ is not None else 1.0)
-                _xfl = (getattr(args, "min_est_etf", 0.0)
-                        if r.get("kind") == "etf" else args.min_est)
-                reason = ("ev_below_floor" if p["est"] < _xfl
-                          else "cap")
+                if r.get("kind") == "etf" and _EV_MODE == "live":
+                    # ETF SCORE (2026-11-12): judge the exit against
+                    # the score floor of 50, not the old percent.
+                    _s = _safe(r.get("est_next_1y"))
+                    reason = ("ev_below_floor"
+                              if (_s is not None and _s < 50.0)
+                              else "cap")
+                else:
+                    _xfl = (getattr(args, "min_est_etf", 0.0)
+                            if r.get("kind") == "etf" else args.min_est)
+                    reason = ("ev_below_floor" if p["est"] < _xfl
+                              else "cap")
         ledger_append(THESIS_LEDGER, {
             "event": "exit", "ticker": t, "date": today,
             "pick_date": pdate, "exit_reason": reason,
@@ -6570,6 +7032,15 @@ def main():
                          "(Phase A: quant + headlines, writes watchlist bundle)")
     ap.add_argument("--watchlist-apply", nargs=2, metavar=("BUNDLE", "OUTPUTS"),
                     help="watchlist Phase B: apply research, sort by est, chart")
+    ap.add_argument("--rerender", metavar="FRAME", default=None,
+                    help="daily flow, render-only: rebuild the chart from a "
+                         "frame snapshot's chart block + current "
+                         "market_chat.json (no fetches, no recomputation, "
+                         "no ledger writes)")
+    ap.add_argument("--watchlist-rerender", metavar="FRAME", default=None,
+                    help="watchlist flow, render-only: rebuild the watchlist "
+                         "chart from a frame snapshot's chart block + "
+                         "current watchlist_chat.json")
     ap.add_argument("--max-vol", type=float, default=0.80,
                     help="absolute risk gate: exclude vol60 above this (default 0.80)")
     ap.add_argument("--min-dd", type=float, default=-0.40,
@@ -6636,6 +7107,14 @@ def main():
 
     if args.watchlist_apply:
         run_watchlist_apply(args)
+        return
+
+    if args.rerender:
+        run_rerender(args.rerender)
+        return
+
+    if args.watchlist_rerender:
+        run_watchlist_rerender(args.watchlist_rerender)
         return
 
     if args.llm_apply:
