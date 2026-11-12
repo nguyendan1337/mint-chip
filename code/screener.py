@@ -2851,6 +2851,18 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         except Exception:
             return "n/a"
 
+    def disp_sector(sec, ticker, kind):
+        # DISPLAY FIX (2026-11-12): the metadata feed leaves a few
+        # well-known funds (VO, VTI) with category 'Unknown'; selection
+        # already repairs those via _ETF_CATEGORY_OVERRIDES for theme
+        # grouping (see _etf_category_of). Print the same repaired
+        # category the system actually used. Display only: recorded
+        # frame data and every decision keep the raw feed value.
+        s = str(sec or "")
+        if s in ("", "Unknown") and str(kind or "") == "etf":
+            return _ETF_CATEGORY_OVERRIDES.get(str(ticker or ""), s)
+        return s
+
     sections = [(titles[0] if titles else "Top 10 stocks (most confident)", stocks_df),
                 (titles[1] if titles else "Top 10 ETFs (most confident)", etfs_df)]
     # Bar scales: the 1y-return bar keeps a FIXED reference (full bar =
@@ -3036,7 +3048,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(r['ticker']))}</span>
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
-  <div class="sec">{_html.escape(str(r['sector'])[:26])}</div>
+  <div class="sec">{_html.escape(str(disp_sector(r['sector'], r['ticker'], _kk))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(r['ret_1y'], 'r1y')}">{pct(r['ret_1y'])}</div>{bar(r['ret_1y'])}</div>
   <div class="cell" data-cap="{_cap}"><div class="{lbl(est, 'est')}">{ev_fmt(est, _kk == "etf")}</div>{ev_bar(est, _kk == "etf")}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(r.get('llm_confidence'))}</div>
@@ -3249,7 +3261,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     <span class="tick">{_html.escape(str(h.get('ticker', '')))}</span>
     <span class="kchip {_hk}">{_hk.upper()}</span>
     <span class="nm">{_html.escape(str(h.get('name', ''))[:38])}</span>{_hchev}</div>
-  <div class="sec">{_html.escape(str(h.get('sector', ''))[:26])}</div>
+  <div class="sec">{_html.escape(str(disp_sector(h.get('sector', ''), h.get('ticker', ''), _hk))[:26])}</div>
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
   <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{ev_fmt(h.get('est_next_1y'), _hk == "etf")}</div>{ev_bar(h.get('est_next_1y'), _hk == "etf")}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
