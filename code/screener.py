@@ -3032,13 +3032,24 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 </div>
 """
     rows_html = ""
+    _is_wl = str(meta.get("mode", "")).lower() == "watchlist"
     for si, (title, df) in enumerate(sections):
         ev_label = "ETF score" if si == 1 else "Expected return"
         rows_html += f'<h2>{_html.escape(title)}</h2>\n'
+        # Watchlist only (2026-11-13, Dan's directive): a Rating sort
+        # button in both sections, and Rating is the page's DEFAULT
+        # sort: the button ships active and the page script clicks it
+        # on load (see _wl_sort_js). Ratings live only on the
+        # watchlist; the main page's picks are recommendations by
+        # construction and keep expected return as the default.
+        _rate_btn = ('<button class="sbtn on" data-k="rate">Rating</button>'
+                     if _is_wl else '')
+        _ev_on = '' if _is_wl else ' on'
         rows_html += (
             f'<div class="sortctl" data-pl="pl{si}"><span>Sort by:</span> '
             f'<button class="sbtn" data-k="r1y">1-year return</button>'
-            f'<button class="sbtn on" data-k="ev">{ev_label}</button></div>\n')
+            f'<button class="sbtn{_ev_on}" data-k="ev">{ev_label}</button>'
+            f'{_rate_btn}</div>\n')
         rows_html += _header(ev_label) + f'<div class="picklist" id="pl{si}">\n'
         for i, (_, r) in enumerate(df.iterrows(), 1):
             est = r.get("est_next_1y")
@@ -3058,7 +3069,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 _kk = "stock" if si == 0 else "etf"
             _cap = "ETF score" if _kk == "etf" else "Expected return"
             _b = _bmap.get(str(r["ticker"]).upper())
-            _blurb_html, _chev, _hasb, _wchip = "", "", "", ""
+            _blurb_html, _chev, _hasb, _wchip, _rate = "", "", "", "", 0
             if _b:
                 _hasb = " has-blurb"
                 _chev = '<span class="chev" title="Tap to expand">▸</span>'
@@ -3072,6 +3083,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                     # hidden in the expansion — the call should be visible
                     _rcls = {"BUY": "buy", "HOLD": "hold",
                              "SELL": "sell"}.get(_b[2], "hold")
+                    _rate = {"BUY": 3, "HOLD": 2, "SELL": 1}.get(_b[2], 0)
                     _wchip = f' <span class="rchip {_rcls}">{_b[2]}</span>'
                     _blurb_html = (
                         f'<div class="blurb">'
@@ -3079,8 +3091,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                         + (f'<br><span class="wl-rate-why">{_b[2].title()}: '
                            f'{_html.escape(_b[3])}</span>' if _b[3] else '')
                         + '</div>')
+            _rate_attr = f' data-rate="{_rate}"' if _is_wl else ''
             rows_html += f"""
-<div class="row k-{_kk}{_hasb}" data-ev="{_evf}" data-r1y="{_r1yf}">
+<div class="row k-{_kk}{_hasb}" data-ev="{_evf}" data-r1y="{_r1yf}"{_rate_attr}>
   <div class="id"><span class="rank">{i}</span>
     <span class="tick">{_html.escape(str(r['ticker']))}</span>
     <span class="nm">{_html.escape(str(r['name'])[:38])}{nonus}</span>{_wchip}{_chev}</div>
@@ -3283,14 +3296,27 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 _hr1y = float("nan")
             _extra = " hm-extra" if i > 5 else ""
             _hb = _bmap.get(str(h.get("ticker", "")).upper())
-            _hblurb_html, _hchev, _hhasb = "", "", ""
+            # WHY-NOT-PICKED MOVED INTO THE EXPANSION (2026-11-13, Dan's
+            # directive): the long reason sentence wrecked the desktop
+            # row grid, so the row now carries the stability grade (the
+            # same .stab cell the picks use) and the reason lives in
+            # the expandable section under the blurb, which also makes
+            # every mention card expandable.
+            _hreason = _reader_reason(str(h.get('reason', '')), _hk)
+            _hparts = ""
             if _hb and _hb[0] == "hm" and (_hb[1] or _hb[2]):
+                _hparts += (
+                    f'<div class="mc-what">{_html.escape(_hb[1])}</div>'
+                    f'<div class="mc-why">{_html.escape(_hb[2])}</div>')
+            if _hreason:
+                _hparts += (
+                    f'<div class="mc-notpicked"><b>Why not picked:</b> '
+                    f'{_html.escape(_hreason)}</div>')
+            _hblurb_html, _hchev, _hhasb = "", "", ""
+            if _hparts:
                 _hhasb = " has-blurb"
                 _hchev = '<span class="chev" title="Tap to expand">▸</span>'
-                _hblurb_html = (
-                    f'<div class="blurb"><div class="mc-what">'
-                    f'{_html.escape(_hb[1])}</div>'
-                    f'<div class="mc-why">{_html.escape(_hb[2])}</div></div>')
+                _hblurb_html = f'<div class="blurb">{_hparts}</div>'
             return f"""
 <div class="row hm k-{_hk}{_extra}{_hhasb}" data-ev="{_hev}" data-r1y="{_hr1y}">
   <div class="id"><span class="rank">{i}</span>
@@ -3301,7 +3327,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
   <div class="cell" data-cap="1-year return"><div class="{lbl(h.get('ret_1y'), 'r1y')}">{pct(h.get('ret_1y'))}</div>{bar(h.get('ret_1y'))}</div>
   <div class="cell" data-cap="{_hcap}"><div class="{lbl(h.get('est_next_1y'), 'est')}">{ev_fmt(h.get('est_next_1y'), _hk == "etf")}</div>{ev_bar(h.get('est_next_1y'), _hk == "etf")}</div>
   <div class="cf" data-cap="Confidence">{conf_pct(h.get('confidence'))}</div>
-  <div class="why" data-cap="Why not picked">{_html.escape(str(h.get('reason', '')))}</div>
+  <div class="stab" data-cap="Stability">{_html.escape(str(h.get('stability', '?')))}</div>
 {_hblurb_html}</div>"""
 
         def _hm_group(rows, title, plid, toggle_id, ev_word):
@@ -3321,7 +3347,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 f'<button class="sbtn on" data-k="ev">{ev_word}</button></div>\n'
                 '<div class="row head"><div># / Ticker / Name</div><div>Sector / Category</div>'
                 f'<div>1-year return</div><div>{ev_word}</div>'
-                '<div>Confidence</div><div>Why not picked</div></div>\n'
+                '<div>Confidence</div><div>Stability</div></div>\n'
                 f'<div class="picklist" id="{plid}">\n'
                 + _body + "\n</div>\n" + _toggle)
 
@@ -3340,6 +3366,18 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                         "pl2", "hm-toggle", "Expected return")
             + _hm_group(_hm_etfs, "Funds, by ETF score",
                         "pl3", "hm-toggle-3", "ETF score"))
+    # Watchlist default sort (Dan's directive, 2026-11-13): on load,
+    # click each section's Rating button, reusing the exact manual-tap
+    # path (stable sort, BUY first, expected-return order inside a
+    # rating, ranks renumbered). Empty on the main page, whose bytes
+    # stay unchanged.
+    _wl_sort_js = ((
+        "// Watchlist default sort: Rating, via the manual-tap path.\n"
+        "document.querySelectorAll('.sortctl').forEach(function(ctl){\n"
+        "  var b = ctl.querySelector('[data-k=\"rate\"]');\n"
+        "  if(b) b.click();\n"
+        "});\n")
+        if str(meta.get("mode", "")).lower() == "watchlist" else "")
     html_doc = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
@@ -3517,6 +3555,8 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   margin-top: 8px; padding: 8px 4px 6px 34px; }}
 .row.open .blurb {{ display: block; }}
 .row .blurb .mc-what {{ margin-bottom: 5px; }}
+.row .blurb .mc-notpicked {{ margin-top: 6px; color: #a8b3a8; }}
+.row .blurb .mc-notpicked b {{ color: #e6efe6; font-weight: 600; }}
 .chev {{ display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
   border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
@@ -3524,6 +3564,18 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   transition: transform 0.18s ease, background 0.18s ease; }}
 .row.open .chev {{ transform: rotate(90deg);
   background: rgba(255,255,255,0.09); }}
+@media (min-width: 701px) {{
+  /* EXPAND BUTTON AT THE CARD'S RIGHT END (2026-11-13, Dan's
+     directive): on desktop the chevron used to sit right after the
+     name, landing mid-card; the conventional trailing spot is the
+     far right edge, level with the row's first line. The extra
+     right padding keeps the last column clear of the button, and
+     the header rows share it so the columns stay aligned. */
+  .row {{ padding-right: 54px; }}
+  .row .chev {{ position: absolute; right: 15px; top: 27px;
+    margin-left: 0; transform: translateY(-50%); }}
+  .row.open .chev {{ transform: translateY(-50%) rotate(90deg); }}
+}}
 .rchip.hold {{ color: #ffd54f; border-color: rgba(255,213,79,0.40);
   background: rgba(255,213,79,0.10); }}
 .rchip.sell {{ color: #f87171; border-color: rgba(248,113,113,0.40);
@@ -3596,7 +3648,7 @@ document.querySelectorAll('.sortctl').forEach(function(ctl){{
     }});
   }});
 }});
-function applyHmLimit(){{
+{_wl_sort_js}function applyHmLimit(){{
   ['pl2', 'pl3'].forEach(function(pid){{
     var pl = document.getElementById(pid);
     if(!pl) return;
@@ -4210,6 +4262,124 @@ def enforce_etf_tier2_cap(selected, pool, cap=2, min_score=0.0,
     return sel
 
 
+def _reader_strike(s):
+    """One internal risk-strike label in plain words for a new reader."""
+    s = str(s).strip()
+    m = re.match(r"earnings in (\d+)d$", s)
+    if m:
+        d = int(m.group(1))
+        if d <= 0:
+            return "earnings report due today"
+        if d == 1:
+            return "earnings report due tomorrow"
+        return f"earnings report due in {d} days"
+    m = re.match(r"6m run ([+-]?\d+)%", s)
+    if m:
+        return f"up {m.group(1)}% in six months"
+    if s.startswith("implied upside"):
+        return "analyst price targets sit below today's price"
+    if s.startswith("dep "):
+        return "its outlook leans heavily on a single event"
+    m = re.match(r"max drawdown (-?\d+)%", s)
+    if m:
+        return f"a past slide of {m.group(1).lstrip('-')}%"
+    if s.startswith("drawdown frequency"):
+        return "deep slides happen often"
+    return s
+
+
+def _reader_reason(raw, kind=""):
+    """Translate an internal honorable-mention reason into plain words
+    a first-time reader understands (2026-11-13, Dan's directive: the
+    'Why not picked' line on the page must not read like system logs).
+    The generation sites keep their precise internal strings for the
+    run log; this renders the reader version. It is applied when the
+    mentions are built AND again when the chart is baked, so a
+    rerender of an older frame also reads plainly. Anything
+    unrecognized passes through unchanged; never raises."""
+    try:
+        s = str(raw or "").strip()
+        if not s:
+            return s
+        m = re.match(r"risk-flag gate \((\d+) strikes: (.+)\)$", s)
+        if m:
+            bits = [_reader_strike(x) for x in m.group(2).split(", ")]
+            return (f"Kept out by {m.group(1)} risk flags "
+                    f"({'; '.join(bits)}). "
+                    f"A pick may carry at most one.")
+        m = re.match(r"stability ([^,]+), below the B-or-better pick "
+                     r"bar$", s)
+        if m:
+            return (f"Its record is too uneven for a pick (stability "
+                    f"grade {m.group(1)}). Picks need a steadier "
+                    f"record, grade B or better.")
+        m = re.match(r"offense rank (\d+) of (\d+) eligible", s)
+        if m:
+            return (f"Passed every quality and risk check, but the "
+                    f"pick slots go to the strongest recent price "
+                    f"runs, and this one ranked {m.group(1)} of "
+                    f"{m.group(2)} on that run.")
+        m = re.match(r"stock eligibility gate \((.+)\)$", s)
+        if m:
+            bits = []
+            for part in m.group(1).split(", "):
+                if part.startswith("implied upside"):
+                    bits.append("analyst price targets sit below "
+                                "today's price")
+                elif part.startswith("dep "):
+                    bits.append("too much of its outlook rides on a "
+                                "single event")
+                else:
+                    bits.append(part)
+            return "Not eligible for a pick: " + "; ".join(bits) + "."
+        m = re.match(r"etf eligibility gate \((.+)\)$", s)
+        if m:
+            w = m.group(1)
+            if w.startswith("benchmark fund"):
+                bm = re.search(r"benchmark fund (\S+)", w)
+                return (f"{bm.group(1) if bm else 'This fund'} is the "
+                        f"benchmark the funds are measured against, "
+                        f"so it is never itself a pick.")
+            if w.startswith("insufficient data"):
+                return ("There is not enough data to confirm it "
+                        "passes the risk checks, so it is not picked.")
+            mm = re.match(r"(\d+) strikes: (.+)$", w)
+            if mm:
+                bits = [_reader_strike(x)
+                        for x in mm.group(2).split("; ")]
+                return (f"Barred by {mm.group(1)} risk flags "
+                        f"({'; '.join(bits)}). A fund with two or "
+                        f"more flags is not picked.")
+            return "Not eligible for a pick under the fund safety rules."
+        if s.startswith("volatility budget"):
+            return ("Its price swings are among the wildest of the "
+                    "finalists, and the pick rules leave the wildest "
+                    "movers out.")
+        m = re.match(r"tier-2 slot cap \((\d+)", s)
+        if m:
+            return (f"It carries one risk flag, and the "
+                    f"{m.group(1)} pick slots allowed for one-flag "
+                    f"funds were taken by higher-scoring funds.")
+        m = re.match(r"overlaps (\S+) \((\d+)%\)", s)
+        if m:
+            return (f"It holds much the same stocks as {m.group(1)} "
+                    f"({m.group(2)}% overlap), so the higher-scoring "
+                    f"fund was kept.")
+        m = re.match(r"(.+) cap full$", s)
+        if m:
+            return (f"The list already holds 2 picks in its group "
+                    f"({m.group(1)}), which is the limit.")
+        if s == "lower expected value than picks":
+            if str(kind) == "etf":
+                return ("A solid score, but other funds scored higher "
+                        "for the pick slots.")
+            return ("Passed the checks, but other finalists ranked "
+                    "ahead of it for the pick slots.")
+        return s
+    except Exception:
+        return str(raw or "")
+
+
 def honorable_mentions(ranked, final, args, top_k=15):
     """Near-miss table: researched names that cleared the EV floor but didn't
     make the chart — alternatives worth a look, each with the reason it
@@ -4295,10 +4465,22 @@ def honorable_mentions(ranked, final, args, top_k=15):
             conf = float(r.get("llm_confidence"))
         except Exception:
             conf = None
+        # STABILITY ON THE MENTION (2026-11-13): the page's mention row
+        # shows the stability grade where the reason used to sit. The
+        # caller's ranked may not carry the column (add_research_columns
+        # stamps it on its own copy), so fall back to the same canonical
+        # grade the enrichment computes.
+        _stab = r.get("stability")
+        if _stab is None or (isinstance(_stab, float) and _stab != _stab):
+            try:
+                _stab = stability_grade(r, _dep_used_of(r))
+            except Exception:
+                _stab = None
         out.append({"ticker": t, "kind": kind, "name": str(r.get("name", "")),
                     "sector": sec, "ret_1y": r.get("ret_1y"),
                     "est_next_1y": float(r["est_next_1y"]), "confidence": conf,
-                    "reason": reason})
+                    "stability": (None if _stab is None else str(_stab)),
+                    "reason": _reader_reason(reason, kind)})
     if out:
         log(f"honorable mentions: {len(out)} near-misses "
             f"({', '.join(h['ticker'] for h in out)})")
@@ -4877,7 +5059,8 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
                      "ret_1y": _safe(h.get("ret_1y")),
                      "est_next_1y": _safe(h.get("est_next_1y")),
                      "confidence": _safe(h.get("confidence")),
-                     "reason": h.get("reason")}
+                     "reason": h.get("reason"),
+                     "stability": h.get("stability")}
                     for h in (hm or []) if h.get("ticker")],
             }
     except Exception as e:
@@ -6587,6 +6770,14 @@ def run_rerender(frame_path):
         print("RERENDER ERROR: frame has no daily chart block (written "
               "before the rerender ship?) — run the full --llm-apply")
         sys.exit(1)
+    # HM STABILITY BACKFILL (2026-11-13): chart blocks written before
+    # the mention row gained its stability cell carry no per-mention
+    # stability; the frame rows of the same run do, so lend it over.
+    _stab = {str(r.get("ticker")): r.get("stability")
+             for r in (frame.get("rows") or []) if r.get("ticker")}
+    for _h in chart.get("honorable") or []:
+        if not _h.get("stability") and _stab.get(str(_h.get("ticker"))):
+            _h["stability"] = _stab[str(_h.get("ticker"))]
     mc = _load_chat_json("market_chat.json")
     chart_path = (f"chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
                   f"{chart.get('benchmark') or 'VGT'}_llm.html")
