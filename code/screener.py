@@ -1874,6 +1874,16 @@ POOL_OVERFLOW_N = 15        # seats per kind for top ret_1y non-core names
 POOL_PERSIST_MAX = 20       # persistence seats per kind
 POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
 
+# --- ETF upgrade package (SHIPPED 2026-11-12, Dan approved) ---
+# Change S: F8 completeness-corrected ETF Score (T1 winner; see
+# etf_upgrade_plan_2026-11-12). Change P: momentum-composite ETF
+# core pool at MOMPOOL_CORE_N seats. Both were rehearsed behind
+# env switches (MINT_F8 / MINT_MOMPOOL) in sandbox_upgrade; per
+# the rehearsal report's ship step they are hard-coded ON here.
+_UPGRADE_F8 = True
+_UPGRADE_MOMPOOL = True
+MOMPOOL_CORE_N = 150        # Change P core size (plan DECISION A)
+
 
 def _persistence_tickers():
     """Tickers picked within the last POOL_PERSIST_WINDOW_DAYS days,
@@ -1938,6 +1948,19 @@ def _build_pool(frame, n, kind, persist):
                 continue
             counts[sec] = counts.get(sec, 0) + 1
             taken.append(i)
+    elif _UPGRADE_MOMPOOL:
+        # Change P (momentum pool): core seats by the equal-weight
+        # momentum composite — within-frame z-sum of ret_1y,
+        # ret_6m_skip1m and ret_3m — at core size MOMPOOL_CORE_N.
+        # Seat selection only: the persistence/overflow lanes, the
+        # tail instrumentation and the returned ordering (by the
+        # base-score _pool_rank) are unchanged, and base_score
+        # itself is still computed and recorded exactly as before.
+        _mc = (zscore(f["ret_1y"]) + zscore(f["ret_6m_skip1m"])
+               + zscore(f["ret_3m"]))
+        taken = list(_mc.sort_values(ascending=False,
+                                     kind="mergesort")
+                     .index[:MOMPOOL_CORE_N])
     else:
         taken = list(f.index[:n])
     if taken:
@@ -4518,6 +4541,18 @@ def _frame_row(r, outcome, reason):
                           if isinstance(r.get("etf_abs_legs"), dict)
                           else None)
                          if str(r.get("kind", "")) == "etf" else None),
+        # ETF F8 (upgrade package): how many legs the grade stands
+        # on, and the neutral fill the F8 completion applied per
+        # missing leg ({} when no leg was filled). Audit trail only;
+        # nothing on the page reads it. None for stocks.
+        "etf_legs_used": ((int(_safe(r.get("etf_legs_used")))
+                           if _safe(r.get("etf_legs_used")) is not None
+                           else None)
+                          if str(r.get("kind", "")) == "etf" else None),
+        "etf_abs_fill": ((r.get("etf_abs_fill")
+                          if isinstance(r.get("etf_abs_fill"), dict)
+                          else None)
+                         if str(r.get("kind", "")) == "etf" else None),
         "score_fallback": (bool(r.get("score_fallback"))
                            if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
@@ -5391,6 +5426,7 @@ def _etf_r2_override(sub):
         return s
 
     abs_scores, abs_leg_counts, abs_leg_detail, fallbacks = [], [], [], []
+    abs_fill_detail = []
     for r in rows:
         g_exp = _anchor_grade(_exp_raw(r), _ABS_EXPENSE)
         _aum = _safe(r.get("aum"))
@@ -5402,20 +5438,42 @@ def _etf_r2_override(sub):
         abs_leg_detail.append(legs)
         abs_leg_counts.append(len(av))
         if av:
-            abs_scores.append(sum(av) / len(av))
+            _s_avail = sum(av) / len(av)
+            if _UPGRADE_F8 and len(av) < 3:
+                # Change S (F8, the T1 winner): complete the missing
+                # legs at the neutral 50 and print the lower of that
+                # and the available-leg mean — a score can never rise
+                # because data is missing, and a fully graded fund is
+                # bit-identical to the shipped rule. The fill applied
+                # per missing leg is recorded alongside the grade.
+                _filled = (sum(av) + 50.0 * (3 - len(av))) / 3.0
+                abs_scores.append(min(_s_avail, _filled))
+                abs_fill_detail.append(
+                    {k: 50.0 for k, g in legs.items() if g is None})
+            else:
+                abs_scores.append(_s_avail)
+                abs_fill_detail.append({})
             fallbacks.append(False)
         else:
             abs_scores.append(50.0)
             fallbacks.append(True)
+            abs_fill_detail.append(
+                {k: 50.0 for k in legs} if _UPGRADE_F8 else {})
             log(f"etf grade: {r.get('ticker')} has no usable leg - "
                 f"fallback grade 50.0 (score_fallback)")
     log(f"etf grade (absolute): {len(rows)} funds graded; "
         f"funds on <3 legs: {sum(1 for c in abs_leg_counts if c < 3)}; "
         f"fallbacks: {sum(fallbacks)}")
+    if _UPGRADE_F8:
+        log(f"etf grade F8: completeness correction active; "
+            f"{sum(1 for c in abs_leg_counts if c < 3)} funds on <3 legs "
+            f"repriced by the neutral fill")
     sub.loc[mask, "etf_r2_score"] = scores
     sub.loc[mask, "etf_r2_legs"] = leg_counts
     sub.loc[mask, "etf_abs_score"] = abs_scores
     sub.loc[mask, "etf_abs_legs"] = abs_leg_detail
+    sub.loc[mask, "etf_legs_used"] = abs_leg_counts
+    sub.loc[mask, "etf_abs_fill"] = abs_fill_detail
     sub.loc[mask, "score_fallback"] = fallbacks
     sub.loc[~mask, "score_fallback"] = False
     sub.loc[mask, "est_v2"] = abs_scores
@@ -6826,7 +6884,15 @@ def record_picks_ledger(final, ranked, args, cache=None):
     recorded = 0
     for _, r in ranked.iterrows():
         t = r["ticker"]
-        if t in final_set or t in rseen or recorded >= 15:
+        # NO per-call cap on the control group (cap removed 2026-11-12):
+        # the old `recorded >= 15` stop silently truncated the rejected
+        # ledger whenever more than 15 researched names carried gate /
+        # floor / exclusion reasons, and because appends are idempotent
+        # the recorded set ended up depending on how many times Phase B
+        # happened to run that day (recording-gap investigation:
+        # recording_gap_2026-11-12/REPORT.md). Idempotency via rseen
+        # already guarantees exactly-once; record them all.
+        if t in final_set or t in rseen:
             continue
         d = _safe(r.get("llm_event_dependence"))
         d_used, d_cap = effective_dep(
