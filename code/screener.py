@@ -2801,6 +2801,10 @@ def build_etf_scores(closes, infos):
     spike = (df["ret_2w"].fillna(0) - 0.15).clip(lower=0) + \
             (df["dist_20dma"].fillna(0) - 0.10).clip(lower=0)
     df["z_blowoff"] = zscore(-spike)
+    # The raw spike rides along unstandardized: the absolute ETF grade
+    # grades the blowoff leg from this value, never from z_blowoff
+    # (which is relative to the day's field by construction).
+    df["spike"] = spike
     df["z_vol"] = zscore(-df["vol60"].fillna(1.0))
     df["z_dd"] = zscore(-df["maxdd"].fillna(-0.5).abs())
     df["z_dvol"] = zscore(np.log1p(df["dollar_vol10"].fillna(0)))
@@ -4504,6 +4508,16 @@ def _frame_row(r, outcome, reason):
                          if _safe(r.get("etf_r2_legs")) is not None
                          else None)
                         if str(r.get("kind", "")) == "etf" else None),
+        # ETF ABSOLUTE GRADE (2026-11-12): the grade the fund figure
+        # now is, and its per-leg grades (a leg is None when its
+        # input was absent). The percentile record above is
+        # audit-only. None for stocks.
+        "etf_abs_score": (_safe(r.get("etf_abs_score"))
+                          if str(r.get("kind", "")) == "etf" else None),
+        "etf_abs_legs": ((r.get("etf_abs_legs")
+                          if isinstance(r.get("etf_abs_legs"), dict)
+                          else None)
+                         if str(r.get("kind", "")) == "etf" else None),
         "score_fallback": (bool(r.get("score_fallback"))
                            if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
@@ -5223,28 +5237,61 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
 
 
 def _etf_r2_override(sub):
-    """ETF SCORE (2026-11-12, Dan approved; design settled after the
-    ETF rank audit, etf_rank_audit_2026-11-11): the fund figure is the
-    audit's minimal composite ("R2"), not the pinned-confidence
-    percent. For every researched fund row in this frame population,
-    the score is the mean of the within-population percentile ranks
-    (0-100, higher = better, production orientation) of three legs:
-    expense (cheaper = better), z_blowoff (calmer = better), z_aum
-    (larger = better). Rules: a leg counts for a fund when its value
-    is present AND the leg varies across the population (a constant
-    leg carries no ranking information and is excluded for everyone
-    that day); a fund with no usable leg scores exactly 50.0 and is
-    flagged score_fallback=True. Research does not adjust this score;
-    it only gates (strike tiers, the floor, ratings).
+    """ETF SCORE — ABSOLUTE GRADE (2026-11-12, Dan approved; replaces
+    the same-day percentile design after his "98 looks invincible and
+    the same fund prints different scores on different pages"
+    objection): the fund figure is an absolute grade, not a
+    within-frame ranking. Each of the same three legs the rank audit
+    settled on (expense, size, blowoff calm) is graded 0-100 against
+    a FIXED anchor table (piecewise-linear interpolation, clamped at
+    the ends; the size leg interpolates in log space), and the grade
+    is the equal mean of the available leg grades. A leg is available
+    when its input is present; unlike the percentile composite there
+    is NO constant-leg exclusion, because a fixed yardstick grades a
+    constant leg like any other. A fund with no usable leg grades
+    exactly 50.0 and is flagged score_fallback=True. The grade is a
+    property of the fund: the same fund prints the same number on the
+    daily and watchlist pages and across days until its own fee,
+    size, or spike changes. It claims only "cheap, large, and calm
+    against a fixed demanding standard"; the anchors are judgment set
+    against the 2022-2025 point-in-time expense/AUM distributions,
+    not a return-validated relationship. Research does not adjust
+    this grade; it only gates (strike tiers, the floor, ratings).
 
-    The expense leg is sourced from the SEC filings feed
-    (expense_feed.py) directly: rows reach Phase B with expense_ratio
-    None (yfinance supplies none for researched funds) and the
-    Phase A wiring's ratios live on the quant frame, not here. The
-    feed never raises; on any failure the row's own expense_ratio is
-    the fallback, then no leg. Overrides est_v2 for fund rows, and
-    est_next_1y too when the live mode made est_v2 the effective est.
-    etf_r2_score / etf_r2_legs ride along for audit.
+    Anchor tables (input -> grade):
+      expense ratio (decimal): 0.0->100, 0.0003->90, 0.0006->75,
+        0.001->60, 0.002->45, 0.0035->30, 0.005->18, 0.0075->8,
+        0.01->2. (100 requires a literally free fund.)
+      AUM (dollars, log space): 1e7->4, 5e7->10, 2.5e8->22, 1e9->36,
+        5e9->50, 2.5e10->64, 1e11->78, 5e11->90, 2e12->100.
+      raw spike: 0.0->85, 0.02->70, 0.05->55, 0.10->40, 0.18->25,
+        0.30->12, 0.45->4. (The leg tops at 85, not 100: the spike
+        measure can only certify that no spike was detected, which is
+        weaker evidence than a positive fact like a fee or a size.)
+
+    Leg inputs: expense is sourced from the SEC filings feed
+    (expense_feed.py) directly, exactly as the percentile design did
+    (rows reach Phase B with expense_ratio None; the feed never
+    raises; on any failure the row's own expense_ratio is the
+    fallback, then no leg). AUM is the row's aum, and must be > 0.
+    Blowoff grades the RAW spike (max(ret_2w-0.15,0) +
+    max(dist_20dma-0.10,0)), never z_blowoff, which is relative to
+    the day's field by construction. The spike is computed in
+    build_etf_scores, stamped on the quant frame as df["spike"], and
+    carried through both bundle builders as cand["spike"]. For
+    bundles written before the stamp existed, the leg falls back to
+    recomputing the spike from the row's ret_2w/dist_20dma when
+    present, and to the ret_2w component alone when only that is
+    present (a lower bound on the spike, so an upper bound on the
+    leg grade); with none of these present the leg is unavailable.
+
+    The grade overrides est_v2 for fund rows, and est_next_1y too
+    when the live mode made est_v2 the effective est; the fund floor
+    (50, picks only) and selection read the grade. The percentile
+    composite is still computed exactly as before and recorded as
+    etf_r2_score / etf_r2_legs for audit continuity, but it no longer
+    drives est or selection. etf_abs_score / etf_abs_legs ride along
+    on fund rows.
     """
     if "kind" not in sub.columns:
         return sub
@@ -5285,29 +5332,95 @@ def _etf_r2_override(sub):
     leg_names = ["z_blowoff", "z_aum", "z_expense"]
     leg_ok = [any(v is not None for v in p)
               for p in (p_blow, p_aum, p_exp)]
-    scores, leg_counts, fallbacks = [], [], []
+    scores, leg_counts = [], []
     for j, r in enumerate(rows):
         av = [p[j] for p in (p_blow, p_aum, p_exp) if p[j] is not None]
         leg_counts.append(len(av))
         if av:
             scores.append(sum(av) / len(av))
-            fallbacks.append(False)
         else:
             scores.append(50.0)
-            fallbacks.append(True)
-            log(f"etf score: {r.get('ticker')} has no usable leg - "
-                f"fallback score 50.0 (score_fallback)")
-    log(f"etf score: {len(rows)} funds scored; usable legs: "
+    log(f"etf score (percentile, audit only): {len(rows)} funds "
+        f"scored; usable legs: "
         f"{[n for n, ok in zip(leg_names, leg_ok) if ok]}; "
-        f"funds on <3 legs: {sum(1 for c in leg_counts if c < 3)}; "
+        f"funds on <3 legs: {sum(1 for c in leg_counts if c < 3)}")
+
+    # ---- ABSOLUTE GRADE: fixed anchor tables (see docstring). ----
+    _ABS_EXPENSE = [(0.0, 100.0), (0.0003, 90.0), (0.0006, 75.0),
+                    (0.001, 60.0), (0.002, 45.0), (0.0035, 30.0),
+                    (0.005, 18.0), (0.0075, 8.0), (0.01, 2.0)]
+    _ABS_AUM_LOG = [(float(np.log(x)), y) for x, y in
+                    [(1e7, 4.0), (5e7, 10.0), (2.5e8, 22.0),
+                     (1e9, 36.0), (5e9, 50.0), (2.5e10, 64.0),
+                     (1e11, 78.0), (5e11, 90.0), (2e12, 100.0)]]
+    _ABS_BLOWOFF = [(0.0, 85.0), (0.02, 70.0), (0.05, 55.0),
+                    (0.10, 40.0), (0.18, 25.0), (0.30, 12.0),
+                    (0.45, 4.0)]
+
+    def _anchor_grade(x, anchors):
+        if x is None or x != x:
+            return None
+        if x <= anchors[0][0]:
+            return anchors[0][1]
+        if x >= anchors[-1][0]:
+            return anchors[-1][1]
+        for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
+            if x0 <= x <= x1:
+                return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        return anchors[-1][1]
+
+    def _exp_raw(r):
+        v = _feed_exp.get(str(r.get("ticker")))
+        if v is None:
+            v = _safe(r.get("expense_ratio"))
+        return float(v) if v is not None else None
+
+    def _spike_raw(r):
+        v = _safe(r.get("spike"))
+        if v is not None:
+            return float(v)
+        r2w = _safe(r.get("ret_2w"))
+        d20 = _safe(r.get("dist_20dma"))
+        if r2w is None and d20 is None:
+            return None
+        s = 0.0
+        if r2w is not None:
+            s += max(float(r2w) - 0.15, 0.0)
+        if d20 is not None:
+            s += max(float(d20) - 0.10, 0.0)
+        return s
+
+    abs_scores, abs_leg_counts, abs_leg_detail, fallbacks = [], [], [], []
+    for r in rows:
+        g_exp = _anchor_grade(_exp_raw(r), _ABS_EXPENSE)
+        _aum = _safe(r.get("aum"))
+        g_aum = (_anchor_grade(float(np.log(float(_aum))), _ABS_AUM_LOG)
+                 if _aum is not None and float(_aum) > 0 else None)
+        g_blow = _anchor_grade(_spike_raw(r), _ABS_BLOWOFF)
+        legs = {"expense": g_exp, "aum": g_aum, "blowoff": g_blow}
+        av = [g for g in legs.values() if g is not None]
+        abs_leg_detail.append(legs)
+        abs_leg_counts.append(len(av))
+        if av:
+            abs_scores.append(sum(av) / len(av))
+            fallbacks.append(False)
+        else:
+            abs_scores.append(50.0)
+            fallbacks.append(True)
+            log(f"etf grade: {r.get('ticker')} has no usable leg - "
+                f"fallback grade 50.0 (score_fallback)")
+    log(f"etf grade (absolute): {len(rows)} funds graded; "
+        f"funds on <3 legs: {sum(1 for c in abs_leg_counts if c < 3)}; "
         f"fallbacks: {sum(fallbacks)}")
     sub.loc[mask, "etf_r2_score"] = scores
     sub.loc[mask, "etf_r2_legs"] = leg_counts
+    sub.loc[mask, "etf_abs_score"] = abs_scores
+    sub.loc[mask, "etf_abs_legs"] = abs_leg_detail
     sub.loc[mask, "score_fallback"] = fallbacks
     sub.loc[~mask, "score_fallback"] = False
-    sub.loc[mask, "est_v2"] = scores
+    sub.loc[mask, "est_v2"] = abs_scores
     if _EV_MODE == "live":
-        sub.loc[mask, "est_next_1y"] = scores
+        sub.loc[mask, "est_next_1y"] = abs_scores
     return sub
 
 def add_research_columns(df, llm_path=True):
@@ -5894,6 +6007,7 @@ def _watchlist_cand(r, headlines):
     if r.get("kind") == "etf":
         cand["expense_ratio"] = _safe(r.get("expense_ratio"))
         cand["aum"] = _safe(r.get("aum"))
+        cand["spike"] = _safe(r.get("spike"))
     cand["country"] = r.get("country", "")
     return cand
 
@@ -7620,6 +7734,7 @@ def main():
             if r.get("kind") == "etf":
                 cand["expense_ratio"] = _safe(r.get("expense_ratio"))
                 cand["aum"] = _safe(r.get("aum"))
+                cand["spike"] = _safe(r.get("spike"))
             cands.append(cand)
 
         if args.llm_backend == "agent":
