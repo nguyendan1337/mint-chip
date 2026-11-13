@@ -175,6 +175,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   margin-top: 8px; padding: 8px 4px 6px 34px; }
 .row.open .blurb { display: block; }
 .row .blurb .mc-what { margin-bottom: 5px; }
+.row .blurb .mc-notpicked { margin-top: 6px; color: #a8b3a8; }
+.row .blurb .mc-notpicked b { color: #e6efe6; font-weight: 600; }
 .chev { display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; font-size: 13px; line-height: 1; color: #cfd6cf;
   border: 1px solid rgba(255,255,255,0.22); border-radius: 50%;
@@ -182,6 +184,18 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
   transition: transform 0.18s ease, background 0.18s ease; }
 .row.open .chev { transform: rotate(90deg);
   background: rgba(255,255,255,0.09); }
+@media (min-width: 701px) {
+  /* EXPAND BUTTON AT THE CARD'S RIGHT END (2026-11-13, Dan's
+     directive): on desktop the chevron used to sit right after the
+     name, landing mid-card; the conventional trailing spot is the
+     far right edge, level with the row's first line. The extra
+     right padding keeps the last column clear of the button, and
+     the header rows share it so the columns stay aligned. */
+  .row { padding-right: 54px; }
+  .row .chev { position: absolute; right: 15px; top: 27px;
+    margin-left: 0; transform: translateY(-50%); }
+  .row.open .chev { transform: translateY(-50%) rotate(90deg); }
+}
 .rchip.hold { color: #ffd54f; border-color: rgba(255,213,79,0.40);
   background: rgba(255,213,79,0.10); }
 .rchip.sell { color: #f87171; border-color: rgba(248,113,113,0.40);
@@ -220,7 +234,7 @@ a.navbtn:hover { background:
 <body>
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
-<div class="subhead">Watchlist: by expected return / ETF score, 2026-11-13 3:30am PT</div>
+<div class="subhead">Watchlist: by expected return / ETF score, 2026-11-13 9:36am PT</div>
 <div class="navwrap"><a class="navbtn" href="index.html">&larr; Mint picks</a></div>
 <h2>Stocks: by expected return</h2>
 <div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected return</button></div>
