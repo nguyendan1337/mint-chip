@@ -234,10 +234,10 @@ a.navbtn:hover { background:
 <body>
 <h1>Mint <span class="chip">(Chip)</span></h1>
 <div class="tagline">Straight from the Mint.</div>
-<div class="subhead">Watchlist: by expected return / ETF score, 2026-11-13 9:55am PT</div>
+<div class="subhead">Watchlist: by expected return / ETF score, 2026-11-13 1:13pm PT</div>
 <div class="navwrap"><a class="navbtn" href="index.html">&larr; Mint picks</a></div>
 <h2>Stocks: by expected return</h2>
-<div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">Expected return</button><button class="sbtn" data-k="rate">Rating</button></div>
+<div class="sortctl" data-pl="pl0"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn" data-k="ev">Expected return</button><button class="sbtn on" data-k="rate">Rating</button></div>
 
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
@@ -439,7 +439,7 @@ a.navbtn:hover { background:
 </div>
 </div>
 <h2>ETFs: by ETF score</h2>
-<div class="sortctl" data-pl="pl1"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn on" data-k="ev">ETF score</button><button class="sbtn" data-k="rate">Rating</button></div>
+<div class="sortctl" data-pl="pl1"><span>Sort by:</span> <button class="sbtn" data-k="r1y">1-year return</button><button class="sbtn" data-k="ev">ETF score</button><button class="sbtn on" data-k="rate">Rating</button></div>
 
 <div class="row head">
   <div># / Ticker / Name</div><div>Sector / Category</div>
@@ -573,6 +573,11 @@ document.querySelectorAll('.sortctl').forEach(function(ctl){
       if(pl.id === 'pl2' || pl.id === 'pl3'){ applyHmLimit(); }
     });
   });
+});
+// Watchlist default sort: Rating, via the manual-tap path.
+document.querySelectorAll('.sortctl').forEach(function(ctl){
+  var b = ctl.querySelector('[data-k="rate"]');
+  if(b) b.click();
 });
 function applyHmLimit(){
   ['pl2', 'pl3'].forEach(function(pid){
