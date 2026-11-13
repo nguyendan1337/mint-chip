@@ -1882,6 +1882,15 @@ POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
 # the rehearsal report's ship step they are hard-coded ON here.
 _UPGRADE_F8 = True
 _UPGRADE_MOMPOOL = True
+# FUNNEL REDESIGN (2026-11-12, Dan's commission — screen study):
+# _S3_FUNNEL replaces the stock funnel's pre-filter + precise-1y
+# screen with the universe-level S3 relative-strength blend (see
+# _s3_screen_universe). The incumbent block remains in main() as
+# the fail-safe path: any data doubt runs it verbatim.
+_S3_FUNNEL = True
+_S3_FUNNEL_CAP = 1000       # post-screen valve, ranked by blend
+_S3_MIN_COVERAGE = 0.90     # fail-safe: priced share of universe
+_S3_MIN_POPULATION = 1000   # fail-safe: minimum z population
 MOMPOOL_CORE_N = 150        # Change P core size (plan DECISION A)
 
 
@@ -4553,6 +4562,20 @@ def _frame_row(r, outcome, reason):
                           if isinstance(r.get("etf_abs_fill"), dict)
                           else None)
                          if str(r.get("kind", "")) == "etf" else None),
+        # The size value the ETF Score's size leg was graded from
+        # (aum_feed ship, 2026-11-12): the value itself, its source
+        # ("nport" = the fund's own SEC N-PORT filing, "row" = the
+        # row's aum, "screener" = the listing's screener_aum), and
+        # for filings the report period end and filing date — so
+        # any printed grade can be re-derived. None for stocks.
+        "aum_graded": (_safe(r.get("aum_graded"))
+                       if str(r.get("kind", "")) == "etf" else None),
+        "aum_source": (r.get("aum_source")
+                       if str(r.get("kind", "")) == "etf" else None),
+        "aum_period_end": (r.get("aum_period_end")
+                           if str(r.get("kind", "")) == "etf" else None),
+        "aum_filing_date": (r.get("aum_filing_date")
+                            if str(r.get("kind", "")) == "etf" else None),
         "score_fallback": (bool(r.get("score_fallback"))
                            if str(r.get("kind", "")) == "etf" else None),
         "outcome": outcome,
@@ -5308,7 +5331,12 @@ def _etf_r2_override(sub):
     (expense_feed.py) directly, exactly as the percentile design did
     (rows reach Phase B with expense_ratio None; the feed never
     raises; on any failure the row's own expense_ratio is the
-    fallback, then no leg). AUM is the row's aum, and must be > 0.
+    fallback, then no leg). AUM is filings-primary since the
+    2026-11-12 aum_feed ship: aum_feed.py's SEC N-PORT net assets
+    first, then the row's aum, then the listing's screener_aum;
+    the value must be > 0. (The base scorer's z_aum is NOT fed
+    from this chain — it keeps the row value exactly as before;
+    only this grade's size leg changed source.)
     Blowoff grades the RAW spike (max(ret_2w-0.15,0) +
     max(dist_20dma-0.10,0)), never z_blowoff, which is relative to
     the day's field by construction. The spike is computed in
@@ -5344,6 +5372,22 @@ def _etf_r2_override(sub):
                    for r in rows}) or {}
     except Exception:
         _feed_exp = {}
+
+    # AUM FEED (SEC N-PORT net assets; aum_feed.py): filings-primary
+    # for the grade's size leg — the fund's own reported net assets
+    # outrank the yfinance row value, which is stale in places and
+    # occasionally another fund's number entirely (the DCOR case in
+    # etf_upgrade_plan_2026-11-12/leg_backfill/REPORT.md).  The feed
+    # never raises; on any failure the size leg falls back to the
+    # row's aum, then the listing's screener_aum, then no leg —
+    # the pre-feed behaviour for whatever the feed cannot cover.
+    _feed_aum = {}
+    try:
+        from aum_feed import net_assets_batch as _afb
+        _feed_aum = _afb(
+            [str(r.get("ticker")) for r in rows]) or {}
+    except Exception:
+        _feed_aum = {}
 
     def _pct(values):
         s = pd.Series(values, dtype=float)
@@ -5410,6 +5454,28 @@ def _etf_r2_override(sub):
             v = _safe(r.get("expense_ratio"))
         return float(v) if v is not None else None
 
+    def _aum_raw(r):
+        """(value, source, feed-detail) for the grade's size leg.
+
+        Filings-primary order: aum_feed's N-PORT net assets, then
+        the row's own aum, then the listing's screener_aum.  Scope
+        boundary (2026-11-12): this chain feeds ONLY this grade's
+        size leg — the base scorer's z_aum and every other consumer
+        keep reading the row value exactly as before.
+        """
+        detail = _feed_aum.get(str(r.get("ticker")))
+        if isinstance(detail, dict):
+            v = detail.get("aum")
+            if v is not None and float(v) > 0:
+                return float(v), "nport", detail
+        v = _safe(r.get("aum"))
+        if v is not None and float(v) > 0:
+            return float(v), "row", None
+        v = _safe(r.get("screener_aum"))
+        if v is not None and float(v) > 0:
+            return float(v), "screener", None
+        return None, None, None
+
     def _spike_raw(r):
         v = _safe(r.get("spike"))
         if v is not None:
@@ -5427,11 +5493,13 @@ def _etf_r2_override(sub):
 
     abs_scores, abs_leg_counts, abs_leg_detail, fallbacks = [], [], [], []
     abs_fill_detail = []
+    aum_stamps = []
     for r in rows:
         g_exp = _anchor_grade(_exp_raw(r), _ABS_EXPENSE)
-        _aum = _safe(r.get("aum"))
-        g_aum = (_anchor_grade(float(np.log(float(_aum))), _ABS_AUM_LOG)
-                 if _aum is not None and float(_aum) > 0 else None)
+        _aum_v, _aum_src, _aum_detail = _aum_raw(r)
+        g_aum = (_anchor_grade(float(np.log(_aum_v)), _ABS_AUM_LOG)
+                 if _aum_v is not None else None)
+        aum_stamps.append((_aum_v, _aum_src, _aum_detail))
         g_blow = _anchor_grade(_spike_raw(r), _ABS_BLOWOFF)
         legs = {"expense": g_exp, "aum": g_aum, "blowoff": g_blow}
         av = [g for g in legs.values() if g is not None]
@@ -5468,6 +5536,17 @@ def _etf_r2_override(sub):
         log(f"etf grade F8: completeness correction active; "
             f"{sum(1 for c in abs_leg_counts if c < 3)} funds on <3 legs "
             f"repriced by the neutral fill")
+    aum_vals = [s[0] for s in aum_stamps]
+    aum_srcs = [s[1] for s in aum_stamps]
+    aum_pends = [((s[2] or {}).get("period_end")
+                  if s[1] == "nport" else None) for s in aum_stamps]
+    aum_fdates = [((s[2] or {}).get("filing_date")
+                   if s[1] == "nport" else None) for s in aum_stamps]
+    log(f"aum feed: size leg source - nport filings "
+        f"{sum(1 for s in aum_srcs if s == 'nport')}/{len(rows)}, "
+        f"row aum {sum(1 for s in aum_srcs if s == 'row')}, "
+        f"screener aum {sum(1 for s in aum_srcs if s == 'screener')}, "
+        f"missing {sum(1 for s in aum_srcs if s is None)}")
     sub.loc[mask, "etf_r2_score"] = scores
     sub.loc[mask, "etf_r2_legs"] = leg_counts
     sub.loc[mask, "etf_abs_score"] = abs_scores
@@ -5476,6 +5555,10 @@ def _etf_r2_override(sub):
     sub.loc[mask, "etf_abs_fill"] = abs_fill_detail
     sub.loc[mask, "score_fallback"] = fallbacks
     sub.loc[~mask, "score_fallback"] = False
+    sub.loc[mask, "aum_graded"] = aum_vals
+    sub.loc[mask, "aum_source"] = aum_srcs
+    sub.loc[mask, "aum_period_end"] = aum_pends
+    sub.loc[mask, "aum_filing_date"] = aum_fdates
     sub.loc[mask, "est_v2"] = abs_scores
     if _EV_MODE == "live":
         sub.loc[mask, "est_next_1y"] = abs_scores
@@ -7190,6 +7273,130 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
     return out
 
 
+def _s3_screen_universe(cache, universe, bench_closes, benchmark):
+    """UNIVERSE-LEVEL S3 SCREEN (funnel redesign, 2026-11-12 — the
+    screen that passed the screen-study tournament, computed the
+    way the tournament computed it: over the full universe, before
+    any return-based filtering).
+
+    For every name in the cached listing, take its returns relative
+    to the benchmark over three windows (1y, 6m skipping the last
+    month, 3m — build_scores' exact expressions), z-score each
+    window's relative returns across the priced population
+    (mean/sd, ddof=1; a missing window contributes z = 0, the
+    tournament's rule), and admit the name when the equal-weight
+    blend of the three z's is > 0. Admissions are ranked by blend
+    and truncated at _S3_FUNNEL_CAP (a post-screen safety valve —
+    the only cap in the redesigned funnel).
+
+    Returns (outperformers, closes) on success. Returns None on ANY
+    data doubt — benchmark windows unmeasurable, an empty or
+    partial universe price pass, zero admissions on a healthy
+    population, or an exception — and the caller then runs the
+    incumbent funnel verbatim. A z-blend is a population statistic:
+    computed over a partial population it is a different screen,
+    so the redesign never screens on one.
+    """
+    from cache import StepCache
+    try:
+        bpx = bench_closes.get(benchmark) if bench_closes else None
+        if bpx is None or len(bpx.dropna()) < 2:
+            log("S3 FUNNEL FALLBACK: benchmark series missing — "
+                "running the incumbent funnel")
+            return None
+        b1 = calc_return(bpx)
+        b6 = (calc_return(bpx.iloc[:-21], 126)
+              if len(bpx.dropna()) > 21 else np.nan)
+        b3 = calc_return(bpx, 63)
+        if pd.isna(b1) or pd.isna(b6) or pd.isna(b3):
+            log("S3 FUNNEL FALLBACK: a benchmark window return is "
+                "NaN — running the incumbent funnel")
+            return None
+        tickers = [u["ticker"] for u in universe
+                   if u["ticker"] not in BENCHMARK_CHOICES]
+        pkey = "prices_" + StepCache.tickers_key(tickers)
+        closes = cache.get(pkey)
+        if closes is None:
+            closes = download_prices(tickers, period="1y")
+            if closes:
+                cache.put(pkey, closes)
+                _cache_put_px(cache, closes)
+        if not closes:
+            log("S3 FUNNEL FALLBACK: universe price download "
+                "returned nothing — running the incumbent funnel")
+            return None
+        coverage = len(closes) / len(tickers) if tickers else 0.0
+        if coverage < _S3_MIN_COVERAGE or \
+                len(closes) < _S3_MIN_POPULATION:
+            log(f"S3 FUNNEL FALLBACK: universe price coverage "
+                f"{coverage:.0%} ({len(closes)}/{len(tickers)} "
+                f"priced) is below the fail-safe bar — running the "
+                f"incumbent funnel")
+            return None
+
+        def _rets(s):
+            if s is None:
+                return (np.nan, np.nan, np.nan)
+            r1 = calc_return(s)
+            r6 = (calc_return(s.iloc[:-21], 126)
+                  if len(s.dropna()) > 21 else np.nan)
+            r3 = calc_return(s, 63)
+            return (r1, r6, r3)
+
+        def _z(x):
+            x = np.asarray(x, dtype=float)
+            mu = np.nanmean(x)
+            sd = np.nanstd(x, ddof=1)
+            if not sd or np.isnan(sd):
+                return np.zeros(len(x))
+            z = (x - mu) / sd
+            return np.where(np.isnan(z), 0.0, z)
+
+        rows = []
+        rel1, rel6, rel3 = [], [], []
+        for u in universe:
+            t = u["ticker"]
+            if t in BENCHMARK_CHOICES:
+                continue
+            r = _rets(closes.get(t))
+            rows.append((u, r))
+            rel1.append(r[0] - b1)
+            rel6.append(r[1] - b6)
+            rel3.append(r[2] - b3)
+        blend = _z(rel1) + _z(rel6) + _z(rel3)
+        admitted = []
+        for i, (u, r) in enumerate(rows):
+            if blend[i] > 0:
+                c = dict(u)
+                c["ret_1y"] = r[0]
+                c["s3_blend"] = float(blend[i])
+                admitted.append(c)
+        if not admitted:
+            log("S3 FUNNEL FALLBACK: the blend admitted zero names "
+                "on a healthy population — a data failure, not a "
+                "market verdict; running the incumbent funnel")
+            return None
+        admitted.sort(key=lambda d: d["s3_blend"], reverse=True)
+        if len(admitted) > _S3_FUNNEL_CAP:
+            cut = admitted[_S3_FUNNEL_CAP - 1]["s3_blend"]
+            log(f"S3 funnel cap: {len(admitted)} admitted > cap "
+                f"{_S3_FUNNEL_CAP}; truncating the lowest-blend "
+                f"{len(admitted) - _S3_FUNNEL_CAP} names "
+                f"(cut at blend {cut:+.3f})")
+            admitted = admitted[:_S3_FUNNEL_CAP]
+        log(f"S3 funnel: universe {len(universe)} -> priced "
+            f"{len(closes)} ({coverage:.0%}) -> admitted "
+            f"{len(admitted)} (blend > 0, cap {_S3_FUNNEL_CAP})")
+        log("S3 admitted top 10 by blend: " +
+            ", ".join(f"{c['ticker']}({c['s3_blend']:+.2f})"
+                      for c in admitted[:10]))
+        return admitted, closes
+    except Exception as e:
+        log(f"S3 FUNNEL FALLBACK: exception ({e}) — running the "
+            f"incumbent funnel")
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Free stock screener with dynamic news risk")
     ap.add_argument("--benchmark", default="SPMO", choices=BENCHMARK_CHOICES)
@@ -7500,73 +7707,89 @@ def main():
         print("Could not fetch screener universe. Try again later.")
         sys.exit(1)
 
-    # 3) Beat-the-benchmark filter (your rule: else just buy the benchmark).
-    # Pre-filter on the screener's 52w % with a little slack (methodology differs
-    # slightly from our adjusted-close calc), then verify precisely from prices.
-    bench_pct = bench_ret * 100
-    cands = [u for u in universe if u["pct_52w"] > bench_pct - 5]
-    cands.sort(key=lambda d: d["pct_52w"], reverse=True)
-    if args.test:
-        cands = cands[:60]
-    elif len(cands) > args.max_outperformers:
-        log(f"Capping outperformers at {args.max_outperformers} (safety cap)")
-        cands = cands[:args.max_outperformers]
-    print(f"\n{len(cands)} candidate outperformers from {len(universe)}-stock universe "
-          f"(screener 52w% > {bench_pct - 5:.0f}%)")
-    log(f"universe: {len(universe)} stocks pulled from yfinance screener "
-        f"(mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f})")
-    log(f"benchmark {args.benchmark}: 1y={bench_ret:+.1%} -> 52w% cutoff "
-        f">{bench_pct - 5:.0f}% (5pp slack for methodology drift)")
-    log(f"candidate outperformers: {len(cands)} (sorted by screener 52w%)")
-    log("raw input top 20 by screener 52w%: " +
-        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands[:20]))
-    log(f"all candidates by screener 52w% ({len(cands)}): " +
-        ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands))
+    # 3) The stock screen. FUNNEL REDESIGN (2026-11-12): with
+    # _S3_FUNNEL on, _s3_screen_universe computes the S3 blend
+    # over the full universe BEFORE any return-based filtering
+    # and its admitted set IS the screen; the incumbent block
+    # below (vendor pre-filter, 800 cap, precise 1y test) runs
+    # only as the fail-safe — when the S3 pass returns None (it
+    # never screens on a partial population) or the switch is
+    # off. The incumbent block is verbatim, reindented only.
+    _s3_done = False
+    if _S3_FUNNEL:
+        _s3_res = _s3_screen_universe(cache, universe, bench_closes,
+                                      args.benchmark)
+        if _s3_res is not None:
+            outperformers, closes = _s3_res
+            _s3_done = True
+    if not _s3_done:
+        # 3) Beat-the-benchmark filter (your rule: else just buy the benchmark).
+        # Pre-filter on the screener's 52w % with a little slack (methodology differs
+        # slightly from our adjusted-close calc), then verify precisely from prices.
+        bench_pct = bench_ret * 100
+        cands = [u for u in universe if u["pct_52w"] > bench_pct - 5]
+        cands.sort(key=lambda d: d["pct_52w"], reverse=True)
+        if args.test:
+            cands = cands[:60]
+        elif len(cands) > args.max_outperformers:
+            log(f"Capping outperformers at {args.max_outperformers} (safety cap)")
+            cands = cands[:args.max_outperformers]
+        print(f"\n{len(cands)} candidate outperformers from {len(universe)}-stock universe "
+              f"(screener 52w% > {bench_pct - 5:.0f}%)")
+        log(f"universe: {len(universe)} stocks pulled from yfinance screener "
+            f"(mcap>=${args.min_mcap:.0f}B, price>=${args.min_price:.0f})")
+        log(f"benchmark {args.benchmark}: 1y={bench_ret:+.1%} -> 52w% cutoff "
+            f">{bench_pct - 5:.0f}% (5pp slack for methodology drift)")
+        log(f"candidate outperformers: {len(cands)} (sorted by screener 52w%)")
+        log("raw input top 20 by screener 52w%: " +
+            ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands[:20]))
+        log(f"all candidates by screener 52w% ({len(cands)}): " +
+            ", ".join(f"{c['ticker']}({c['pct_52w']:.0f}%)" for c in cands))
 
-    cand_tickers = [c["ticker"] for c in cands if c["ticker"] not in BENCHMARK_CHOICES]
-    prices_key = "prices_" + StepCache.tickers_key(cand_tickers)
-    closes = cache.get(prices_key)
-    if closes is None:
-        closes = download_prices(cand_tickers, period="1y")
-        cache.put(prices_key, closes)
-        _cache_put_px(cache, closes)
+        cand_tickers = [c["ticker"] for c in cands if c["ticker"] not in BENCHMARK_CHOICES]
+        prices_key = "prices_" + StepCache.tickers_key(cand_tickers)
+        closes = cache.get(prices_key)
+        if closes is None:
+            closes = download_prices(cand_tickers, period="1y")
+            cache.put(prices_key, closes)
+            _cache_put_px(cache, closes)
 
-    # Precise 1y return check vs benchmark, same methodology
-    outperformers = []
-    n_priced = 0
-    for c in cands:
-        t = c["ticker"]
-        s = closes.get(t)
-        r = calc_return(s) if s is not None else np.nan
-        if not pd.isna(r):
-            n_priced += 1
-        if not pd.isna(r) and r > bench_ret:
-            c["ret_1y"] = r
-            outperformers.append(c)
-    # Outage gate: a 429 storm that yields few closes must not degrade into a
-    # false methodological conclusion ("just buy the benchmark"). If we
-    # couldn't price most candidates, the data is broken, not the market.
-    if cands:
-        price_cov = n_priced / len(cands)
-        log(f"price coverage: {price_cov:.0%} ({n_priced}/{len(cands)} candidates priced)")
-        if price_cov < 0.5:
-            print(f"ABORT: only {price_cov:.0%} of candidates priced — likely "
-                  f"a Yahoo outage. Not publishing a false 'buy the benchmark' run.")
-            sys.exit(2)
-    outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
-    print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
-    log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
-        f"({bench_ret:+.1%} 1y): {len(outperformers)}")
-    log("confirmed outperformer tickers: " +
-        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers))
-    if not outperformers:
-        print(f"No stocks beat the benchmark. Per your rule: just buy {args.benchmark}.")
-        sys.exit(0)
-    print("Top 5 outperformers:")
-    for c in outperformers[:5]:
-        print(f"  {c['ticker']:8s} {c['ret_1y']:+.0%}  {c['name'][:45]}")
-    log("confirmed top 10 by precise 1y return: " +
-        ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers[:10]))
+        # Precise 1y return check vs benchmark, same methodology
+        outperformers = []
+        n_priced = 0
+        for c in cands:
+            t = c["ticker"]
+            s = closes.get(t)
+            r = calc_return(s) if s is not None else np.nan
+            if not pd.isna(r):
+                n_priced += 1
+            if not pd.isna(r) and r > bench_ret:
+                c["ret_1y"] = r
+                outperformers.append(c)
+        # Outage gate: a 429 storm that yields few closes must not degrade into a
+        # false methodological conclusion ("just buy the benchmark"). If we
+        # couldn't price most candidates, the data is broken, not the market.
+        if cands:
+            price_cov = n_priced / len(cands)
+            log(f"price coverage: {price_cov:.0%} ({n_priced}/{len(cands)} candidates priced)")
+            if price_cov < 0.5:
+                print(f"ABORT: only {price_cov:.0%} of candidates priced — likely "
+                      f"a Yahoo outage. Not publishing a false 'buy the benchmark' run.")
+                sys.exit(2)
+        outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
+        print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
+        log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
+            f"({bench_ret:+.1%} 1y): {len(outperformers)}")
+        log("confirmed outperformer tickers: " +
+            ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers))
+        if not outperformers:
+            print(f"No stocks beat the benchmark. Per your rule: just buy {args.benchmark}.")
+            sys.exit(0)
+        print("Top 5 outperformers:")
+        for c in outperformers[:5]:
+            print(f"  {c['ticker']:8s} {c['ret_1y']:+.0%}  {c['name'][:45]}")
+        log("confirmed top 10 by precise 1y return: " +
+            ", ".join(f"{c['ticker']}({c['ret_1y']:+.0%})" for c in outperformers[:10]))
 
     # 4) Fundamentals for ALL outperformers (this is where trash gets identified)
     out_tickers = [c["ticker"] for c in outperformers]

@@ -147,28 +147,63 @@ def _ticker_key(ticker):
     return str(ticker or "").strip().upper().replace(".", "-")
 
 
+# CIK LINEAGE (2026-11-12, cik_diagnostic_2026-11-12): the SEC's
+# ticker map sometimes points a ticker at a SUCCESSOR registrant (a
+# merger vehicle, second-step conversion, or holdco reorganization)
+# whose filing history starts at the succession, while the operating
+# company's history sits under the legacy CIK. successor -> legacy.
+_CIK_LINEAGE = {
+    "0002115436": "0000034088",  # XOM: ExxonMobil Holdings <- Exxon Mobil Corp (2026-07-01)
+    "0002082866": "0001115055",  # PNFP: merger successor <- Pinnacle Financial Partners (2025)
+    "0002074176": "0001602065",  # VNOM: merger successor <- Viper Energy (2025)
+    "0002115119": "0001723596",  # CLBK: Columbia Financial /MD/ <- Columbia Financial (2026)
+    "0002152623": "0001593538",  # NAVI/JSM: Navient Holdings <- Navient Corp (2026-10-29)
+}
+
+
+def _lineage_ciks(cik):
+    """[cik] plus its legacy predecessor when cik is a known successor."""
+    legacy = _CIK_LINEAGE.get(cik)
+    return [cik, legacy] if legacy else [cik]
+
+
 def _cik_map():
-    """Ticker -> zero-padded CIK, disk-cached after the first fetch."""
+    """Ticker -> zero-padded CIK, disk-cached with a 30-day TTL.
+
+    CIK CACHE TTL (2026-11-12, cik_diagnostic_2026-11-12): the cache
+    previously never expired, which let SEC successor remappings
+    enter silently and stay forever. A stale cache is refreshed from
+    the SEC; if the refresh fails, the stale cache is used rather
+    than failing the feed (the feed's fail-safe contract)."""
     cached = _read_json(_CIK_CACHE_PATH)
     mapping = cached.get("tickers") if isinstance(cached, dict) else None
     if isinstance(mapping, dict) and mapping:
-        return mapping
-    response = _get("https://www.sec.gov/files/company_tickers.json")
-    raw = response.json()
+        fetched = _parse_date(cached.get("fetched_date"))
+        if fetched is not None and (_today() - fetched).days < 30:
+            return mapping
+    try:
+        response = _get("https://www.sec.gov/files/company_tickers.json")
+        raw = response.json()
+    except Exception:
+        if isinstance(mapping, dict) and mapping:
+            return mapping
+        raise
     rows = raw.values() if isinstance(raw, dict) else raw
-    mapping = {}
+    fresh = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         ticker = _ticker_key(row.get("ticker"))
         cik = row.get("cik_str")
         if ticker and cik is not None:
-            mapping[ticker] = str(int(cik)).zfill(10)
-    if not mapping:
+            fresh[ticker] = str(int(cik)).zfill(10)
+    if not fresh:
+        if isinstance(mapping, dict) and mapping:
+            return mapping
         raise ValueError("SEC company ticker map was empty")
     _write_json(_CIK_CACHE_PATH,
-                {"fetched_date": _today().isoformat(), "tickers": mapping})
-    return mapping
+                {"fetched_date": _today().isoformat(), "tickers": fresh})
+    return fresh
 
 
 def _companyfacts(cik):
@@ -182,6 +217,42 @@ def _companyfacts(cik):
         raise ValueError("companyfacts payload malformed")
     _facts_memo[cik] = payload
     return payload
+
+
+def _merge_facts(payloads):
+    """Union companyfacts payloads (legacy + successor CIKs): every
+    fact instance from every payload, exact duplicates dropped."""
+    merged = {"facts": {}}
+    for payload in payloads:
+        for taxonomy, concepts in (payload.get("facts") or {}).items():
+            t_out = merged["facts"].setdefault(taxonomy, {})
+            for concept, body in (concepts or {}).items():
+                c_out = t_out.setdefault(concept, {"units": {}})
+                for unit, rows in ((body or {}).get("units")
+                                   or {}).items():
+                    u_out = c_out["units"].setdefault(unit, [])
+                    seen = {(r.get("start"), r.get("end"), r.get("val"),
+                             r.get("filed"), r.get("form"))
+                            for r in u_out}
+                    for r in rows or []:
+                        key = (r.get("start"), r.get("end"),
+                               r.get("val"), r.get("filed"),
+                               r.get("form"))
+                        if key not in seen:
+                            u_out.append(r)
+                            seen.add(key)
+    return merged
+
+
+def _companyfacts_for(cik):
+    """Companyfacts for a resolved CIK; when the CIK is a known
+    successor, merged with its legacy predecessor so trailing
+    windows straddling the succession see the full history
+    (2026-11-12, cik_diagnostic_2026-11-12)."""
+    ciks = _lineage_ciks(cik)
+    if len(ciks) == 1:
+        return _companyfacts(cik)
+    return _merge_facts([_companyfacts(c) for c in ciks])
 
 
 def _duration_facts(cf, taxonomy, concept, unit):
@@ -384,7 +455,7 @@ def _compute(ticker, as_of):
     cik = _cik_map().get(_ticker_key(ticker))
     if not cik:
         return _undetermined()
-    cf = _companyfacts(cik)
+    cf = _companyfacts_for(cik)
     rep = _duration_facts(cf, "us-gaap", _REPURCHASE_CONCEPT, "USD")
     ocf = _duration_facts(cf, "us-gaap", _OCF_CONCEPT, "USD")
     concept_ever = any(r["filed"] <= as_of for r in rep)

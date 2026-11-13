@@ -126,28 +126,63 @@ def _ticker_key(ticker):
     return str(ticker or "").strip().upper().replace(".", "-")
 
 
+# CIK LINEAGE (2026-11-12, cik_diagnostic_2026-11-12): the SEC's
+# ticker map sometimes points a ticker at a SUCCESSOR registrant (a
+# merger vehicle, second-step conversion, or holdco reorganization)
+# whose filing history starts at the succession, while the operating
+# company's history sits under the legacy CIK. successor -> legacy.
+_CIK_LINEAGE = {
+    "0002115436": "0000034088",  # XOM: ExxonMobil Holdings <- Exxon Mobil Corp (2026-07-01)
+    "0002082866": "0001115055",  # PNFP: merger successor <- Pinnacle Financial Partners (2025)
+    "0002074176": "0001602065",  # VNOM: merger successor <- Viper Energy (2025)
+    "0002115119": "0001723596",  # CLBK: Columbia Financial /MD/ <- Columbia Financial (2026)
+    "0002152623": "0001593538",  # NAVI/JSM: Navient Holdings <- Navient Corp (2026-10-29)
+}
+
+
+def _lineage_ciks(cik):
+    """[cik] plus its legacy predecessor when cik is a known successor."""
+    legacy = _CIK_LINEAGE.get(cik)
+    return [cik, legacy] if legacy else [cik]
+
+
 def _cik_map():
-    """Ticker -> zero-padded CIK, disk-cached after the first fetch."""
+    """Ticker -> zero-padded CIK, disk-cached with a 30-day TTL.
+
+    CIK CACHE TTL (2026-11-12, cik_diagnostic_2026-11-12): the cache
+    previously never expired, which let SEC successor remappings
+    enter silently and stay forever. A stale cache is refreshed from
+    the SEC; if the refresh fails, the stale cache is used rather
+    than failing the feed (the feed's fail-safe contract)."""
     cached = _read_json(_CIK_CACHE_PATH)
     mapping = cached.get("tickers") if isinstance(cached, dict) else None
     if isinstance(mapping, dict) and mapping:
-        return mapping
-    response = _get("https://www.sec.gov/files/company_tickers.json")
-    raw = response.json()
+        fetched = _parse_date(cached.get("fetched_date"))
+        if fetched is not None and (_today() - fetched).days < 30:
+            return mapping
+    try:
+        response = _get("https://www.sec.gov/files/company_tickers.json")
+        raw = response.json()
+    except Exception:
+        if isinstance(mapping, dict) and mapping:
+            return mapping
+        raise
     rows = raw.values() if isinstance(raw, dict) else raw
-    mapping = {}
+    fresh = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         ticker = _ticker_key(row.get("ticker"))
         cik = row.get("cik_str")
         if ticker and cik is not None:
-            mapping[ticker] = str(int(cik)).zfill(10)
-    if not mapping:
+            fresh[ticker] = str(int(cik)).zfill(10)
+    if not fresh:
+        if isinstance(mapping, dict) and mapping:
+            return mapping
         raise ValueError("SEC company ticker map was empty")
     _write_json(_CIK_CACHE_PATH,
-                {"fetched_date": _today().isoformat(), "tickers": mapping})
-    return mapping
+                {"fetched_date": _today().isoformat(), "tickers": fresh})
+    return fresh
 
 
 def _filing_records(payload):
@@ -290,11 +325,23 @@ def _compute(ticker, as_of):
     transaction_start = _months_ago(as_of, 6)
     purchases = []
     seen = set()
-    filings = _all_filings(cik, filing_start, as_of)
-    if filings:
+    # CIK LINEAGE (2026-11-12, cik_diagnostic_2026-11-12): when the
+    # resolved CIK is a known successor, insider filings from before
+    # the succession sit under the legacy CIK. Scan both and union by
+    # accession; post-succession filings land on the successor, so
+    # the current map stays primary and is never overridden.
+    tagged = []
+    seen_accessions = set()
+    for filing_cik in _lineage_ciks(cik):
+        for filing in _all_filings(filing_cik, filing_start, as_of):
+            if filing["accession"] in seen_accessions:
+                continue
+            seen_accessions.add(filing["accession"])
+            tagged.append((filing_cik, filing))
+    if tagged:
         with ThreadPoolExecutor(max_workers=8) as pool:
             per_filing = list(pool.map(
-                lambda filing: _fetch_purchases(cik, filing), filings))
+                lambda pair: _fetch_purchases(pair[0], pair[1]), tagged))
     else:
         per_filing = []
     for filing_purchases in per_filing:
