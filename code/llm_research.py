@@ -621,6 +621,24 @@ def apply_llm_outputs(df, outputs, w_down=1.5, w_up=1.0, w_outlier=0.5):
         nf = normalize_facts(s.get("facts"))
         fact_strs.append(_json.dumps(nf) if nf is not None else "")
     df["llm_facts"] = fact_strs
+    # LOGGING PACKAGE (2026-11-13): recording-only pass-throughs so Phase
+    # B can stamp the full judgment record onto frame rows and pick
+    # ledger events — who coded the assessment (coder), the pre-pick
+    # news-sweep outcome when one was recorded (news_sweep), and the
+    # evidence behind the coded facts (facts_evidence, JSON string like
+    # llm_facts). None of these feed any score, gate, or ranking.
+    coders, sweeps, ev_strs = [], [], []
+    for _, r in df.iterrows():
+        s = stocks.get(r["ticker"], {})
+        coders.append(str(s.get("coder") or s.get("assessed_by") or ""))
+        _sw = s.get("news_sweep")
+        sweeps.append(_sw if isinstance(_sw, str) else "")
+        _ev = s.get("facts_evidence")
+        ev_strs.append(_json.dumps(_ev)
+                       if isinstance(_ev, dict) and _ev else "")
+    df["llm_coder"] = coders
+    df["llm_news_sweep"] = sweeps
+    df["llm_facts_evidence"] = ev_strs
     df["final_score"] = base - w_down * df["llm_event_dependence"] \
         + w_up * df["llm_continuation"] \
         - w_outlier * excess * df["llm_event_dependence"]

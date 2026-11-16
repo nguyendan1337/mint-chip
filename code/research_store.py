@@ -51,12 +51,22 @@ _ASSESSMENT_FIELDS = ("event_dependence", "continuation", "confidence",
                       "risks", "rationale", "assessed_date",
                       "news_checked_through", "earnings_note",
                       "exclude", "exclude_reason",
-                      "facts", "facts_evidence")
+                      "facts", "facts_evidence",
+                      # LOGGING PACKAGE (2026-11-13): "news_sweep" carries
+                      # the daily flow's pre-pick news-sweep outcome
+                      # (searched/found/changed) written on a re-score;
+                      # it must survive the store round-trip so Phase B
+                      # can pass it through to the pick's ledger event.
+                      # "coder" is not payload data — _clean_assessment
+                      # stamps it from the writer (--by), like
+                      # assessed_by below.
+                      "news_sweep", "coder")
 _COMPARE_FIELDS = ("event_dependence", "continuation", "confidence",
                    "risks", "rationale", "assessed_date",
                    "news_checked_through", "earnings_note",
                    "exclude", "exclude_reason",
-                   "facts", "facts_evidence")
+                   "facts", "facts_evidence",
+                   "news_sweep", "coder")
 
 
 def _today_str():
@@ -152,8 +162,12 @@ def locked_store(path=STORE_FILENAME):
 
 def _clean_assessment(assessment, by):
     a = dict(assessment or {})
+    # "coder" (logging package, 2026-11-13) is the canonical who-wrote-it
+    # stamp Phase B copies onto frame rows; it always carries the --by
+    # writer, never a payload-supplied value. "assessed_by" is kept for
+    # backward compatibility with existing store entries and readers.
     return {k: a.get(k) for k in _ASSESSMENT_FIELDS
-            } | {"assessed_by": by}
+            } | {"assessed_by": by, "coder": by}
 
 
 def _assessments_equal(a, b):
@@ -400,8 +414,13 @@ def to_outputs_format(store, flow=None):
     stocks = {}
     for t, entry in (store.get("tickers") or {}).items():
         a = (entry or {}).get("assessment") or {}
-        stocks[str(t).upper()] = {k: a.get(k) for k in _ASSESSMENT_FIELDS
-                                  if k in a}
+        rec = {k: a.get(k) for k in _ASSESSMENT_FIELDS if k in a}
+        # LOGGING PACKAGE (2026-11-13): entries written before the
+        # "coder" stamp existed carry only "assessed_by"; forward it as
+        # the coder so frame-row provenance covers the whole store.
+        if not rec.get("coder") and a.get("assessed_by"):
+            rec["coder"] = a.get("assessed_by")
+        stocks[str(t).upper()] = rec
     world = {}
     if flow:
         w = get_world(store, flow)

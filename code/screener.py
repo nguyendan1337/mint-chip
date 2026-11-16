@@ -1515,6 +1515,18 @@ RESEARCH_SCORE_W = {"dividend_up": 0.499, "buyback": 0.172,
                     "beat_streak": 0.081, "big_acquisition": -0.253}
 _EV_MODE = "legacy"
 
+# LOGGING PACKAGE (2026-11-13): how this run was started, from the
+# optional --run-trigger CLI argument ("scheduled" / "chain" /
+# "fallback" / "manual" as passed by the invoking cron body). The
+# pipeline never guesses: unrecognized or absent means "unspecified".
+# Stamped into every frame's meta block; selects nothing.
+_RUN_TRIGGER = "unspecified"
+
+# LOGGING PACKAGE (2026-11-13): outcome counts of the most recent
+# frame written by _write_frame_manifest ({"picked": n, ...}), read by
+# record_picks_ledger for the end-of-apply ledger reconciliation line.
+_LAST_FRAME_OUTCOMES = None
+
 # THEME RECORDING (2026-11-10): category -> theme entry, populated from
 # the research store's "themes" block by _adapt_research_store_outputs
 # whenever a store is adapted. Recording only: frame rows stamp these
@@ -1548,6 +1560,33 @@ def _facts_of(row):
         return normalize_facts(nf)
     except Exception:
         return nf if isinstance(nf, dict) else None
+
+
+def _facts_evidence_of(row):
+    """The evidence behind a row's coded facts — {fact: [{"title": ...,
+    "date": ...}]} — or None when no evidence was recorded. Reads the
+    llm_facts_evidence column (JSON string set by
+    llm_research.apply_llm_outputs) or a dict on the row. Recording
+    only (logging package, 2026-11-13): frames carry the evidence
+    dates next to the facts so the audit can check coding discipline
+    from frames alone."""
+    raw = None
+    try:
+        raw = row.get("llm_facts_evidence")
+    except Exception:
+        raw = None
+    if raw is None or (isinstance(raw, float) and raw != raw):
+        return None
+    if isinstance(raw, dict):
+        return raw if raw else None
+    if isinstance(raw, str) and raw.strip():
+        try:
+            import json as _json
+            ev = _json.loads(raw)
+            return ev if isinstance(ev, dict) and ev else None
+        except Exception:
+            return None
+    return None
 
 
 def _theme_entry_of(r):
@@ -2204,18 +2243,45 @@ def attach_implied_upside(df, cache=None):
     if cache is None:
         cache = StepCache("cache", log=log, date_str=pipeline_today())
     key = "implied_upside_" + StepCache.tickers_key(tickers)
+    # IU INPUTS (logging package, 2026-11-13): the detail map carries
+    # the analyst inputs behind the percentage (mean target, analyst
+    # count, observation date) from the SAME single info call per
+    # ticker, cached under its own key so the plain map above keeps
+    # its exact shape and cache. Recording only: the new columns ride
+    # the frame rows; the strike still reads implied_upside alone.
+    dkey = "implied_upside_detail_" + StepCache.tickers_key(tickers)
+    detail = cache.get(dkey)
+    if detail is None:
+        try:
+            from fuse_checks import implied_upside_detail_map
+            detail = implied_upside_detail_map(tickers) or {}
+        except Exception as e:
+            log(f"implied upside inputs: fetch failed ({e}) — iu "
+                f"input fields will be blank this run")
+            detail = {}
+        cache.put(dkey, detail)
     m = cache.get(key)
     if m is None:
-        try:
-            from fuse_checks import implied_upside_map
-            m = implied_upside_map(tickers) or {}
-        except Exception as e:
-            log(f"implied upside: fetch failed ({e}) — valuation strike "
-                f"will not be counted this run")
-            m = {}
+        if detail:
+            m = {t: (detail.get(t) or {}).get("implied_upside")
+                 for t in tickers}
+        else:
+            try:
+                from fuse_checks import implied_upside_map
+                m = implied_upside_map(tickers) or {}
+            except Exception as e:
+                log(f"implied upside: fetch failed ({e}) — valuation "
+                    f"strike will not be counted this run")
+                m = {}
         cache.put(key, m)
     df["implied_upside"] = df["ticker"].astype(str).map(
         lambda t: m.get(t))
+    df["iu_target"] = df["ticker"].astype(str).map(
+        lambda t: (detail.get(t) or {}).get("iu_target"))
+    df["iu_analysts"] = df["ticker"].astype(str).map(
+        lambda t: (detail.get(t) or {}).get("iu_analysts"))
+    df["iu_date"] = df["ticker"].astype(str).map(
+        lambda t: (detail.get(t) or {}).get("iu_date"))
     n_ok = int(df["implied_upside"].notna().sum())
     log(f"implied upside: available for {n_ok}/{len(df)} candidates "
         f"(unavailable names simply don't take the valuation strike)")
@@ -3236,46 +3302,55 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     # page it is replaced by Fresh Off the Mint (sm_html), falling back to
     # this only if the researcher didn't write suggested_moves.
     _wl_para = ("<p>Watchlist mode: every ticker you supplied is researched "
-                "and scored, sorted by expected return (ETF score for funds) "
-                "&mdash; no benchmark, no picking.</p>"
+                "and rated BUY, HOLD or SELL, shown in rating order by "
+                "default, with no benchmark and no picking.</p>"
                 if meta.get("mode") == "watchlist" else "")
     if meta.get("mode") != "watchlist" or not sm_html:
         about_html = ("<div class=\"note\">\n"
-"<p><b>About Mint.</b> Mint looks for American stocks and ETFs that have already\n"
-"proven themselves &mdash; names that beat their benchmark over the past year.\n"
-"For stocks that benchmark is VGT, a technology index; for ETFs it&apos;s VOO,\n"
-"which tracks the S&amp;P 500. Then Mint asks the harder question: which are most\n"
-"likely to keep winning without stumbling right after you buy?</p>\n"
+"<p><b>About Mint.</b> Mint looks for American stocks and funds that have already\n"
+"proven themselves, names beating their benchmark across a mix of recent\n"
+"windows: the past year, the past six months, and the past three months. For\n"
+"stocks that benchmark is VGT, a technology index; for funds it&apos;s VOO,\n"
+"which tracks the S&amp;P 500. Then Mint asks the harder question: which are\n"
+"most likely to keep doing well over the next year, even if the market dips\n"
+"along the way?</p>\n"
 + _wl_para +
-"<p>The philosophy is simple: avoid losses first. We look past recent gains to the\n"
+"<p>The philosophy is simple: guard against big losses, but judge a pick by\n"
+"the year ahead, not by a rough month. We look past recent gains to the\n"
 "business behind each name, the risks that could derail it, and whether its\n"
 "success looks durable or depends on hype, headlines, or a one-time event.\n"
-"Strong recent performance gets a name noticed. Strong evidence earns it a spot.\n"
-"If nothing clears the bar, we leave the slot empty &mdash; every pick earns its\n"
-"place.</p>\n"
+"Strong recent performance gets a name noticed. Strong evidence earns it a\n"
+"spot. If nothing clears the bar, we leave the slot empty: every pick earns\n"
+"its place.</p>\n"
 "<p class=\"stages-head\">How it works, in three stages:</p>\n"
-"<p><b>Find strength.</b> Every stock and ETF is screened for beating its benchmark\n"
-"over the past year, then scored on the quality of the business, the timing of\n"
-"entry, and the steadiness of the ride. Hard risk gates throw out anything too\n"
-"volatile or too deeply scarred.</p>\n"
-"<p><b>Question the story.</b> Survivors get researched &mdash; we read the news\n"
-"behind each name, not just the numbers. How much does the story depend on things\n"
-"outside the company&apos;s control: wars, hype, one-time windfalls? Too much, and\n"
-"it&apos;s out on the spot. For the rest: how likely is the strength to continue,\n"
-"and how much do we trust our own read?</p>\n"
-"<p><b>Weigh the odds.</b> Will the strength continue, or reverse? Those\n"
-"judgments become one number &mdash; expected return for a stock: the likely\n"
-"gains if it holds, minus the likely pain if it turns, adjusted for how much\n"
-"we trust our own read. A fund carries the same idea under its own label, the\n"
-"ETF score: a standing score from 0 to 100 that ranks the fund\n"
-"against the other researched funds on cost, size and short-term\n"
-"price strength \u2014 not a forecast for that one fund.</p>\n"
-"<p>Mint is built around a simple idea: find strength, question the story, weigh\n"
-"the odds, and only make room for what earns it.</p>\n"
-"<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t predict\n"
-"future returns. Also: there are gremlins that have control over the markets &mdash;\n"
-"they hate you personally, and they do the exact opposite of your buys and sells\n"
-"purely to spite you. Invest accordingly.</p>\n"
+"<p><b>Find strength.</b> Every stock and fund is screened for strength\n"
+"against its benchmark across those windows, then scored on the quality of\n"
+"the business, the timing of entry, and the steadiness of the ride. Hard\n"
+"risk gates bar names that have run too far too fast, fallen too hard, or\n"
+"swing too wildly.</p>\n"
+"<p><b>Question the story.</b> Survivors get researched. We read the news\n"
+"behind each name, not just the numbers. How much does the story depend on\n"
+"things outside the company&apos;s control: wars, hype, one-time windfalls?\n"
+"Too much, and it&apos;s out on the spot. For the rest: how likely is the\n"
+"strength to continue, and how much do we trust our own read?</p>\n"
+"<p><b>Weigh the odds.</b> For a stock, those judgments become one number,\n"
+"the expected return. It starts from a typical year&apos;s return, adds\n"
+"credit for things the company has actually done, like raising its\n"
+"dividend, buying back its own shares, or insiders buying with their own\n"
+"money, and subtracts for warning signs like a big acquisition or a buyback\n"
+"that only covered new shares handed out. The result is scaled by how much\n"
+"we trust our own read and how steady the business looks. A fund&apos;s\n"
+"figure is different: the ETF Score, a grade from 0 to 100 against fixed\n"
+"standards, based on what the fund costs, how big it is, and how calm its\n"
+"price has been lately, meaning how little it has spiked. It is not ranked\n"
+"against the other funds on the page, and it is not a forecast for that one\n"
+"fund. A fund needs at least 50 to be picked.</p>\n"
+"<p>Mint is built around a simple idea: find strength, question the story,\n"
+"weigh the odds, and only make room for what earns it.</p>\n"
+"<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t\n"
+"predict future returns. Also: there are gremlins that have control over\n"
+"the markets. They hate you personally, and they do the exact opposite of\n"
+"your buys and sells purely to spite you. Invest accordingly.</p>\n"
 "</div>")
     else:
         about_html = ""
@@ -3361,7 +3436,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
         _hm_etfs = [h for h in honorable
                     if str(h.get("kind", "")).strip().lower() == "etf"]
         hm_html = (
-            '<h2>Honorable mentions: cleared the bar, didn\u2019t make the cut</h2>\n'
+            '<h2>Honorable mentions: strong names that didn\u2019t make the cut</h2>\n'
             + _hm_group(_hm_stocks, "Stocks, by expected return",
                         "pl2", "hm-toggle", "Expected return")
             + _hm_group(_hm_etfs, "Funds, by ETF score",
@@ -4667,6 +4742,18 @@ def _frame_row(r, outcome, reason):
                           if str(r.get("kind", "")) == "stock" else None),
         "ev_mode": _EV_MODE,
         "facts": _facts_of(r),
+        # JUDGMENT RECORD (logging package, 2026-11-13): the evidence
+        # behind the coded facts and the assessment's provenance ride
+        # every researched row, so a frame alone shows who judged the
+        # name, when, and on what dated evidence. None when the name
+        # carries no assessment. Recording only.
+        "facts_evidence": _facts_evidence_of(r),
+        "assessed_date": (str(r.get("llm_assessed_date"))
+                          if isinstance(r.get("llm_assessed_date"), str)
+                          and r.get("llm_assessed_date") else None),
+        "coder": (str(r.get("llm_coder"))
+                  if isinstance(r.get("llm_coder"), str)
+                  and r.get("llm_coder") else None),
         # THEME RECORDING (2026-11-10): this ETF row's category theme
         # facts, stamped for the audit's live record (the February
         # 2027 audit judges them; sunset if nothing graduates).
@@ -4696,6 +4783,18 @@ def _frame_row(r, outcome, reason):
         "risk_strike_count": (int(scount) if scount is not None
                               else len(strikes)),
         "implied_upside": _safe(r.get("implied_upside")),
+        # IU INPUTS (logging package, 2026-11-13): the analyst inputs
+        # behind implied_upside — mean target price, analyst count,
+        # and the date they were observed (yfinance carries no as-of
+        # date for the target itself). None when unavailable (no
+        # target — typical for ETFs — or a failed fetch).
+        "iu_target": _safe(r.get("iu_target")),
+        "iu_analysts": (int(_safe(r.get("iu_analysts")))
+                        if _safe(r.get("iu_analysts")) is not None
+                        else None),
+        "iu_date": (str(r.get("iu_date"))
+                    if isinstance(r.get("iu_date"), str)
+                    and r.get("iu_date") else None),
         "earnings_in_days": _safe(r.get("earnings_in_days")),
         # Instrumentation (2026-11-06): the quant fields the October
         # ETF tests needed but frames never recorded (vol/AUM/expense
@@ -4766,6 +4865,85 @@ def _frame_row(r, outcome, reason):
     }
 
 
+def _write_screen_snapshot(admitted, benchmark, universe_n, priced_n):
+    """LOGGING PACKAGE (2026-11-13): persist the S3 screen's full
+    admitted set (ticker + blend score) to snapshots/screen_<date>.json
+    so the audit can replay what the funnel let through, not just what
+    research picked up. Recording only; never raises — a snapshot
+    failure must not turn a healthy screen into a fallback."""
+    try:
+        import json as _json
+        _base = os.path.dirname(os.path.abspath(__file__))
+        _dir = os.path.join(_base, "snapshots")
+        os.makedirs(_dir, exist_ok=True)
+        _path = os.path.join(_dir, f"screen_{run_date()}.json")
+        _doc = {"date": run_date(), "benchmark": benchmark,
+                "universe": universe_n, "priced": priced_n,
+                "admitted": [{"ticker": str(c.get("ticker")),
+                              "s3_blend": _safe(c.get("s3_blend")),
+                              "ret_1y": _safe(c.get("ret_1y"))}
+                             for c in admitted]}
+        with open(_path, "w") as f:
+            _json.dump(_doc, f, indent=1, default=str)
+        log(f"screen snapshot: {_path} ({len(admitted)} admitted)")
+    except Exception as e:
+        log(f"screen snapshot: FAILED ({e}) — recording only, "
+            f"continuing")
+
+
+def _write_universe_snapshot(rows, benchmark, universe_n, priced_n,
+                             admitted_n, mode):
+    """UNIVERSE SNAPSHOT (2026-11-14): persist ONE ROW PER PRICED
+    NAME from the stock screen (relative windows, z-scores, S3
+    blend, admitted flag) to snapshots/universe_<date>.json, so the
+    audit can study the names the funnel did NOT let through —
+    winner capture is measured against the full universe, not the
+    admitted set. Written on both screen paths: mode "s3" carries
+    the full S3 record; mode "fallback" carries only what the
+    incumbent funnel computes (the 1y relative return; the other
+    window/z/blend fields are null). Recording only; never raises —
+    the same fail-soft contract as the screen snapshot."""
+    try:
+        import json as _json
+        _base = os.path.dirname(os.path.abspath(__file__))
+        _dir = os.path.join(_base, "snapshots")
+        os.makedirs(_dir, exist_ok=True)
+        _path = os.path.join(_dir, f"universe_{run_date()}.json")
+        _doc = {"date": run_date(), "mode": mode,
+                "benchmark": benchmark, "universe": universe_n,
+                "priced": priced_n, "admitted": admitted_n,
+                "rows": rows}
+        with open(_path, "w") as f:
+            _json.dump(_doc, f, indent=1, default=str)
+        log(f"universe snapshot: {_path} ({len(rows)} rows, "
+            f"mode {mode})")
+    except Exception as e:
+        log(f"universe snapshot: FAILED ({e}) — recording only, "
+            f"continuing")
+
+
+def _write_eligible_snapshot(rows):
+    """LOGGING PACKAGE (2026-11-13): persist the day's eligible-stock
+    set (every name that cleared the gates and floors, with its
+    offense score, vol60, and whether the Variant A volatility budget
+    barred it) to snapshots/eligible_<date>.json. Recording only;
+    never raises."""
+    try:
+        import json as _json
+        _base = os.path.dirname(os.path.abspath(__file__))
+        _dir = os.path.join(_base, "snapshots")
+        os.makedirs(_dir, exist_ok=True)
+        _path = os.path.join(_dir, f"eligible_{run_date()}.json")
+        with open(_path, "w") as f:
+            _json.dump({"date": run_date(), "count": len(rows),
+                        "rows": rows}, f, indent=1, default=str)
+        log(f"eligible snapshot: {_path} ({len(rows)} eligible "
+            f"stocks)")
+    except Exception as e:
+        log(f"eligible snapshot: FAILED ({e}) — recording only, "
+            f"continuing")
+
+
 def _write_frame_manifest(rows, flow, bundle_path, counts,
                           expected_candidates, chart=None):
     """Write frames/frame_<stamp>_<flow>.json and
@@ -4774,7 +4952,7 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
     (frame_path, manifest_path)."""
     import hashlib
     import json as _json
-    global _FRAME_SNAPSHOT
+    global _FRAME_SNAPSHOT, _LAST_FRAME_OUTCOMES
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     _base = os.path.dirname(os.path.abspath(__file__))
     fdir = os.path.join(_base, "frames")
@@ -4789,15 +4967,56 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
     # Phase A in the bundle meta — republished in the manifest so the
     # monthly audit can measure pool leakage from the manifest alone.
     _pool_tail = None
+    _bundle_mi = None
+    _bundle_regime = None
     try:
         if bundle_path and os.path.exists(str(bundle_path)):
             with open(str(bundle_path)) as _bf:
-                _pool_tail = _json.load(_bf).get("meta", {}) \
-                    .get("pool_tail")
+                _bdoc = _json.load(_bf)
+            _pool_tail = (_bdoc.get("meta") or {}).get("pool_tail")
+            # LOGGING PACKAGE (2026-11-13): regime inputs ride the
+            # bundle — market_internals (VIX, 10Y) at its top level and
+            # the benchmark trailing returns Phase A stamped into
+            # meta.regime.
+            _bundle_mi = _bdoc.get("market_internals")
+            _bundle_regime = (_bdoc.get("meta") or {}).get("regime")
     except Exception:
         _pool_tail = None
+    # FRAME PROVENANCE (logging package, 2026-11-13): every frame
+    # carries a top-level meta block — the exact code that produced it,
+    # the EV mode, the flow, when it was generated, how the run was
+    # triggered (the --run-trigger argument, never a guess), and the
+    # market regime the run saw. Recording only; additive — older
+    # frames without meta still rerender.
+    try:
+        with open(os.path.abspath(__file__), "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        sha = None
+    _meta = {"screener_sha256": sha,
+             "ev_mode": _EV_MODE,
+             "flow": flow,
+             "generated_at": datetime.now().isoformat(timespec="seconds"),
+             "run_trigger": _RUN_TRIGGER}
+    _regime = {}
+    if isinstance(_bundle_regime, dict):
+        for _k in ("benchmark", "bench_ret_1y", "bench_ret_6m_skip1m",
+                   "bench_ret_3m"):
+            if _bundle_regime.get(_k) is not None:
+                _regime[_k] = _bundle_regime[_k]
+    if isinstance(_bundle_mi, dict):
+        if _bundle_mi.get("vix") is not None:
+            _regime["vix"] = _bundle_mi["vix"]
+        if _bundle_mi.get("tnx_10y") is not None:
+            _regime["tnx_10y"] = _bundle_mi["tnx_10y"]
+    if _regime:
+        _meta["regime"] = _regime
+    _LAST_FRAME_OUTCOMES = {}
+    for _row in rows:
+        _o = _row.get("outcome")
+        _LAST_FRAME_OUTCOMES[_o] = _LAST_FRAME_OUTCOMES.get(_o, 0) + 1
     _frame_doc = {"date": run_date(), "flow": flow,
-                  "bundle": bundle_name, "rows": rows}
+                  "bundle": bundle_name, "meta": _meta, "rows": rows}
     if chart is not None:
         # RERENDER BLOCK (2026-11-11 runtime package): the exact chart
         # inputs the apply is about to render with, so passes 2-3 can
@@ -4806,11 +5025,6 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
         _frame_doc["chart"] = chart
     with open(frame_path, "w") as f:
         _json.dump(_frame_doc, f, indent=1, default=str)
-    try:
-        with open(os.path.abspath(__file__), "rb") as f:
-            sha = hashlib.sha256(f.read()).hexdigest()
-    except Exception:
-        sha = None
     with open(manifest_path, "w") as f:
         _json.dump({"date": run_date(), "flow": flow,
                     "bundle": bundle_name,
@@ -6168,6 +6382,17 @@ def pick_final(adj, args, llm_path):
             est_ok["offense_score"] = [_offense_score_of(r)
                                        for _, r in est_ok.iterrows()]
             _nosc = int(est_ok["offense_score"].isna().sum())
+            # ELIGIBLE SNAPSHOT (logging package, 2026-11-13): capture
+            # the eligible set BEFORE the pain budget removes its tail
+            # — every eligible name with its offense score and vol60;
+            # the budget branch below flags the barred names, and the
+            # snapshot is written before the offense sort. Recording
+            # only; the writer never raises.
+            _elig_snap = [{"ticker": str(_er["ticker"]),
+                           "offense_score": _safe(_er.get("offense_score")),
+                           "vol60": _safe(_er.get("vol60")),
+                           "vol_budget_barred": False}
+                          for _, _er in est_ok.iterrows()]
             if "vol60" in est_ok.columns \
                     and est_ok["vol60"].notna().sum() >= 10:
                 _vthr = float(est_ok["vol60"].quantile(0.95))
@@ -6182,8 +6407,13 @@ def pick_final(adj, args, llm_path):
                             f"{float(_r['vol60']):.3f} > {_vthr:.3f}, the "
                             f"95th percentile of the eligible set) — "
                             f"Variant A pain budget")
+                    _barred = set(_over["ticker"].astype(str))
+                    for _es in _elig_snap:
+                        if _es["ticker"] in _barred:
+                            _es["vol_budget_barred"] = True
                     est_ok = est_ok[(est_ok["vol60"] <= _vthr)
                                     | est_ok["vol60"].isna()].copy()
+            _write_eligible_snapshot(_elig_snap)
             est_ok = est_ok.sort_values("offense_score", ascending=False,
                                         na_position="last")
             for _i, _t in enumerate(est_ok["ticker"].astype(str), 1):
@@ -6675,9 +6905,9 @@ def run_watchlist_apply(args):
     chart_path = f"watchlist_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     make_chart_html(sfinal, efinal, chart_path,
                     {"benchmark": "", "mode": "watchlist",
-                     "heading": "Watchlist: by expected return / ETF score",
+                     "heading": "Watchlist: by rating",
                      "asof": run_stamp()},
-                    titles=("Stocks: by expected return", "ETFs: by ETF score"),
+                    titles=("Stocks: by rating", "ETFs: by rating"),
                     watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
     checks = []
@@ -6847,11 +7077,10 @@ def run_watchlist_rerender(frame_path):
                   f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
     make_chart_html(sfinal, efinal, chart_path,
                     {"benchmark": "", "mode": "watchlist",
-                     "heading": "Watchlist: by expected return / "
-                                "ETF score",
+                     "heading": "Watchlist: by rating",
                      "asof": run_stamp()},
-                    titles=("Stocks: by expected return",
-                            "ETFs: by ETF score"),
+                    titles=("Stocks: by rating",
+                            "ETFs: by rating"),
                     watchlist_chat=wl_chat)
     print(f"Chart: {chart_path}")
     with open(chart_path) as f:
@@ -7130,6 +7359,14 @@ def record_picks_ledger(final, ranked, args, cache=None):
         }
         if bool(r.get("dep_capped")):
             _pev["dep_capped"] = True
+        # NEWS-SWEEP PASS-THROUGH (logging package, 2026-11-13): when
+        # the pick's assessment carries a news_sweep outcome (the
+        # daily flow's step-5 sweep writes searched/found/changed into
+        # the assessment on a re-score), copy it onto the pick event.
+        # Absent field = no key — never a fabricated default.
+        _nsw = r.get("llm_news_sweep")
+        if isinstance(_nsw, str) and _nsw:
+            _pev["news_sweep"] = _nsw
         _off = _safe(r.get("offense_score"))
         if _off is not None:
             _pev["offense_score"] = _off
@@ -7222,6 +7459,71 @@ def record_picks_ledger(final, ranked, args, cache=None):
         recorded += 1
     log(f"ledger: recorded {npick} new picks ({len(final)} final), "
         f"{recorded} rejected (control group)")
+    # LEDGER RECONCILIATION (logging package, 2026-11-13): one line
+    # comparing the frame's outcome counts against today's ledgers,
+    # so a silent recording gap (the 2026-11-12 cap bug class) shows
+    # up in the run log the day it happens. Status is OK iff
+    #   (1) every pick in the frame has a "picked" event in today's
+    #       thesis ledger after this call, and
+    #   (2) every rejection an independent re-derivation of the
+    #       recording rules (below) finds ledger-worthy is present in
+    #       today's rejected ledger after this call.
+    # The counts are NOT expected to be equal on the rejected leg:
+    # rejected_in_frame counts every frame row with outcome
+    # "rejected", while the ledger by design records only gate /
+    # floor / veto / exclusion rejections (cap and rank losses are
+    # skipped — see the loop above). On an idempotent re-run the
+    # appended counts are 0 and status stays OK, because the lines
+    # already exist. Recording only; never gates the run.
+    try:
+        _fout = _LAST_FRAME_OUTCOMES or {}
+        _picks_in_frame = _fout.get("picked", len(final))
+        _rej_in_frame = _fout.get("rejected", 0)
+        _seen_picks = _ledger_seen_today(THESIS_LEDGER, "picked")
+        _picks_ok = set(final["ticker"].astype(str)) <= \
+            {str(t) for t in _seen_picks}
+        _intended = set()
+        for _, r in ranked.iterrows():
+            t = str(r["ticker"])
+            if t in final_set:
+                continue
+            _d = _safe(r.get("llm_event_dependence"))
+            _du, _dcx = effective_dep(
+                t, r.get("kind"), r.get("sector"),
+                _d if _d is not None else 0.3)
+            _why = (bool(r.get("llm_excluded"))
+                    or t in _RISK_GATED or t in _ETF_GATED
+                    or t in _STOCK_GATED or t in _ETF_TIER2_CAPPED
+                    or (_d is not None and _du > veto)
+                    or (r.get("kind") == "etf" and _EV_MODE == "live"
+                        and _safe(r.get("est_next_1y")) is not None
+                        and _safe(r.get("est_next_1y")) < 50.0))
+            if not _why:
+                _c = _safe(r.get("llm_continuation"))
+                _f = _safe(r.get("llm_confidence"))
+                _p = est_parts(r, _du, _c if _c is not None else 0.5,
+                               _f if _f is not None else 1.0)
+                _fl = (getattr(args, "min_est_etf", 0.0)
+                       if r.get("kind") == "etf" else args.min_est)
+                _why = _p["est"] < _fl
+            if _why:
+                _intended.add(t)
+        _seen_rej = _ledger_seen_today(REJECTED_LEDGER, "rejected")
+        _rej_ok = _intended <= {str(t) for t in _seen_rej}
+        _status = "OK" if (_picks_ok and _rej_ok) else "MISMATCH"
+        log(f"LEDGER RECONCILIATION: picks_in_frame={_picks_in_frame} "
+            f"picks_appended={npick} rejected_in_frame={_rej_in_frame} "
+            f"rejected_appended={recorded} status={_status}")
+        if not _picks_ok:
+            log("LEDGER RECONCILIATION detail: frame picks missing "
+                "from today's thesis ledger: "
+                f"{sorted(set(final['ticker'].astype(str)) - {str(t) for t in _seen_picks})}")
+        if not _rej_ok:
+            log("LEDGER RECONCILIATION detail: ledger-worthy "
+                "rejections missing from today's rejected ledger: "
+                f"{sorted(_intended - {str(t) for t in _seen_rej})}")
+    except Exception as e:
+        log(f"LEDGER RECONCILIATION: unavailable ({e})")
     # spell exits: why did yesterday's picks stop being picks? (audit
     # instrumentation, 2026-10-30 — the October audit could not attribute
     # whipsaw without exit reasons). Never breaks the pick recording.
@@ -7337,6 +7639,48 @@ def _record_spell_exits(final_set, ranked, args, today):
         log(f"ledger: recorded {n_exit} spell exits")
 
 
+def _div_cash_map(tickers, cache):
+    """{ticker: [[iso_ex_date, cash_per_share], ...]} from yfinance
+    dividend history — the same vendor the check's prices come from.
+    Cached per ticker-set in the StepCache (the history is long; the
+    caller filters by window). Fail-soft: any failure yields [] for
+    that ticker (recorded downstream as 0.0); never raises."""
+    from cache import StepCache
+    key = "thesis_divs_" + StepCache.tickers_key(sorted(tickers))
+    hit = None
+    try:
+        hit = cache.get(key)
+    except Exception:
+        hit = None
+    if hit is not None:
+        return hit
+    out = {}
+    try:
+        import yfinance as yf
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _one_div(t):
+            try:
+                divs = yf.Ticker(t).dividends
+                if divs is not None and len(divs):
+                    return t, [[str(idx.date()), float(v)]
+                               for idx, v in divs.items()]
+            except Exception:
+                pass
+            return t, []
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for t, rows in ex.map(_one_div, list(tickers)):
+                out[t] = rows
+    except Exception:
+        out = {t: [] for t in tickers}
+    try:
+        cache.put(key, out)
+    except Exception:
+        pass
+    return out
+
+
 def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
     """Price-based thesis check for picks made within the last `track_days`.
 
@@ -7388,6 +7732,13 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
     except Exception as e:
         log(f"thesis_check: price fetch failed ({e})")
         return []
+    # DIVIDEND CASH (logging package, 2026-11-13): dividend history
+    # for the div_cash_ps field on each check line — fail-soft, an
+    # empty map simply records 0.0 everywhere.
+    try:
+        div_map = _div_cash_map(_track_tickers, cache)
+    except Exception:
+        div_map = {}
     today = run_date()
     # Today's existing check events, so reruns don't duplicate identical
     # results (a status CHANGE still records — that's the timeline).
@@ -7449,11 +7800,22 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
             status, reason = "watch", f"price-based: {dd:+.0%} dip since pick"
         if (t, status, reason) in seen_checks:
             continue  # identical check already recorded today
+        # DIVIDEND CASH (logging package, 2026-11-13): total cash
+        # dividends per share with ex-dates in (pick_date, today] —
+        # the income leg of the pick's outcome, kept separate from
+        # the price return above (whose series is dividend-adjusted,
+        # so without this field the audit cannot split price vs
+        # income). 0.0 when none were paid (or the fetch failed).
+        _dcash = 0.0
+        for _dstr, _amt in (div_map.get(t) or []):
+            if e["date"] < _dstr <= today:
+                _dcash += float(_amt)
         rec = {"event": "check", "ticker": t, "date": today, "status": status,
                "days_held": days, "ret_since_pick": round(ret, 4),
                "dd_since_pick": round(dd, 4), "pick_price": pp,
                "pick_price_adj": round(pp_adj, 4), "reason": reason,
-               "pick_date": e["date"]}
+               "pick_date": e["date"],
+               "div_cash_ps": round(_dcash, 4)}
         if data_suspect:
             rec["data_suspect"] = True
         ledger_append(THESIS_LEDGER, rec)
@@ -7554,7 +7916,10 @@ def _s3_screen_universe(cache, universe, bench_closes, benchmark):
             rel1.append(r[0] - b1)
             rel6.append(r[1] - b6)
             rel3.append(r[2] - b3)
-        blend = _z(rel1) + _z(rel6) + _z(rel3)
+        z1 = _z(rel1)
+        z6 = _z(rel6)
+        z3 = _z(rel3)
+        blend = z1 + z6 + z3
         admitted = []
         for i, (u, r) in enumerate(rows):
             if blend[i] > 0:
@@ -7581,6 +7946,38 @@ def _s3_screen_universe(cache, universe, bench_closes, benchmark):
         log("S3 admitted top 10 by blend: " +
             ", ".join(f"{c['ticker']}({c['s3_blend']:+.2f})"
                       for c in admitted[:10]))
+        # SCREEN SNAPSHOT (logging package, 2026-11-13): the full
+        # admitted set, persisted where it is computed (Phase A).
+        # Only on the S3 success path — a fallback day runs the
+        # incumbent funnel, which has no blend scores to snapshot.
+        # The writer never raises, so this cannot trip the fallback.
+        _write_screen_snapshot(admitted, benchmark, len(universe),
+                               len(closes))
+        # UNIVERSE SNAPSHOT (2026-11-14): every priced name, not
+        # just the admitted set — see _write_universe_snapshot. The
+        # writer never raises, so this cannot trip the fallback.
+        _admitted_tickers = {c["ticker"] for c in admitted}
+        _univ_rows = []
+        for i, (u, r) in enumerate(rows):
+            t = u["ticker"]
+            if closes.get(t) is None:
+                continue
+            _univ_rows.append({
+                "ticker": str(t),
+                "ret_1y": _safe(r[0]),
+                "ret_6m_skip1m": _safe(r[1]),
+                "ret_3m": _safe(r[2]),
+                "rel_1y": _safe(rel1[i]),
+                "rel_6m_skip1m": _safe(rel6[i]),
+                "rel_3m": _safe(rel3[i]),
+                "z_1y": _safe(z1[i]),
+                "z_6m_skip1m": _safe(z6[i]),
+                "z_3m": _safe(z3[i]),
+                "s3_blend": _safe(blend[i]),
+                "admitted": t in _admitted_tickers})
+        _write_universe_snapshot(_univ_rows, benchmark,
+                                 len(universe), len(closes),
+                                 len(admitted), "s3")
         return admitted, closes
     except Exception as e:
         log(f"S3 FUNNEL FALLBACK: exception ({e}) — running the "
@@ -7615,6 +8012,11 @@ def main():
                          "shadow; shadow = v2 computed and recorded in "
                          "frames, production still decides; live = v2 "
                          "IS the stock EV (ETFs always legacy)")
+    ap.add_argument("--run-trigger", default="unspecified",
+                    help="how this run was started (scheduled / chain / "
+                         "fallback / manual), stamped into frame meta "
+                         "by the logging package; the pipeline never "
+                         "infers it — absent means 'unspecified'")
     ap.add_argument("--llm-apply", nargs=2, metavar=("BUNDLE", "OUTPUTS"),
                     help="phase B: rerank from a research bundle + filled llm outputs")
     ap.add_argument("--watchlist",
@@ -7679,8 +8081,10 @@ def main():
                     help="cache directory (default: cache/)")
     args = ap.parse_args()
 
-    global _EV_MODE
+    global _EV_MODE, _RUN_TRIGGER
     _EV_MODE = getattr(args, "ev_mode", "legacy") or "legacy"
+    _RUN_TRIGGER = getattr(args, "run_trigger", "unspecified") \
+        or "unspecified"
 
     # Shared cache, constructed once: every branch (Phase A, Phase B,
     # watchlist) uses this. Previously Phase B referenced `cache` before it
@@ -7968,6 +8372,38 @@ def main():
                       f"a Yahoo outage. Not publishing a false 'buy the benchmark' run.")
                 sys.exit(2)
         outperformers.sort(key=lambda d: d["ret_1y"], reverse=True)
+        # UNIVERSE SNAPSHOT (2026-11-14): the incumbent funnel prices
+        # only its candidate subset, so the fallback snapshot covers
+        # the priced candidates with the one relative window this
+        # path computes (1y vs the benchmark); the S3 window/z/blend
+        # fields stay null. Recording only — the writer never
+        # raises, and the per-name returns are recomputed from the
+        # closes already in hand so this block touches no selection
+        # state.
+        _fb_admitted = {c["ticker"] for c in outperformers}
+        _fb_rows = []
+        for c in cands:
+            t = c["ticker"]
+            s = closes.get(t)
+            r = calc_return(s) if s is not None else np.nan
+            if pd.isna(r):
+                continue
+            _fb_rows.append({
+                "ticker": str(t),
+                "ret_1y": _safe(r),
+                "ret_6m_skip1m": None,
+                "ret_3m": None,
+                "rel_1y": _safe(r - bench_ret),
+                "rel_6m_skip1m": None,
+                "rel_3m": None,
+                "z_1y": None,
+                "z_6m_skip1m": None,
+                "z_3m": None,
+                "s3_blend": None,
+                "admitted": t in _fb_admitted})
+        _write_universe_snapshot(_fb_rows, args.benchmark,
+                                 len(universe), len(_fb_rows),
+                                 len(outperformers), "fallback")
         print(f"{len(outperformers)} confirmed outperformers beat {args.benchmark} ({bench_ret:+.1%} 1y)")
         log(f"confirmed outperformers (precise 1y from prices) beat {args.benchmark} "
             f"({bench_ret:+.1%} 1y): {len(outperformers)}")
@@ -8217,6 +8653,26 @@ def main():
                 cand["spike"] = _safe(r.get("spike"))
             cands.append(cand)
 
+        # REGIME STAMP (logging package, 2026-11-13): the benchmark's
+        # trailing returns as computed here in Phase A (same window
+        # expressions the S3 screen uses), stamped into the bundle
+        # meta so Phase B can copy them into the frame's meta regime
+        # block. Recording only; None when the series is unusable.
+        _regime = None
+        try:
+            _bpx = (bench_closes or {}).get(args.benchmark)
+            if _bpx is not None and len(_bpx.dropna()) >= 2:
+                _regime = {
+                    "benchmark": args.benchmark,
+                    "bench_ret_1y": _safe(calc_return(_bpx)),
+                    "bench_ret_6m_skip1m": (
+                        _safe(calc_return(_bpx.iloc[:-21], 126))
+                        if len(_bpx.dropna()) > 21 else None),
+                    "bench_ret_3m": _safe(calc_return(_bpx, 63)),
+                }
+        except Exception:
+            _regime = None
+
         if args.llm_backend == "agent":
             # Phase A: write bundle, stop. An agent fills llm_outputs.json,
             # then: python3 screener.py --llm-apply <bundle> <outputs>
@@ -8224,6 +8680,7 @@ def main():
                 cands, market_headlines,
                 {"benchmark": args.benchmark,
                  "etf_benchmark": _eb,
+                 "regime": _regime,
                  "pool_tail": _pool_tail,
                  "pool_lane_counts": {str(k): int(v) for k, v in
                                       Counter(c.get("pool_lane")

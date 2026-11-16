@@ -43,6 +43,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "light_the_fuse"))
 try:
@@ -157,12 +158,21 @@ def check_tickers(tickers, workers=6):
 
 
 def _iu_one(ticker):
-    """(ticker, implied_upside or None) from a single info call.
+    """(ticker, implied_upside or None, detail or None) from a single
+    info call.
 
     Light version of the _one() computation above: the two-strike risk
     gate (2026-10-30) needs implied_upside for every selection candidate
     BEFORE selection, not just for final picks, so this skips the 1y
     download and fundamental pass entirely — one info call, best-effort.
+
+    detail (logging package, 2026-11-13) carries the inputs behind the
+    percentage so frames can record them: the analyst mean target
+    (iu_target), the analyst count behind it (iu_analysts, from the
+    info field numberOfAnalystOpinions), and iu_date — the date these
+    inputs were observed. yfinance's info payload carries NO as-of
+    date for the target itself, so the observation (fetch) date is the
+    only honest date available; it is stamped, never backdated.
     """
     try:
         info = yf.Ticker(ticker).info or {}
@@ -170,10 +180,18 @@ def _iu_one(ticker):
         price = (info.get("currentPrice") or info.get("regularMarketPrice")
                  or info.get("previousClose"))
         if tgt and price and float(price) > 0:
-            return ticker, float(tgt) / float(price) - 1.0
+            detail = {"iu_target": float(tgt), "iu_analysts": None,
+                      "iu_date": date.today().isoformat()}
+            try:
+                _na = info.get("numberOfAnalystOpinions")
+                if _na is not None:
+                    detail["iu_analysts"] = int(_na)
+            except Exception:
+                pass
+            return ticker, float(tgt) / float(price) - 1.0, detail
     except Exception:
         pass
-    return ticker, None
+    return ticker, None, None
 
 
 def implied_upside_map(tickers, workers=8):
@@ -188,8 +206,34 @@ def implied_upside_map(tickers, workers=8):
             return {}
         out = {}
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            for t, v in ex.map(_iu_one, list(dict.fromkeys(tickers))):
+            for t, v, _d in ex.map(_iu_one, list(dict.fromkeys(tickers))):
                 out[t] = v
+        return out
+    except Exception:
+        return {}
+
+
+def implied_upside_detail_map(tickers, workers=8):
+    """ticker list -> {ticker: {"implied_upside": v, "iu_target": t,
+    "iu_analysts": n, "iu_date": d} or None}. Never raises.
+
+    Same single info call per ticker as implied_upside_map; the detail
+    record exists so the frame can show its work for the implied-upside
+    strike (logging package, 2026-11-13). None means unavailable, with
+    the same semantics as implied_upside_map.
+    """
+    try:
+        if not tickers or not _YF_OK:
+            return {}
+        out = {}
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for t, v, d in ex.map(_iu_one, list(dict.fromkeys(tickers))):
+                if v is None or d is None:
+                    out[t] = None
+                else:
+                    rec = dict(d)
+                    rec["implied_upside"] = v
+                    out[t] = rec
         return out
     except Exception:
         return {}
