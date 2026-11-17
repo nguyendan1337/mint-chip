@@ -1910,6 +1910,7 @@ def _offense_score_of(r):
 # formula and the floors decide picks exactly as before.
 POOL_SECTOR_CAP = 25        # stocks: max core seats per sector
 POOL_OVERFLOW_N = 15        # seats per kind for top ret_1y non-core names
+POOL_OFFENSE_N = 50         # offense-lane seats (stocks): top admitted names by 0.08*z_6m + 0.06*z_3m outside the other lanes (shipped 2026-11-16, Dan approved; reserve_lane_test_2026-11-16)
 POOL_PERSIST_MAX = 20       # persistence seats per kind
 POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
 
@@ -2033,6 +2034,16 @@ def _build_pool(frame, n, kind, persist):
                 .head(POOL_OVERFLOW_N).index:
             f.loc[i, "_pool_lane"] = "overflow"
             taken.append(i)
+    if kind == "stock":
+        rest2 = f[~f.index.isin(taken)]
+        if len(rest2):
+            _off = (0.08 * zscore(f["ret_6m_skip1m"])
+                    + 0.06 * zscore(f["ret_3m"]))
+            for i in rest2.assign(_o=_off.loc[rest2.index]) \
+                    .sort_values("_o", ascending=False) \
+                    .head(POOL_OFFENSE_N).index:
+                f.loc[i, "_pool_lane"] = "offense"
+                taken.append(i)
     pool = f.loc[sorted(taken,
                         key=lambda i: int(f.loc[i, "_pool_rank"]))].copy()
     tail = []
@@ -6366,7 +6377,7 @@ def pick_final(adj, args, llm_path):
         # balanced_study_2026-11-07/ and selection_offense_2026-11-07/).
         # STOCKS ONLY: eligibility is untouched (final_score floor,
         # stability B-or-better, two-strike gate, iu/dep eligibility
-        # gate, the +1.5% EV floor above), but among eligible names the
+        # gate, the +5% EV floor above), but among eligible names the
         # momentum leg (offense score) awards the places instead of EV,
         # after a pain budget removes the eligible set's extreme-vol
         # tail (vol60 above its own 95th percentile; excluded names stay
@@ -8051,8 +8062,8 @@ def main():
                     help="final stock picks (default 10)")
     ap.add_argument("--n-etfs", type=int, default=10,
                     help="final ETF picks (default 10)")
-    ap.add_argument("--min-est", type=float, default=0.015,
-                    help="stock expected-value floor in steep-dampener EV units (default 0.015 since 2026-11-06; the +3% floor was denominated in the retired dampener's units — it admitted 48% of evaluated names there vs 26% in V6 units; +1.5% restores slightly-stricter-than-original selectivity while the iu/dep eligibility gate does the protective work; every pick still earns its place)")
+    ap.add_argument("--min-est", type=float, default=0.05,
+                    help="stock expected-value floor (default 0.05 since 2026-11-16, Dan's directive: a pick must clear +5%; the +1.5% floor set 2026-11-06 admitted tail picks as low as +2.8% (AJG, 2026-11-16) while stronger names sat in honorable mentions; slots stay empty rather than hold a sub-bar name; the iu/dep eligibility gate still does the protective work)")
     ap.add_argument("--min-est-etf", type=float, default=0.0,
                     help="ETF expected-value floor in no-momentum EV units (default 0.0 since 2026-11-06; the ETF eligibility gate does the protective work)")
     ap.add_argument("--us-only", dest="us_only", action="store_true", default=True,
