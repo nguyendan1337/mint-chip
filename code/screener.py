@@ -4633,6 +4633,61 @@ def pick_top_with_sector_cap(df, n=10, max_per_sector=2, min_score=0.0,
         sector_counts[sec] += 1
         if len(picked) >= n:
             break
+    # EV TIEBREAK RECONCILIATION (2026-11-16, Dan's directive): the walk
+    # stops the moment the slate fills, so a high-EV name late in the
+    # walk order never gets the bump comparison earlier names got
+    # (live case: CNXN at +16.6% with flat momentum sat behind the 10th
+    # pick while ALRM held a Technology slot at +6.7%). Dan's rule is
+    # that a hard cap cuts the sector's lowest-EV name, full stop, so
+    # after the walk, sweep every unpicked floor-passing, non-vetoed
+    # row in walk order and apply the same swap. Repeat until a full
+    # sweep swaps nothing: each swap strictly raises the picked set's
+    # total EV, and a swapped-out name sits below its sector's new
+    # minimum, so this terminates and cannot cycle.
+    if picked_by_sector:
+        _picked_tickers = {str(x["ticker"]) for x in picked}
+        _changed = True
+        while _changed:
+            _changed = False
+            for _, r in df.iterrows():
+                if str(r["ticker"]) in _picked_tickers:
+                    continue
+                if r["final_score"] < min_score:
+                    continue
+                if veto_dep is not None and ("llm_event_dependence" in df.columns
+                                             or "dep_used" in df.columns):
+                    try:
+                        if float(_dep_used_of(r)) > veto_dep:
+                            continue
+                    except Exception:
+                        pass
+                sec = _cap_key_of(r)
+                if sector_counts[sec] < max_per_sector:
+                    continue
+                incumbents = picked_by_sector.get(sec, [])
+                if not incumbents:
+                    continue
+                weakest = min(incumbents, key=_ev_of)
+                cur_ev = _ev_of(r)
+                if cur_ev > _ev_of(weakest):
+                    picked = [x for x in picked if x is not weakest]
+                    picked_by_sector[sec] = [x for x in incumbents
+                                             if x is not weakest]
+                    skipped["sector_cap"] += 1
+                    skipped_names.setdefault("sector_cap", []).append(
+                        f"{weakest['ticker']}({sec},ev={_ev_of(weakest):+.1%})")
+                    _plain = f"{r['ticker']}({sec})"
+                    if _plain in skipped_names.get("sector_cap", []):
+                        skipped_names["sector_cap"].remove(_plain)
+                        skipped["sector_cap"] -= 1
+                    log(f"  ev_tiebreak: {r['ticker']} ({cur_ev:+.1%}) replaces "
+                        f"{weakest['ticker']} ({_ev_of(weakest):+.1%}) in {sec} "
+                        f"(post-walk)")
+                    picked.append(r)
+                    picked_by_sector[sec].append(r)
+                    _picked_tickers.discard(str(weakest["ticker"]))
+                    _picked_tickers.add(str(r["ticker"]))
+                    _changed = True
     log(f"pick_top: {len(picked)} selected (floor={min_score}, veto_dep={veto_dep}), "
         f"skipped={dict(skipped)}")
     for reason, names in skipped_names.items():
