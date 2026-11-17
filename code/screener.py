@@ -3045,13 +3045,16 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
                 f"</div></div>")
 
     def ev_bar(val, is_etf):
-        # ETF SCORE (2026-11-12): fund score bars, full bar = 100.
+        # ETF SCORE (2026-11-12): fund score bars. SCALE CHANGED
+        # 2026-11-16 late (Dan's directive): full bar = 200, so a
+        # perfect 100 fills exactly half the track and no fund can
+        # look like a complete bar; the printed number is unchanged.
         if is_etf:
             try:
                 v = float(val)
             except Exception:
                 return ""
-            w = max(2, min(100, v))
+            w = max(2, min(100, v / 2.0))
             return (f'<div class="track"><div class="bar est" '
                     f'style="width:{w:.1f}%"></div></div>')
         return bar(val, gold=True)
@@ -3355,7 +3358,8 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 "standards, based on what the fund costs, how big it is, and how calm its\n"
 "price has been lately, meaning how little it has spiked. It is not ranked\n"
 "against the other funds on the page, and it is not a forecast for that one\n"
-"fund. A fund needs at least 50 to be picked.</p>\n"
+"fund. A fund needs at least 50 to be picked. Its bar is drawn on a\n"
+"scale of 200, so even the highest grade fills only half the bar.</p>\n"
 "<p>Mint is built around a simple idea: find strength, question the story,\n"
 "weigh the odds, and only make room for what earns it.</p>\n"
 "<p class=\"fineprint\">Not financial advice. Past performance doesn&apos;t\n"
@@ -4399,6 +4403,12 @@ def _reader_reason(raw, kind=""):
             return (f"Its record is too uneven for a pick (stability "
                     f"grade {m.group(1)}). Picks need a steadier "
                     f"record, grade B or better.")
+        m = re.match(r"expected-return rank (\d+) of (\d+) eligible", s)
+        if m:
+            return (f"Passed every quality and risk check, but the "
+                    f"pick slots go to the highest expected returns, "
+                    f"and this one ranked {m.group(1)} of "
+                    f"{m.group(2)} on that measure.")
         m = re.match(r"offense rank (\d+) of (\d+) eligible", s)
         if m:
             return (f"Passed every quality and risk check, but the "
@@ -4541,10 +4551,10 @@ def honorable_mentions(ranked, final, args, top_k=15):
             reason = f"overlaps {w} ({ov:.0%}) — kept the higher-EV fund"
         elif sec_counts.get((kind, ckey), 0) >= caps.get(kind, 2):
             reason = f"{ckey} cap full"
-        elif t in _OFFENSE_RANKED:
-            _rk, _n = _OFFENSE_RANKED[t]
-            reason = (f"offense rank {_rk} of {_n} eligible — below the "
-                      f"pick line (Variant A momentum-ranked selection)")
+        elif t in _EV_RANKED:
+            _rk, _n = _EV_RANKED[t]
+            reason = (f"expected-return rank {_rk} of {_n} eligible — "
+                      f"below the pick line (EV-ranked selection)")
         else:
             reason = "lower expected value than picks"
         try:
@@ -5115,8 +5125,9 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     "stock_selection": {
                         "gate_max_dep": STOCK_GATE_MAX_DEP,
                         "gate_implied_upside_min": 0.0,
-                        "ranking": "offense_score (Variant A, 2026-11-07)",
+                        "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
                         "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
+                        "shadow_offense_picks": list(_SHADOW_OFFENSE_PICKS),
                         "vol_budget_eligible_pct": 0.95,
                         "up_t1": STOCK_UP_T1,
                         "up_factor": STOCK_UP_FACTOR,
@@ -5290,12 +5301,11 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
                                                           "stock")), 2):
                 outcome = "rejected"
                 reason = f"{r.get('sector', '')} cap full"
-            elif t in _OFFENSE_RANKED:
-                _rk, _n = _OFFENSE_RANKED[t]
+            elif t in _EV_RANKED:
+                _rk, _n = _EV_RANKED[t]
                 outcome = "rejected"
-                reason = (f"offense rank {_rk} of {_n} eligible — below "
-                          f"the pick line (Variant A momentum-ranked "
-                          f"selection)")
+                reason = (f"expected-return rank {_rk} of {_n} eligible "
+                          f"— below the pick line (EV-ranked selection)")
             else:
                 outcome = "rejected"
                 reason = "lower expected value than picks"
@@ -6205,6 +6215,10 @@ def pick_final(adj, args, llm_path):
     _OFFENSE_BUDGET = {}
     global _OFFENSE_RANKED
     _OFFENSE_RANKED = {}
+    global _EV_RANKED
+    _EV_RANKED = {}
+    global _SHADOW_OFFENSE_PICKS
+    _SHADOW_OFFENSE_PICKS = []
     # TWO-STRIKE RISK GATE inputs (2026-10-30): strike counts for every
     # selection candidate; pick_group bars >=2-strike names from picks.
     adj = compute_risk_strikes(adj, llm_path=llm_path)
@@ -6424,7 +6438,12 @@ def pick_final(adj, args, llm_path):
         # EV shortlist: final_score's job is the quality floor (min_score);
         # among floor-passers, expected value ranks and selects. The number
         # the chart shows is the number that awards places.
-        # VARIANT A — OFFENSE-RANKED STOCK SELECTION (shipped 2026-11-07
+        # VARIANT A — OFFENSE-RANKED STOCK SELECTION (shipped 2026-11-07;
+        # SUPERSEDED 2026-11-16 evening by Dan's directive to switch to
+        # expected-return ordering — see the EV ORDERING note at the sort
+        # below. The pain budget and the offense records from this design
+        # are retained; the ranking key is what changed.)
+        # Original Variant A note (shipped 2026-11-07
         # on Dan's approval, under the refined mandate: "continue to do
         # well" is the mandate's offensive clause, and going negative
         # inside a correction is acceptable when the name does well over
@@ -6480,13 +6499,32 @@ def pick_final(adj, args, llm_path):
                     est_ok = est_ok[(est_ok["vol60"] <= _vthr)
                                     | est_ok["vol60"].isna()].copy()
             _write_eligible_snapshot(_elig_snap)
-            est_ok = est_ok.sort_values("offense_score", ascending=False,
+            # EV ORDERING (Dan's directive, 2026-11-16 evening): the
+            # confirmation panel closed NOT CONFIRMED under its frozen
+            # bar (combined pooled paired +2.80pp vs the +3pp bar;
+            # blowups 8.8% EV vs 17.5% offense), and Dan directed the
+            # switch as a judgment call anyway. Eligible stocks are now
+            # ranked by expected return (est_next_1y). Everything else
+            # is unchanged: the vol pain budget above still trims the
+            # eligible set's extreme-vol tail before ranking, and all
+            # gates and floors stand. The offense ranking is still
+            # computed and recorded (_OFFENSE_RANKED, the eligible
+            # snapshot, frame-row offense_score) and the offense-ordered
+            # shadow slate is recorded in the manifest, so the Nov 30
+            # audit keeps the price-run counterfactual on live data.
+            _off_sorted = est_ok.sort_values("offense_score",
+                                             ascending=False,
+                                             na_position="last")
+            for _i, _t in enumerate(_off_sorted["ticker"].astype(str), 1):
+                _OFFENSE_RANKED[_t] = (_i, len(est_ok))
+            est_ok = est_ok.sort_values("est_next_1y", ascending=False,
                                         na_position="last")
             for _i, _t in enumerate(est_ok["ticker"].astype(str), 1):
-                _OFFENSE_RANKED[_t] = (_i, len(est_ok))
-            log(f"variant A selection: ranking {len(est_ok)} eligible "
-                f"stocks by offense score (0.08*z_6m + 0.06*z_3m); "
-                f"{_nosc} names without z components rank last")
+                _EV_RANKED[_t] = (_i, len(est_ok))
+            log(f"EV-ordered selection: ranking {len(est_ok)} eligible "
+                f"stocks by expected return (est_next_1y); offense "
+                f"ranking recorded for audit monitoring; {_nosc} names "
+                f"without z components in the shadow ranking")
         else:
             est_ok = est_ok.sort_values("est_next_1y", ascending=False)
         first = pick_top_with_sector_cap(est_ok, n=n, max_per_sector=cap,
@@ -6508,8 +6546,7 @@ def pick_final(adj, args, llm_path):
             rest = rest[rest["_capkey"].map(lambda s: taken_counts.get(s, 0) < cap).astype(bool)]
             if not rest.empty:
                 rest["_newcat"] = (~rest["_capkey"].isin(set(taken_counts))).astype(int)
-                _fillkey = ("offense_score" if label == "stocks"
-                            else "est_next_1y")
+                _fillkey = "est_next_1y"
                 rest = rest.sort_values(["_newcat", _fillkey],
                                         ascending=[False, False],
                                         na_position="last")
@@ -6525,6 +6562,59 @@ def pick_final(adj, args, llm_path):
                 log(f"fill pass ({label}): +{len(fill)} within category cap: "
                     f"{fill['ticker'].tolist()}")
                 first = pd.concat([first, fill], ignore_index=True)
+        if label == "stocks" and len(est_ok):
+            # SHADOW OFFENSE SLATE (audit monitoring, 2026-11-16): rerun
+            # the same two-pass selection on the offense-sorted eligible
+            # set and record which names price-run ordering would have
+            # picked, so the audit can score the live counterfactual
+            # without reconstructing it from frame rows. Recording only;
+            # never raises, never affects the real selection.
+            try:
+                _sh = est_ok.sort_values("offense_score", ascending=False,
+                                         na_position="last")
+                _sh_first = pick_top_with_sector_cap(
+                    _sh, n=n, max_per_sector=cap,
+                    min_score=args.min_score, veto_dep=veto)
+                _sh_taken = (list(_sh_first["ticker"])
+                             if len(_sh_first) else [])
+                if len(_sh_first) < n:
+                    _sh_counts = (Counter(_cap_key_of(r)
+                                          for _, r in
+                                          _sh_first.iterrows())
+                                  if len(_sh_first) else Counter())
+                    _sh_rest = _sh[~_sh["ticker"].isin(
+                        set(_sh_taken))].copy()
+                    _sh_rest["_capkey"] = _sh_rest.apply(_cap_key_of,
+                                                         axis=1)
+                    _sh_rest = _sh_rest[_sh_rest["_capkey"].map(
+                        lambda s: _sh_counts.get(s, 0) < cap).astype(bool)]
+                    if not _sh_rest.empty:
+                        _sh_rest["_newcat"] = (
+                            ~_sh_rest["_capkey"].isin(
+                                set(_sh_counts))).astype(int)
+                        _sh_rest = _sh_rest.sort_values(
+                            ["_newcat", "offense_score"],
+                            ascending=[False, False],
+                            na_position="last")
+                        _sh_rest = _sh_rest.drop(
+                            columns=["_newcat", "_capkey"])
+                    _sh_fill = pick_top_with_sector_cap(
+                        _sh_rest, n=n - len(_sh_first),
+                        max_per_sector=cap, min_score=args.min_score,
+                        veto_dep=veto, initial_counts=_sh_counts)
+                    if len(_sh_fill):
+                        _sh_taken += list(_sh_fill["ticker"])
+                _SHADOW_OFFENSE_PICKS.clear()
+                _SHADOW_OFFENSE_PICKS.extend(
+                    [str(_t) for _t in _sh_taken])
+                _real = (list(first["ticker"]) if len(first) else [])
+                log(f"shadow offense slate (audit monitoring): "
+                    f"{_SHADOW_OFFENSE_PICKS}; overlap with EV picks "
+                    f"{len(set(_real) & set(_SHADOW_OFFENSE_PICKS))}"
+                    f"/{len(_real)}")
+            except Exception as _she:
+                log(f"shadow offense slate failed (recording only): "
+                    f"{_she}")
         if label == "ETFs" and len(first):
             # redundancy is not diversification: enforce the overlap cap on
             # the selected portfolio (post-selection repair, not pre-filter)
@@ -7231,7 +7321,9 @@ _ETF_TIER2 = {}  # ticker -> True; ETFs eligible only via the tier-2 proven-stre
 _ETF_TIER2_CAPPED = {}  # ticker -> reason; tier-2 ETFs that lost the tier-2 slot cap (2026-11-06)
 _FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
 _OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Variant A vol pain budget (2026-11-07)
-_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget Variant A offense ranking of eligible stocks (2026-11-07)
+_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget offense ranking of eligible stocks (Variant A 2026-11-07; retained as audit monitoring since the 2026-11-16 switch to EV ordering)
+_EV_RANKED = {}  # ticker -> (rank, n_eligible); post-budget expected-return ranking of eligible stocks (selection ordering since 2026-11-16, Dan's directive)
+_SHADOW_OFFENSE_PICKS = []  # tickers the offense (price-run) ordering would have picked this run; recorded in the manifest for the audit (2026-11-16)
 _FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
 
 
