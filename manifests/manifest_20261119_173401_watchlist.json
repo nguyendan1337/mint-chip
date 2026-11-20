@@ -1,0 +1,47 @@
+{
+ "date": "2026-11-19",
+ "flow": "watchlist",
+ "bundle": "watchlist_bundle_20261119_135920.json",
+ "screener_sha256": "932f1f04e5da3212be9ecdde471f4daaac8aa4865dccbb1042534e24221ba6dd",
+ "self_check": "4/4",
+ "counts": {
+  "candidates": 25,
+  "picks": 6,
+  "gate_bars": 0,
+  "stability_bars": 0,
+  "dep_binds": 0,
+  "vetoes": 2
+ },
+ "etf_selection": {
+  "gate_design": "strikes",
+  "strike_max_run": 0.35,
+  "strike_max_dep": 0.3,
+  "strike_min_maxdd": -0.12,
+  "strike_max_ddfreq": 0.05,
+  "strike_bar": 2,
+  "gate_max_run": 0.15,
+  "gate_max_dep": 0.2,
+  "tier2_max_run": 0.35,
+  "tier2_max_dep": 0.3,
+  "tier2_min_maxdd": -0.12,
+  "tier2_max_ddfreq": 0.05,
+  "tier2_max_picks": null,
+  "ev_upside_const": 0.08
+ },
+ "stock_selection": {
+  "gate_max_dep": 0.3,
+  "gate_implied_upside_min": 0.0,
+  "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
+  "offense_z_weights": {
+   "z_6m": 0.08,
+   "z_3m": 0.06
+  },
+  "shadow_offense_picks": [],
+  "vol_budget_eligible_pct": 0.95,
+  "up_t1": 0.15,
+  "up_factor": 0.3333333333333333,
+  "up_cap": 0.3
+ },
+ "pool_tail": null,
+ "git_commit_of_pages_at_publish": null
+}
