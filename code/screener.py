@@ -2039,6 +2039,15 @@ def _persistence_tickers():
                     t = str(e.get("ticker"))
                     if str(e["date"]) > last.get(t, ""):
                         last[t] = str(e["date"])
+                elif e.get("event") == "superseded":
+                    # SUPERSEDE (2026-11-20): a pick unpicked by the
+                    # same day's final slate never held a seat. (The
+                    # scan is in file order; a later re-pick restores
+                    # the seat via the branch above.)
+                    _t = str(e.get("ticker"))
+                    _pd = str(e.get("pick_date") or e.get("date") or "")
+                    if last.get(_t) == _pd:
+                        del last[_t]
         return [t for t, _ in sorted(last.items(),
                                      key=lambda kv: kv[1], reverse=True)]
     except Exception:
@@ -2340,7 +2349,7 @@ def attach_implied_upside(df, cache=None):
     detail = cache.get(dkey)
     if detail is None:
         try:
-            from fuse_checks import implied_upside_detail_map
+            from pick_checks import implied_upside_detail_map
             detail = implied_upside_detail_map(tickers) or {}
         except Exception as e:
             log(f"implied upside inputs: fetch failed ({e}) — iu "
@@ -2354,7 +2363,7 @@ def attach_implied_upside(df, cache=None):
                  for t in tickers}
         else:
             try:
-                from fuse_checks import implied_upside_map
+                from pick_checks import implied_upside_map
                 m = implied_upside_map(tickers) or {}
             except Exception as e:
                 log(f"implied upside: fetch failed ({e}) — valuation "
@@ -7598,29 +7607,34 @@ def record_picks_ledger(final, ranked, args, cache=None):
         log(f"ledger: recording {len(_LAST_DATA_COMPLETENESS['missing'])} picks "
             f"without prices; backfill before thesis_check")
     already = _ledger_seen_today(THESIS_LEDGER, "picked")
-    # Fuse dual-confirmation + fundamental-momentum context (audit
-    # instrumentation only — never selection, never a gate). Computed for
-    # stock picks via fuse_checks; ETFs skip (Fuse is stocks-only).
+    _sup_before = _ledger_seen_today(THESIS_LEDGER, "superseded")
+    # Pick evidence context (audit instrumentation only — never
+    # selection, never a gate). Computed for stock picks via
+    # pick_checks; ETFs skip (the fields are stock-only).
     # Any failure here yields null fields; it must never break the append.
-    fuse_ctx = {}
+    pick_ctx = {}
     try:
-        from fuse_checks import check_tickers as _fuse_check
+        from pick_checks import check_tickers as _pick_check
         stock_ticks = [t for t in tickers
                        if str(final[final["ticker"] == t].iloc[0].get("kind", ""))
                        == "stock"]
         if stock_ticks:
-            fuse_ctx = _fuse_check(stock_ticks) or {}
-        n_confirmed = sum(1 for v in fuse_ctx.values()
-                         if v.get("dual_confirm") is True)
-        log(f"ledger: fuse check done for {len(stock_ticks)} stock picks "
-            f"({n_confirmed} dual-confirmed)")
+            pick_ctx = _pick_check(stock_ticks) or {}
+        n_iu = sum(1 for v in pick_ctx.values()
+                   if v.get("implied_upside") is not None)
+        log(f"ledger: pick check done for {len(stock_ticks)} stock picks "
+            f"(implied upside for {n_iu})")
     except Exception as e:
-        log(f"ledger: fuse check failed ({e}) — continuing with null fields")
+        log(f"ledger: pick check failed ({e}) — continuing with null fields")
     npick = 0
     for _, r in final.iterrows():
-        if r["ticker"] in already:
+        # A ticker picked by an earlier run today and superseded
+        # since (Fix 2, below) is recorded as picked again when it
+        # returns to the day's final slate, so the last event for
+        # (ticker, date) decides; readers apply last-event-wins.
+        if r["ticker"] in already and r["ticker"] not in _sup_before:
             continue
-        _fc = fuse_ctx.get(r["ticker"], {})
+        _fc = pick_ctx.get(r["ticker"], {})
         _pev = {
             "event": "picked",
             "ticker": r["ticker"], "kind": r.get("kind", ""),
@@ -7638,15 +7652,15 @@ def record_picks_ledger(final, ranked, args, cache=None):
             "base_score": _safe(r.get("base_score")),
             "final_score": _safe(r.get("final_score")),
             "z": _z_of(r),
-            # Fuse cross-check fields (audit instrumentation, added
-            # 2026-10-05): dual_confirm True/False/None (None = could not
-            # be determined); sue = most recent earnings surprise
-            # (fraction); beat_streak = consecutive positive surprises;
+            # Pick evidence fields (audit instrumentation, added
+            # 2026-10-05; module renamed pick_checks 2026-11-20 when
+            # its second-screen verdict field was retired):
+            # sue = most recent earnings surprise (fraction);
+            # beat_streak = consecutive positive surprises;
             # implied_upside = (analyst mean target - price)/price.
             # RESEARCHER RULE: these fields are context for the monthly
             # audit only. They must NOT move continuation/confidence
             # scores until the audit validates them against outcomes.
-            "dual_confirm": _fc.get("dual_confirm"),
             "sue": _safe(_fc.get("sue")),
             "beat_streak": _fc.get("beat_streak"),
             "implied_upside": _safe(_fc.get("implied_upside")),
@@ -7684,6 +7698,59 @@ def record_picks_ledger(final, ranked, args, cache=None):
                                      else len(_pev["risk_strikes"]))
         ledger_append(THESIS_LEDGER, _pev)
         npick += 1
+    # SUPERSEDE STALE PICKS (2026-11-20, defect fix): the ledger is
+    # append-only, so when today's slate is republished with changes,
+    # a ticker picked by an earlier run but absent from this final
+    # slate would keep reading as a pick (Nov 19: 22 pick events
+    # against a 20-pick slate - IJH and QLV). Append one "superseded"
+    # event per stale ticker; existing lines are never edited or
+    # deleted. Idempotent: a superseded ticker is never superseded
+    # twice, and a ticker that returns to the final slate is recorded
+    # as picked again by the loop above, so the last event for
+    # (ticker, date) decides.
+    try:
+        _sup_seen = _ledger_seen_today(THESIS_LEDGER, "superseded")
+        _stale = sorted(set(already) - set(tickers))
+        n_sup = 0
+        for _t in _stale:
+            if _t in _sup_seen:
+                continue
+            ledger_append(THESIS_LEDGER, {
+                "event": "superseded", "ticker": _t,
+                "pick_date": today,
+                "reason": ("picked by an earlier run today; absent "
+                           "from the day's final slate (same-day "
+                           "republication)"),
+            })
+            n_sup += 1
+        if n_sup:
+            log(f"ledger: superseded {n_sup} stale pick(s) from "
+                f"earlier runs today: {_stale}")
+    except Exception as e:
+        log(f"ledger: supersede pass failed ({e}) - stale picks "
+            "remain unmarked")
+    # ETF GRADED SCORES (2026-11-20, defect fix): the rejected loop's
+    # score-floor test must read the GRADED fund score, the same value
+    # selection and the frame writer use. The ranked table here never
+    # passed through add_research_columns, so its est_next_1y is the
+    # bundle's (None for funds) and the score-floor branch below could
+    # never fire: zero "ETF score floor" ledger events were recorded
+    # from the score's 2026-11-12 ship through 2026-11-19 while the
+    # frames show 261. Enrich a copy exactly as the frame writer does
+    # and read the graded est from it. Recording only: this runs
+    # after selection, the frame snapshot and the self-check, and
+    # feeds nothing back into any of them.
+    _graded_est = {}
+    try:
+        _enr = add_research_columns(ranked, llm_path=True)
+        for _, _r in _enr.iterrows():
+            if str(_r.get("kind", "")) == "etf":
+                _v = _safe(_r.get("est_next_1y"))
+                if _v is not None:
+                    _graded_est[str(_r["ticker"])] = _v
+    except Exception as e:
+        log(f"ledger: graded-score enrichment failed ({e}) - score-floor "
+            f"recording falls back to the ranked table's values")
     # rejected control group: names the system said no to, so the audit can
     # ask whether the vetoes/exclusions/floors were right
     final_set = set(tickers)
@@ -7709,6 +7776,7 @@ def record_picks_ledger(final, ranked, args, cache=None):
         f_ = _safe(r.get("llm_confidence"))
         p = est_parts(r, d_used,
                       c if c is not None else 0.5, f_ if f_ is not None else 1.0)
+        _gscore = _graded_est.get(str(t), _safe(r.get("est_next_1y")))
         reason = None
         extra = {}
         if d_cap:
@@ -7731,11 +7799,11 @@ def record_picks_ledger(final, ranked, args, cache=None):
         elif d is not None and d_used > veto:
             reason = f"event-dependence veto (dep={d_used:.2f} > {veto})"
         elif (r.get("kind") == "etf" and _EV_MODE == "live"
-              and _safe(r.get("est_next_1y")) is not None
-              and _safe(r.get("est_next_1y")) < 50.0):
+              and _gscore is not None and _gscore < 50.0):
             # ETF SCORE (2026-11-12): a fund under the score floor is
-            # recorded with its score, not the old percent.
-            _s = _safe(r.get("est_next_1y"))
+            # recorded with its GRADED score, not the old percent and
+            # not the ranked table's est_next_1y (see _graded_est).
+            _s = _gscore
             reason = f"ETF score floor (score={_s:.0f} < 50)"
             p = dict(p)
             p["est"] = _s
@@ -7788,13 +7856,13 @@ def record_picks_ledger(final, ranked, args, cache=None):
             _du, _dcx = effective_dep(
                 t, r.get("kind"), r.get("sector"),
                 _d if _d is not None else 0.3)
+            _gs = _graded_est.get(t, _safe(r.get("est_next_1y")))
             _why = (bool(r.get("llm_excluded"))
                     or t in _RISK_GATED or t in _ETF_GATED
                     or t in _STOCK_GATED or t in _ETF_TIER2_CAPPED
                     or (_d is not None and _du > veto)
                     or (r.get("kind") == "etf" and _EV_MODE == "live"
-                        and _safe(r.get("est_next_1y")) is not None
-                        and _safe(r.get("est_next_1y")) < 50.0))
+                        and _gs is not None and _gs < 50.0))
             if not _why:
                 _c = _safe(r.get("llm_continuation"))
                 _f = _safe(r.get("llm_confidence"))
@@ -7867,6 +7935,14 @@ def _record_spell_exits(final_set, ranked, args, today):
                     if (t not in latest_pick
                             or e.get("date", "") >= latest_pick[t][0]):
                         latest_pick[t] = (e.get("date", ""), e)
+                elif e.get("event") == "superseded":
+                    # SUPERSEDE (2026-11-20): a pick unpicked by the
+                    # same day's final slate never began a spell, so
+                    # no exit is fabricated for it on later days. A
+                    # later re-pick re-adds it via the branch above.
+                    _pd = e.get("pick_date") or e.get("date")
+                    if t in latest_pick and latest_pick[t][0] == _pd:
+                        del latest_pick[t]
                 elif e.get("event") == "check":
                     latest_check[t] = e.get("status")
                 elif e.get("event") == "exit":
@@ -8006,6 +8082,13 @@ def thesis_check(track_days=THESIS_TRACK_DAYS, cache=None):
                     # prediction must not be shadowed — the audit measures
                     # every prediction, not just the latest.
                     picks[(e["ticker"], e.get("date"))] = e
+                elif e.get("event") == "superseded":
+                    # SUPERSEDE (2026-11-20): a pick unpicked by the
+                    # same day's final slate is not a live pick. Last
+                    # event for (ticker, date) decides; a later
+                    # re-pick (recorded again) restores it above.
+                    picks.pop((e.get("ticker"),
+                               e.get("pick_date") or e.get("date")), None)
     except FileNotFoundError:
         log("thesis_check: no ledger yet — 0 tracked")
         return []

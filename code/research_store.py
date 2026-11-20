@@ -207,6 +207,16 @@ def put_assessment(store, ticker, assessment, by):
     if not old:
         entry["assessment"] = new
         return "added"
+    # SWEEP-STAMP CARRY (2026-11-20, defect fix): the daily flow's
+    # pre-pick news sweep stamps "news_sweep" on the assessment it
+    # re-scores; a later put for the same ticker (a fresh re-score
+    # on a republication day) used to drop the stamp, because the
+    # new record simply did not carry the field. When the incoming
+    # record has no stamp and the stored record does, the stored
+    # stamp carries into the new record. A new record carrying its
+    # own stamp always wins; a stamp is never invented.
+    if not new.get("news_sweep") and old.get("news_sweep"):
+        new["news_sweep"] = old["news_sweep"]
     if _assessments_equal(old, new):
         return "noop-identical"
     old_date = str(old.get("assessed_date") or "")

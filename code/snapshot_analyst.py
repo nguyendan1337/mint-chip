@@ -12,7 +12,7 @@ anywhere Mint can reach. Snapshots taken daily from 2026-11-19 forward
 become that history; a future audit (first honest read late 2027) can
 then test a genuine mean-revision signal on Mint's own population.
 
-Source: the same yfinance .info call family fuse_checks uses for
+Source: the same yfinance .info call family pick_checks uses for
 implied_upside (one call per ticker, 8 workers, never raises). The free
 feed exposes consensus MEANS and analyst counts only — not individual
 analyst forecasts — so the archive supports mean-revision measures,
@@ -120,7 +120,7 @@ def main(argv=None):
     payload = {
         "date": day,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "yfinance .info (same call family as fuse_checks "
+        "source": "yfinance .info (same call family as pick_checks "
                   "implied_upside); consensus means and counts only",
         "frame": os.path.basename(args.from_frame) if args.from_frame else None,
         "n_tickers": len(rows),
