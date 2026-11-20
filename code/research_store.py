@@ -60,13 +60,22 @@ _ASSESSMENT_FIELDS = ("event_dependence", "continuation", "confidence",
                       # "coder" is not payload data — _clean_assessment
                       # stamps it from the writer (--by), like
                       # assessed_by below.
-                      "news_sweep", "coder")
+                      "news_sweep", "coder",
+                      # MECHANICAL PRE-FILL (2026-11-19): "mech_prefill"
+                      # carries mech_prefill.py's output for the name
+                      # (dividend_up_mech check value, big_acq_5pct
+                      # attention flag, as-filed dates) exactly as the
+                      # coder saw it, so disagreements between the coded
+                      # facts and the mechanical values are auditable.
+                      # Recording only — nothing scores, gates, or ranks
+                      # from it.
+                      "mech_prefill")
 _COMPARE_FIELDS = ("event_dependence", "continuation", "confidence",
                    "risks", "rationale", "assessed_date",
                    "news_checked_through", "earnings_note",
                    "exclude", "exclude_reason",
                    "facts", "facts_evidence",
-                   "news_sweep", "coder")
+                   "news_sweep", "coder", "mech_prefill")
 
 
 def _today_str():

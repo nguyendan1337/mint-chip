@@ -3355,8 +3355,9 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
 "that only covered new shares handed out. The result is scaled by how much\n"
 "we trust our own read and how steady the business looks. A fund&apos;s\n"
 "figure is different: the ETF Score, a grade from 0 to 100 against fixed\n"
-"standards, based on what the fund costs, how big it is, and how calm its\n"
-"price has been lately, meaning how little it has spiked. It is not ranked\n"
+"standards, based mostly on what the fund costs, and partly on how calm\n"
+"its price has been lately, meaning how little it has spiked. What a fund\n"
+"costs counts twice as much as calm in the grade. It is not ranked\n"
 "against the other funds on the page, and it is not a forecast for that one\n"
 "fund. A fund needs at least 50 to be picked. Its bar is drawn on a\n"
 "scale of 200, so even the highest grade fills only half the bar.</p>\n"
@@ -5789,6 +5790,19 @@ def _etf_r2_override(sub):
     not a return-validated relationship. Research does not adjust
     this grade; it only gates (strike tiers, the floor, ratings).
 
+    W6 AMENDMENT (2026-11-19, Dan directed; etf_fee_weighting_
+    2026-11-19 and etf_fee_verify_2026-11-19): the combination no
+    longer averages the three legs. The grade is the F8-corrected
+    weighted combination of the expense leg (weight 2) and the
+    blowoff leg (weight 1) only. The size leg is still graded
+    against its anchor table and recorded in etf_abs_legs, and the
+    aum_graded stamps still ride along, but size no longer enters
+    the grade: on the 2018-2025 point-in-time bed the size leg
+    carried no return information and scrambled the pick margin,
+    while the expense leg sorted within category in both eras.
+    etf_legs_used now counts the grade legs present (0-2); the
+    neutral fill applies per missing grade leg.
+
     Anchor tables (input -> grade):
       expense ratio (decimal): 0.0->100, 0.0003->90, 0.0006->75,
         0.001->60, 0.002->45, 0.0035->30, 0.005->18, 0.0075->8,
@@ -5975,40 +5989,46 @@ def _etf_r2_override(sub):
         aum_stamps.append((_aum_v, _aum_src, _aum_detail))
         g_blow = _anchor_grade(_spike_raw(r), _ABS_BLOWOFF)
         legs = {"expense": g_exp, "aum": g_aum, "blowoff": g_blow}
-        av = [g for g in legs.values() if g is not None]
         abs_leg_detail.append(legs)
-        abs_leg_counts.append(len(av))
-        if av:
-            _s_avail = sum(av) / len(av)
-            if _UPGRADE_F8 and len(av) < 3:
-                # Change S (F8, the T1 winner): complete the missing
-                # legs at the neutral 50 and print the lower of that
-                # and the available-leg mean — a score can never rise
-                # because data is missing, and a fully graded fund is
-                # bit-identical to the shipped rule. The fill applied
-                # per missing leg is recorded alongside the grade.
-                _filled = (sum(av) + 50.0 * (3 - len(av))) / 3.0
-                abs_scores.append(min(_s_avail, _filled))
-                abs_fill_detail.append(
-                    {k: 50.0 for k, g in legs.items() if g is None})
-            else:
-                abs_scores.append(_s_avail)
-                abs_fill_detail.append({})
+        # W6 (shipped 2026-11-19, Dan directed; etf_fee_weighting_
+        # 2026-11-19 + etf_fee_verify_2026-11-19): the grade combines
+        # ONLY the expense leg (weight 2) and the blowoff leg
+        # (weight 1). The size leg is still graded against its anchor
+        # table and recorded in the legs dict above, but it no longer
+        # enters the grade. F8 semantics generalized to the two-leg
+        # set: the score is the lower of the weighted mean of the
+        # present grade legs and that weighted sum with each missing
+        # grade leg filled at the neutral 50, over the total weight
+        # 3 — a score can never rise because data is missing. No
+        # grade leg present -> exactly 50.0 (score_fallback).
+        _GRADE_LEGS = (("expense", 2.0), ("blowoff", 1.0))
+        _inc = [(legs[k], w) for k, w in _GRADE_LEGS
+                if legs[k] is not None]
+        abs_leg_counts.append(len(_inc))
+        if _inc:
+            _wsum = sum(g * w for g, w in _inc)
+            _wpres = sum(w for _, w in _inc)
+            _s_avail = _wsum / _wpres
+            _filled = (_wsum + 50.0 * (3.0 - _wpres)) / 3.0
+            abs_scores.append(min(_s_avail, _filled))
+            abs_fill_detail.append(
+                {k: 50.0 for k, w in _GRADE_LEGS if legs[k] is None})
             fallbacks.append(False)
         else:
             abs_scores.append(50.0)
             fallbacks.append(True)
-            abs_fill_detail.append(
-                {k: 50.0 for k in legs} if _UPGRADE_F8 else {})
-            log(f"etf grade: {r.get('ticker')} has no usable leg - "
-                f"fallback grade 50.0 (score_fallback)")
+            abs_fill_detail.append({k: 50.0 for k, _ in _GRADE_LEGS})
+            log(f"etf grade: {r.get('ticker')} has no usable grade "
+                f"leg - fallback grade 50.0 (score_fallback)")
     log(f"etf grade (absolute): {len(rows)} funds graded; "
-        f"funds on <3 legs: {sum(1 for c in abs_leg_counts if c < 3)}; "
+        f"funds on <2 grade legs: "
+        f"{sum(1 for c in abs_leg_counts if c < 2)}; "
         f"fallbacks: {sum(fallbacks)}")
     if _UPGRADE_F8:
-        log(f"etf grade F8: completeness correction active; "
-            f"{sum(1 for c in abs_leg_counts if c < 3)} funds on <3 legs "
-            f"repriced by the neutral fill")
+        log(f"etf grade W6: expense:blowoff 2:1, size excluded from "
+            f"the grade; completeness correction active; "
+            f"{sum(1 for c in abs_leg_counts if c < 2)} funds on "
+            f"<2 grade legs repriced by the neutral fill")
     aum_vals = [s[0] for s in aum_stamps]
     aum_srcs = [s[1] for s in aum_stamps]
     aum_pends = [((s[2] or {}).get("period_end")
