@@ -5754,10 +5754,22 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     from cache import StepCache
     etf_universe = cache.get("etf_universe_v5")
     if etf_universe is None:
-        # benchmark-relative universe: everything the bench-5 filter below
-        # would consider; 2000 is only a work bound, not a cutoff
-        etf_universe = get_etf_universe(target=2000, min_price=args.min_price,
-                                        min_52w=bench_ret * 100 - 5)
+        # BAR-MEASURE FIX (2026-11-19, Dan directed): list WIDE on the
+        # screener's price bands and bar only at confirmation, on total
+        # return. The old call barred at listing time on Yahoo's
+        # PRICE-only 52w figure against a TOTAL-return benchmark leg
+        # (min_52w = bench - 5pp), which charged every income fund its
+        # own payout as an extra hurdle before confirmation ever saw
+        # it: 255 historical fund-dates that passed total-return
+        # confirmation were excluded by that bar, and the 2000 work
+        # bound truncated the final band above the bar. The target
+        # below is set far above any plausible listing count so the
+        # bound cannot bind before the bands exhaust at 0% (the
+        # mandate's strength floor stands — funds with a negative 52w
+        # gain are still never listed), and no min_52w is passed, so
+        # no band is skipped for sitting below the bar on price.
+        etf_universe = get_etf_universe(target=100000,
+                                        min_price=args.min_price)
         if etf_universe:
             cache.put("etf_universe_v5", etf_universe)
         # Never cache an empty universe (outage would poison same-day retries).
@@ -5765,11 +5777,21 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
         log("ETF universe empty; skipping ETF leg")
         return pd.DataFrame()
     bench_pct = bench_ret * 100
-    ecands = [u for u in etf_universe
-              if u.get("pct_52w") and u["pct_52w"] > bench_pct - 5]
-    ecands.sort(key=lambda d: d["pct_52w"] or 0, reverse=True)
-    print(f"\n{len(ecands)} candidate ETF outperformers "
-          f"(screener 52w% > {bench_pct - 5:.0f}%)")
+    # Every listed name is a candidate now; the total-return
+    # confirmation below is the only return test (the same measure on
+    # both sides). The old price-bar set is kept as an accounting
+    # counter so the log shows the previously invisible population.
+    price_barred = {u["ticker"] for u in etf_universe
+                    if not (u.get("pct_52w")
+                            and u["pct_52w"] > bench_pct - 5)}
+    ecands = list(etf_universe)
+    ecands.sort(key=lambda d: d.get("pct_52w") or 0, reverse=True)
+    print(f"\n{len(ecands)} candidate ETFs listed (wide listing; "
+          f"total-return confirmation is the only bar)")
+    log(f"ETF listing: {len(etf_universe)} listed, "
+        f"{len(price_barred)} of them at/below the old price bar "
+        f"(screener 52w% <= {bench_pct - 5:.1f}%) — under the old "
+        f"candidate filter they would never have reached confirmation")
     etickers = [c["ticker"] for c in ecands]
     ekey = "etf_prices_" + StepCache.tickers_key(etickers)
     ecloses = cache.get(ekey)
@@ -5778,15 +5800,29 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
         cache.put(ekey, ecloses)
         _cache_put_px(cache, ecloses)
     eout = []
+    n_wedge_confirmed = 0
+    n_wedge_bar_stopped = 0
     for c in ecands:
         s = ecloses.get(c["ticker"])
         r = calc_return(s) if s is not None else np.nan
         if not pd.isna(r) and r > bench_ret:
             c["ret_1y"] = r
             eout.append(c)
+            if c["ticker"] in price_barred:
+                n_wedge_confirmed += 1
+        elif c["ticker"] in price_barred and (pd.isna(r)
+                                              or r <= bench_ret - 0.05):
+            n_wedge_bar_stopped += 1
     eout.sort(key=lambda d: d["ret_1y"], reverse=True)
     print(f"{len(eout)} confirmed ETF outperformers beat {bench_name} "
           f"({bench_ret:+.1%} 1y)")
+    log(f"ETF bar-measure accounting: {len(price_barred)} listed names "
+        f"sat at/below the old price bar; of those, "
+        f"{n_wedge_confirmed} confirmed on total return and "
+        f"{n_wedge_bar_stopped} were stopped by the total-return bar "
+        f"at confirmation (total 1y <= bench - 5pp, or unpriced); the "
+        f"rest passed the bar but not confirmation. "
+        f"Confirmed total: {len(eout)}")
     if not eout:
         return pd.DataFrame()
     fkey = "etf_fundamentals_" + StepCache.tickers_key([c["ticker"] for c in eout])
