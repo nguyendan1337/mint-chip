@@ -3572,9 +3572,9 @@ h2 {{ font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
 
 .tledger a {{ color: #9aa79a; font-size: 16px;
   text-decoration: underline; text-underline-offset: 2px; }}
-.sortctl {{ display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
+.sortctl {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 10px;
   font-size: 12px; color: #93a093; letter-spacing: 0.06em; }}
-.sbtn {{ font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
+.sbtn {{ flex: 0 0 auto; font-family: inherit; font-size: 16px; letter-spacing: 0.04em;
   color: #cfd6cf;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.06) 52%,
