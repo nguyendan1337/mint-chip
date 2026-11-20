@@ -267,19 +267,65 @@ def get_all_screener_stocks(min_mcap=2_000_000_000, min_price=5.0):
         return []
 
 
-def get_fundamentals(tickers, workers=6):
-    """Fetch fundamentals via yfinance info for ALL tickers (threaded)."""
+def _prior_info_records(tickers, cache_root):
+    """Most recent cached info records for tickers, recovered from prior
+    StepCache date partitions (fundamentals_*.pkl / etf_fundamentals_*.pkl),
+    newest partition first. A record counts only if it passes the same
+    validity test as a fresh fetch. Returns {ticker: info}."""
+    import glob as _glob
+    import pickle as _pickle
+    want = set(tickers)
+    found = {}
+    if not want or not cache_root or not os.path.isdir(cache_root):
+        return found
+    dates = sorted((d for d in os.listdir(cache_root)
+                    if len(d) == 8 and d.isdigit()), reverse=True)
+    for d in dates:
+        if not want:
+            break
+        files = sorted(_glob.glob(os.path.join(
+            cache_root, d, "fundamentals_*.pkl"))) + sorted(_glob.glob(
+                os.path.join(cache_root, d, "etf_fundamentals_*.pkl")))
+        for p in files:
+            if not want:
+                break
+            try:
+                with open(p, "rb") as f:
+                    blob = _pickle.load(f)
+            except Exception:
+                continue
+            if not isinstance(blob, dict):
+                continue
+            for t in list(want):
+                info = blob.get(t)
+                if info and info.get("regularMarketPrice") is not None:
+                    found[t] = info
+                    want.discard(t)
+    return found
+
+
+def get_fundamentals(tickers, workers=6, cache_root=None):
+    """Fetch fundamentals via yfinance info for ALL tickers (threaded).
+
+    Fault-tolerant (2026-11-19, pool-audit fix 2): each ticker is retried
+    with backoff before being given up, and a ticker still missing after
+    that falls back to its most recent cached info record from a prior
+    run's StepCache partition (cache_root) rather than running blind.
+    Every fallback use is logged."""
     log(f"Fetching fundamentals for {len(tickers)} tickers ({workers} threads)...")
     infos = {}
     from concurrent.futures import ThreadPoolExecutor
 
     def fetch(t):
-        try:
-            info = yf.Ticker(t).info
-            if info and info.get("regularMarketPrice") is not None:
-                return t, info
-        except Exception:
-            pass
+        for attempt in range(3):
+            try:
+                info = yf.Ticker(t).info
+                if info and info.get("regularMarketPrice") is not None:
+                    return t, info
+            except Exception:
+                pass
+            if attempt < 2:
+                time.sleep(0.75 * (2 ** attempt))
         return t, None
 
     done = 0
@@ -292,6 +338,15 @@ def get_fundamentals(tickers, workers=6):
                 infos[t] = info
             time.sleep(0.05)
     log(f"Got fundamentals for {len(infos)}/{len(tickers)} tickers")
+    missing = [t for t in tickers if t not in infos]
+    if missing and cache_root:
+        recovered = _prior_info_records(missing, cache_root)
+        if recovered:
+            infos.update(recovered)
+            log(f"fundamentals fallback: {len(recovered)}/{len(missing)} "
+                f"tickers with no fresh info are running on their most "
+                f"recent cached info record: "
+                + ", ".join(sorted(recovered)))
     return infos
 
 
@@ -1648,6 +1703,27 @@ def _etf_theme_of(category):
     return _ETF_STYLEBOX_THEMES.get(c, c or "Unknown")
 
 
+# Category fallback (2026-11-19, pool-audit item 4): a handful of
+# funds' info records carry no category at all, even after the
+# info-fetch retry/cache fallback. This map supplies the missing
+# category BY TICKER at the point build_etf_scores assigns the row's
+# category, and is consulted ONLY where the record's category is
+# missing/Unknown. It is distinct from _ETF_CATEGORY_OVERRIDES
+# below, which repairs cap grouping and frame theme recording for
+# known-gap funds WITHOUT rewriting the row's raw category; this
+# map instead supplies the row's category itself, so an unlabeled
+# fund can never again win a pick out of the accidental "Unknown"
+# theme bucket (the QLV accident class). Every entry is sourced;
+# keep the map small and fully sourced.
+_ETF_CATEGORY_FALLBACK = {
+    "AMDY": "Derivative Income",  # YieldMax AMD option income; judgment - single-stock option-income family (cf. AAPY in the bed map)
+    "COPP": "Natural Resources",  # Sprott Copper Miners; completed bed category map (listing source)
+    "MRNY": "Derivative Income",  # YieldMax MRNA option income; judgment - same family as AMDY
+    "TDVI": "Derivative Income",  # FT Vest Technology Dividend Target Income; completed bed category map (listing source)
+    "XLEI": "Derivative Income",  # State Street Energy Select Sector Premium Income; Morningstar category (AAII/Robinhood listings)
+}
+
+
 # Category data fixes (2026-11-10): the metadata feed leaves a few
 # well-known funds unclassified ('Unknown'), and a theme cap must not
 # treat a data gap as a theme of its own. Applied ONLY where the raw
@@ -2832,11 +2908,17 @@ def etf_trash_filter(rows, closes, infos, us_only=True):
 def build_etf_scores(closes, infos):
     """Score ETFs: momentum 40%, low-risk/liquidity 40%, cost/scale 20%."""
     rows = []
+    _cat_fallback_used = []
     for t, px in closes.items():
         info = infos.get(t, {})
         if px is None or len(px) < 120:
             continue
         facts = etf_facts(info)
+        if facts["category"] in ("", "Unknown"):
+            _fb = _ETF_CATEGORY_FALLBACK.get(t)
+            if _fb:
+                facts["category"] = _fb
+                _cat_fallback_used.append(t)
         row = {"ticker": t,
                "name": str(info.get("longName") or info.get("shortName") or t),
                "sector": facts["category"], "kind": "etf",
@@ -2870,6 +2952,11 @@ def build_etf_scores(closes, infos):
         except Exception:
             row["dollar_vol10"] = 0.0
         rows.append(row)
+    if _cat_fallback_used:
+        log(f"etf category fallback: {len(_cat_fallback_used)} fund(s) "
+            f"with no category in their info record assigned from the "
+            f"static fallback map: "
+            + ", ".join(sorted(_cat_fallback_used)))
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -5707,7 +5794,7 @@ def run_etf_pipeline(args, cache, bench_ret, bench_name):
     emiss = [c["ticker"] for c in eout if c["ticker"] not in einfos]
     if emiss:
         log(f"ETF fundamentals: {len(einfos)} cached, fetching {len(emiss)} missing")
-        einfos.update(get_fundamentals(emiss))
+        einfos.update(get_fundamentals(emiss, cache_root=cache.root))
         cache.put(fkey, einfos)
     ekept, etrash = etf_trash_filter(eout, ecloses, einfos, us_only=args.us_only)
     log(f"ETF trash filter: {etrash['dropped_total']} dropped, "
@@ -6828,7 +6915,7 @@ def run_watchlist(args, tickers):
     if not ok:
         print("No usable price data for any ticker. Aborting.")
         return
-    infos = get_fundamentals(ok)
+    infos = get_fundamentals(ok, cache_root=cache.root)
     is_etf = {t: (infos.get(t, {}).get("quoteType") == "ETF") for t in ok}
     st = [t for t in ok if not is_etf[t]]
     et = [t for t in ok if is_etf[t]]
@@ -8599,7 +8686,7 @@ def main():
     missing = [t for t in out_tickers if t not in infos]
     if missing:
         log(f"fundamentals: {len(infos)} cached, fetching {len(missing)} missing")
-        fresh = get_fundamentals(missing)
+        fresh = get_fundamentals(missing, cache_root=cache.root)
         infos.update(fresh)
         cache.put(fund_key, infos)
     else:
