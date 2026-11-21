@@ -793,7 +793,13 @@ def log_levers(args):
         f"{ETF_STRIKE_BAR}+ strikes = barred; barred names stay "
         f"honorable-mention eligible")
     log(f"stock eligibility gate (2026-11-06): implied upside >= 0 "
-        f"and dep_used < {STOCK_GATE_MAX_DEP:.2f}; barred names stay "
+        f"and dep_used < {STOCK_GATE_MAX_DEP:.2f}; EY band leg "
+        f"(2026-11-21): mechanical earnings yield inside "
+        f"[{EY_BAND_LO * 100:.2f}%, {EY_BAND_HI * 100:.2f}%] bars "
+        f"(undetermined yield never bars); balance-sheet pocket legs "
+        f"(2026-11-21): cash >= {BS_CASH_SHARE_MAX * 100:.2f}% of "
+        f"assets bars, debt < {BS_LEVERAGE_MIN * 100:.2f}% of assets "
+        f"bars (undetermined ratio never bars); barred names stay "
         f"honorable-mention eligible")
     log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
     log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
@@ -1415,6 +1421,59 @@ ETF_STRIKE_BAR = 2
 # in est_parts (first STOCK_UP_T1 of the 6m run at full weight, beyond
 # at STOCK_UP_FACTOR, run capped at STOCK_UP_CAP).
 STOCK_GATE_MAX_DEP = 0.30
+# EY BAND GATE (2026-11-21, Dan's directive "verify, then ship into
+# mint" after the frozen test in nightshade/mint_ey_band_2026-11-21):
+# a third leg of the stock eligibility gate below. A stock cannot be
+# picked when its mechanical point-in-time earnings yield (operating
+# income / enterprise value, stamped by ey_feed.py from SEC filings)
+# falls in the frozen slightly-negative band. Provenance: the band
+# was spotted in the fence decomposition's D5 terciles, then tested
+# frozen on Mint's mechanical core (93 monthly dates, 2018-2025):
+# in-band picks blew up at 44.6% vs 27.5% for covered out-of-band
+# picks (median forward return -2.2%), and excluding the band was
+# DOMINANT — pooled return +71.73% vs +67.30%, blowups 24.52% vs
+# 27.96%, negative slates 8.60% vs 11.83%, blowups better in all
+# four eras. The bounds are the decomposition tercile's recorded
+# observed min/max, frozen verbatim — never re-derive or re-tune
+# them here. Fail-soft, matching the test: a name whose EY cannot
+# be computed is never barred. Barred names keep their EVs and stay
+# honorable-mention eligible, like every other gate leg. The Nov 30
+# audit judges the leg on the live record like the other gate legs.
+EY_BAND_LO = -0.026496711528710953
+EY_BAND_HI = -0.0008823712366114762
+# BALANCE-SHEET POCKET GATES (2026-11-21, Dan's directive "ship the
+# two improvements" after the decomposition scan's frozen arm tests
+# in nightshade/scan_arms_2026-11-21 and the combined-pair
+# verification recorded there): two more legs of the stock
+# eligibility gate below, both stamped by ey_feed.py from SEC
+# filings with the scan's exact point-in-time constructions.
+# (a) CASH POCKET: a stock cannot be picked when cash & equivalents
+# are at least BS_CASH_SHARE_MAX of total assets (accruals-build
+# construction). The scan's cell blew up at 46.1% vs a 29.7% covered
+# base; the frozen arm against the EY-band baseline returned
+# +73.06% vs +71.73% with blowups 21.61% vs 24.52% (a priced trade
+# on the era-return clause alone; Dan accepted it for the pooled
+# safety gain). The bound is the scan's recorded quintile edge,
+# frozen verbatim; at-bound names are pocket members (>=).
+# (b) LOW-DEBT POCKET: a stock cannot be picked when total debt is
+# below BS_LEVERAGE_MIN of total assets (balance-sheet-build
+# construction). The scan's cell blew up at 40.4% vs a 26.0% covered
+# base; the frozen arm was DOMINANT against the EY-band baseline —
+# return +74.77% vs +71.73%, blowups 24.19% vs 24.52%. The bound is
+# the scan's recorded quintile edge, frozen verbatim, and the
+# pocket is STRICT (<): the scan's rank rule placed at-bound names
+# outside it. A name with no debt version on file has no leverage
+# at all (not zero) and is never barred by this leg.
+# The pair together (verified before this ship; it had never been
+# run as an arm): DOMINANT vs the EY-band baseline — pooled return
+# +75.29% vs +71.73%, blowups 21.18% vs 24.52% (better in all four
+# eras), negative slates 5.38% vs 8.60%, 208 of 930 baseline picks
+# displaced. Fail-soft throughout, matching the tests: a name whose
+# ratio cannot be computed is never barred. Barred names keep their
+# EVs and stay honorable-mention eligible, like every other gate
+# leg. The Nov 30 audit judges the legs on the live record.
+BS_CASH_SHARE_MAX = 0.3519357079857501
+BS_LEVERAGE_MIN = 0.0407764726456614
 STOCK_UP_T1 = 0.15
 STOCK_UP_FACTOR = 1.0 / 3.0
 STOCK_UP_CAP = 0.30
@@ -1871,6 +1930,164 @@ def _stamp_exec_facts(recs):
             else:
                 seen[ticker] = (None, "")
         r["exec_only"], r["exec_evidence"] = seen[ticker]
+    return recs
+
+
+def _stamp_ey_facts(recs):
+    """Stamp the mechanical earnings yield onto stock row dicts.
+
+    Third twin of the form4/exec stamps: a recorded filing input
+    (ey_feed.py, SEC companyfacts) stamped onto the frame in the
+    shared enrichment path. Unlike those two it carries no EV term —
+    its only consumer is the stock eligibility gate's EY band leg
+    in pick_final (and the frame record). One batched feed call for
+    every distinct stock ticker in the batch; ETFs are never
+    queried. Prices are the latest yfinance adjusted closes (the
+    same series family the quant panels use, in today's share
+    units). Any failure leaves ey=None, which the gate treats
+    exactly like the test's uncovered names: never barred.
+
+    The same feed call family also stamps the two balance-sheet
+    ratios behind the gate's cash-pocket and low-debt legs
+    (2026-11-21): cash_share and leverage, with their filing
+    vintages and evidence. They share the EY extraction cache, so
+    they cost no extra SEC requests; each ratio is None when it
+    cannot be determined, and a None ratio never bars.
+    """
+    try:
+        from ey_feed import earnings_yields as _ey_feed_yields
+        from ey_feed import balance_sheet_ratios as _bs_feed_ratios
+    except Exception:
+        _ey_feed_yields = None
+        _bs_feed_ratios = None
+    tickers = []
+    for r in recs:
+        if str(r.get("kind") or "").lower() != "stock":
+            r["ey"] = None
+            r["ey_filed"] = None
+            r["ey_bs_filed"] = None
+            r["ey_evidence"] = ""
+            r["cash_share"] = None
+            r["cash_filed"] = None
+            r["cash_bs_filed"] = None
+            r["cash_evidence"] = ""
+            r["leverage"] = None
+            r["lev_debt_filed"] = None
+            r["lev_bs_filed"] = None
+            r["lev_evidence"] = ""
+            continue
+        t = str(r.get("ticker") or "")
+        if t and t not in tickers:
+            tickers.append(t)
+    prices = {}
+    if tickers:
+        try:
+            import yfinance as _yf
+            _px = _yf.download(tickers, period="5d", auto_adjust=True,
+                               progress=False, threads=True)["Close"]
+            if hasattr(_px, "columns"):
+                for t in tickers:
+                    if t in _px.columns:
+                        _s = _px[t].dropna()
+                        if len(_s):
+                            prices[t] = float(_s.iloc[-1])
+            else:  # single-ticker frame comes back as a Series
+                _s = _px.dropna()
+                if len(_s):
+                    prices[tickers[0]] = float(_s.iloc[-1])
+        except Exception:
+            prices = {}
+    results = {}
+    if _ey_feed_yields is not None and tickers:
+        try:
+            results = _ey_feed_yields(tickers, prices) or {}
+        except Exception:
+            results = {}
+    n_cov = 0
+    for r in recs:
+        if str(r.get("kind") or "").lower() != "stock":
+            continue
+        res = results.get(str(r.get("ticker") or "")) or {}
+        ey = res.get("ey")
+        if isinstance(ey, (int, float)) and ey == ey:
+            r["ey"] = float(ey)
+            r["ey_filed"] = res.get("oi_filed")
+            r["ey_bs_filed"] = res.get("shares_filed")
+            r["ey_evidence"] = (
+                f"OI ${res.get('oi', 0):,.0f} (10-K filed "
+                f"{res.get('oi_filed')}, FY ended "
+                f"{res.get('oi_period_end')}); EV "
+                f"${res.get('ev', 0):,.0f} = mcap "
+                f"${res.get('market_cap', 0):,.0f} + debt "
+                f"${res.get('debt', 0):,.0f}"
+                f"{' (debt missing, treated as 0)' if res.get('debt_missing') else ''}"
+                f" (BS filed {res.get('shares_filed')}); price "
+                f"${res.get('price', 0):,.2f}")
+            n_cov += 1
+        else:
+            r["ey"] = None
+            r["ey_filed"] = None
+            r["ey_bs_filed"] = None
+            r["ey_evidence"] = ""
+    if tickers:
+        log(f"ey feed: earnings yield determined for {n_cov}/"
+            f"{len(tickers)} stock candidates "
+            f"({len(tickers) - n_cov} uncovered, never barred)")
+    # Balance-sheet ratios (cash_share, leverage) for the gate's
+    # two pocket legs; same tickers, same feed, shared cache.
+    bs_results = {}
+    if _bs_feed_ratios is not None and tickers:
+        try:
+            bs_results = _bs_feed_ratios(tickers) or {}
+        except Exception:
+            bs_results = {}
+    n_cash = n_lev = 0
+    for r in recs:
+        if str(r.get("kind") or "").lower() != "stock":
+            continue
+        res = bs_results.get(str(r.get("ticker") or "")) or {}
+        cs = res.get("cash_share")
+        if isinstance(cs, (int, float)) and cs == cs:
+            r["cash_share"] = float(cs)
+            r["cash_filed"] = res.get("cash_filed")
+            r["cash_bs_filed"] = res.get("cash_assets_filed")
+            r["cash_evidence"] = (
+                f"cash ${res.get('cash', 0):,.0f} "
+                f"({res.get('cash_source')}, 10-K filed "
+                f"{res.get('cash_filed')}, FY ended "
+                f"{res.get('cash_period_end')}); assets "
+                f"${res.get('cash_assets', 0):,.0f} (filed "
+                f"{res.get('cash_assets_filed')}); cash/assets "
+                f"{float(cs) * 100:.2f}%")
+            n_cash += 1
+        else:
+            r["cash_share"] = None
+            r["cash_filed"] = None
+            r["cash_bs_filed"] = None
+            r["cash_evidence"] = ""
+        lv = res.get("leverage")
+        if isinstance(lv, (int, float)) and lv == lv:
+            r["leverage"] = float(lv)
+            r["lev_debt_filed"] = res.get("debt_filed")
+            r["lev_bs_filed"] = res.get("lev_assets_filed")
+            r["lev_evidence"] = (
+                f"debt ${res.get('debt', 0):,.0f} "
+                f"({res.get('debt_source')}, 10-K filed "
+                f"{res.get('debt_filed')}, FY ended "
+                f"{res.get('debt_period_end')}); assets "
+                f"${res.get('lev_assets', 0):,.0f} (filed "
+                f"{res.get('lev_assets_filed')}); debt/assets "
+                f"{float(lv) * 100:.2f}%")
+            n_lev += 1
+        else:
+            r["leverage"] = None
+            r["lev_debt_filed"] = None
+            r["lev_bs_filed"] = None
+            r["lev_evidence"] = ""
+    if tickers:
+        log(f"bs feed: cash share determined for {n_cash}/"
+            f"{len(tickers)} stock candidates, leverage for "
+            f"{n_lev}/{len(tickers)} (undetermined never barred)")
     return recs
 
 
@@ -4517,6 +4734,19 @@ def _reader_reason(raw, kind=""):
                 elif part.startswith("dep "):
                     bits.append("too much of its outlook rides on a "
                                 "single event")
+                elif part.startswith("earnings yield"):
+                    bits.append("its earnings are slightly negative "
+                                "for its size, a pattern that has "
+                                "historically flagged fragile picks")
+                elif part.startswith("cash "):
+                    bits.append("it keeps an unusually large share "
+                                "of its assets in cash, a pattern "
+                                "that has historically flagged "
+                                "fragile picks")
+                elif part.startswith("debt "):
+                    bits.append("it carries almost no debt, a "
+                                "pattern that has historically "
+                                "flagged fragile picks")
                 else:
                     bits.append(part)
             return "Not eligible for a pick: " + "; ".join(bits) + "."
@@ -4908,6 +5138,60 @@ def _frame_row(r, outcome, reason):
                       if str(r.get("kind", "")) == "stock" else None),
         "exec_evidence": (str(r.get("exec_evidence") or "")
                           if str(r.get("kind", "")) == "stock" else None),
+        # EY RECORDING (2026-11-21): the mechanical earnings yield
+        # (ey_feed, SEC filings), its filing vintages, and its
+        # compact evidence ride every stock frame row, so any gate
+        # bar can be re-derived from the frame alone. None when the
+        # feed could not determine the yield (never barred), None
+        # for ETFs.
+        "ey": (_safe(r.get("ey"))
+               if str(r.get("kind", "")) == "stock" else None),
+        "ey_filed": (str(r.get("ey_filed"))
+                     if isinstance(r.get("ey_filed"), str)
+                     and r.get("ey_filed")
+                     and str(r.get("kind", "")) == "stock" else None),
+        "ey_bs_filed": (str(r.get("ey_bs_filed"))
+                        if isinstance(r.get("ey_bs_filed"), str)
+                        and r.get("ey_bs_filed")
+                        and str(r.get("kind", "")) == "stock" else None),
+        "ey_evidence": (str(r.get("ey_evidence") or "")
+                        if str(r.get("kind", "")) == "stock" else None),
+        # BALANCE-SHEET POCKET RECORDING (2026-11-21): the two
+        # mechanical ratios behind the gate's cash-pocket and
+        # low-debt legs (ey_feed, SEC filings), their filing
+        # vintages, and their compact evidence ride every stock
+        # frame row, so any bar can be re-derived from the frame
+        # alone. None when the feed could not determine the ratio
+        # (never barred), None for ETFs.
+        "cash_share": (_safe(r.get("cash_share"))
+                       if str(r.get("kind", "")) == "stock" else None),
+        "cash_filed": (str(r.get("cash_filed"))
+                       if isinstance(r.get("cash_filed"), str)
+                       and r.get("cash_filed")
+                       and str(r.get("kind", "")) == "stock" else None),
+        "cash_bs_filed": (str(r.get("cash_bs_filed"))
+                          if isinstance(r.get("cash_bs_filed"), str)
+                          and r.get("cash_bs_filed")
+                          and str(r.get("kind", "")) == "stock"
+                          else None),
+        "cash_evidence": (str(r.get("cash_evidence") or "")
+                          if str(r.get("kind", "")) == "stock"
+                          else None),
+        "leverage": (_safe(r.get("leverage"))
+                     if str(r.get("kind", "")) == "stock" else None),
+        "lev_debt_filed": (str(r.get("lev_debt_filed"))
+                           if isinstance(r.get("lev_debt_filed"), str)
+                           and r.get("lev_debt_filed")
+                           and str(r.get("kind", "")) == "stock"
+                           else None),
+        "lev_bs_filed": (str(r.get("lev_bs_filed"))
+                         if isinstance(r.get("lev_bs_filed"), str)
+                         and r.get("lev_bs_filed")
+                         and str(r.get("kind", "")) == "stock"
+                         else None),
+        "lev_evidence": (str(r.get("lev_evidence") or "")
+                         if str(r.get("kind", "")) == "stock"
+                         else None),
         "ev_mode": _EV_MODE,
         "facts": _facts_of(r),
         # JUDGMENT RECORD (logging package, 2026-11-13): the evidence
@@ -5217,6 +5501,30 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                     "stock_selection": {
                         "gate_max_dep": STOCK_GATE_MAX_DEP,
                         "gate_implied_upside_min": 0.0,
+                        "gate_ey_band_lo": EY_BAND_LO,
+                        "gate_ey_band_hi": EY_BAND_HI,
+                        "gate_ey_band": ("exclude from picks when the "
+                                         "mechanical EY (ey_feed) is "
+                                         "determined and in band; "
+                                         "fail-soft (2026-11-21)"),
+                        "gate_cash_share_max": BS_CASH_SHARE_MAX,
+                        "gate_cash_pocket": ("exclude from picks when "
+                                             "cash & equivalents are "
+                                             ">= the bound as a share "
+                                             "of total assets (ey_feed, "
+                                             "accruals construction); "
+                                             "fail-soft (2026-11-21)"),
+                        "gate_leverage_min": BS_LEVERAGE_MIN,
+                        "gate_low_debt_pocket": ("exclude from picks "
+                                                 "when total debt is "
+                                                 "strictly below the "
+                                                 "bound as a share of "
+                                                 "total assets "
+                                                 "(ey_feed, balance-"
+                                                 "sheet construction); "
+                                                 "no leverage on file "
+                                                 "never bars; fail-soft "
+                                                 "(2026-11-21)"),
                         "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
                         "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
                         "shadow_offense_picks": list(_SHADOW_OFFENSE_PICKS),
@@ -5647,7 +5955,12 @@ def run_self_check(final, args, out_csv):
                     _gate_ok = False
                 # Stock eligibility gate (2026-11-06): every stock pick
                 # must have implied upside >= 0 (when recorded) and
-                # dep_used < STOCK_GATE_MAX_DEP.
+                # dep_used < STOCK_GATE_MAX_DEP. EY band leg added
+                # 2026-11-21: no stock pick may carry a determined
+                # earnings yield inside the frozen band. Balance-sheet
+                # pocket legs added 2026-11-21: no stock pick may
+                # carry a determined cash share at/above the bound or
+                # a determined leverage strictly below the bound.
                 for _, _r in final[final["kind"] == "stock"].iterrows():
                     _iu = _safe(_r.get("implied_upside"))
                     if _iu is not None and _iu < 0:
@@ -5655,11 +5968,21 @@ def run_self_check(final, args, out_csv):
                     _du = _safe(_dep_used_of(_r))
                     if _du is not None and _du >= STOCK_GATE_MAX_DEP:
                         _gate_ok = False
+                    _ey = _safe(_r.get("ey"))
+                    if _ey is not None and EY_BAND_LO <= _ey <= EY_BAND_HI:
+                        _gate_ok = False
+                    _cs = _safe(_r.get("cash_share"))
+                    if _cs is not None and _cs >= BS_CASH_SHARE_MAX:
+                        _gate_ok = False
+                    _lv = _safe(_r.get("leverage"))
+                    if _lv is not None and _lv < BS_LEVERAGE_MIN:
+                        _gate_ok = False
             check("risk_flag_gate", _gate_ok,
                   "all picks <2 risk strikes (gate added 2026-10-30); "
                   "ETF picks strike-eligible (tier 1 or 2); "
                   "stock picks pass the iu/dep eligibility gate "
-                  "(2026-11-06)")
+                  "(2026-11-06), the EY band leg (2026-11-21) and "
+                  "the balance-sheet pocket legs (2026-11-21)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
     if _FRAME_SNAPSHOT is not None:
@@ -6209,6 +6532,7 @@ def add_research_columns(df, llm_path=True):
     sub["llm_confidence"] = conf
     recs = _stamp_form4_facts(sub.to_dict("records"))
     recs = _stamp_exec_facts(recs)
+    recs = _stamp_ey_facts(recs)
     # Fix B (2026-10-30): diversified-ETF dep ceiling — dep_used is the
     # dep EVERY downstream decision consumes (EV term, stability grade,
     # dep veto, risk-gate strike, watchlist rating). One shared helper,
@@ -6268,6 +6592,10 @@ def add_research_columns(df, llm_path=True):
     sub["f4_evidence"] = [str(r.get("f4_evidence") or "") for r in recs]
     sub["exec_only"] = [r.get("exec_only") for r in recs]
     sub["exec_evidence"] = [str(r.get("exec_evidence") or "") for r in recs]
+    sub["ey"] = [r.get("ey") for r in recs]
+    sub["ey_filed"] = [r.get("ey_filed") for r in recs]
+    sub["ey_bs_filed"] = [r.get("ey_bs_filed") for r in recs]
+    sub["ey_evidence"] = [str(r.get("ey_evidence") or "") for r in recs]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
     sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
@@ -6490,7 +6818,14 @@ def pick_final(adj, args, llm_path):
         # implied upside never bars (it is computed pre-selection for
         # every candidate; absence is a data gap, not a verdict).
         # Barred names keep their EVs and can appear as honorable
-        # mentions.
+        # mentions. A third leg joined 2026-11-21 (the EY band; see
+        # EY_BAND_LO for its frozen-test provenance): a mechanical
+        # earnings yield inside the slightly-negative band bars the
+        # name the same way; an undetermined yield never bars. Two
+        # more legs joined later the same day (the balance-sheet
+        # pockets; see BS_CASH_SHARE_MAX / BS_LEVERAGE_MIN): a
+        # cash-heavy or almost debt-free balance sheet bars the
+        # name the same way; an undetermined ratio never bars.
         if label == "stocks":
             _sfails = {}
             for _, r in ranked.iterrows():
@@ -6502,11 +6837,47 @@ def pick_final(adj, args, llm_path):
                 if _du is not None and _du >= STOCK_GATE_MAX_DEP:
                     _why.append(f"dep {_du:.2f} >= "
                                 f"{STOCK_GATE_MAX_DEP:.2f}")
+                # EY BAND LEG (2026-11-21, Dan's ship directive; see
+                # EY_BAND_LO): the mechanical earnings yield stamped
+                # by ey_feed in the enrichment path. Fail-soft like
+                # the test: ey None (uncovered) never bars.
+                _ey = _safe(r.get("ey"))
+                if _ey is not None and EY_BAND_LO <= _ey <= EY_BAND_HI:
+                    _why.append(
+                        f"earnings yield {_ey * 100:.2f}% in the "
+                        f"slightly-negative band {EY_BAND_LO * 100:.2f}% "
+                        f"to {EY_BAND_HI * 100:.2f}% (10-K filed "
+                        f"{r.get('ey_filed')})")
+                # CASH POCKET LEG (2026-11-21, Dan's ship directive;
+                # see BS_CASH_SHARE_MAX): cash & equivalents at or
+                # above the frozen share of total assets bars.
+                # Fail-soft: an undetermined share never bars.
+                _cs = _safe(r.get("cash_share"))
+                if _cs is not None and _cs >= BS_CASH_SHARE_MAX:
+                    _why.append(
+                        f"cash {_cs * 100:.2f}% of assets at or "
+                        f"above the {BS_CASH_SHARE_MAX * 100:.2f}% "
+                        f"line (10-K filed {r.get('cash_filed')})")
+                # LOW-DEBT POCKET LEG (2026-11-21, Dan's ship
+                # directive; see BS_LEVERAGE_MIN): total debt
+                # strictly below the frozen share of total assets
+                # bars. Fail-soft: no leverage on file (including
+                # no debt version at all) never bars.
+                _lv = _safe(r.get("leverage"))
+                if _lv is not None and _lv < BS_LEVERAGE_MIN:
+                    _why.append(
+                        f"debt {_lv * 100:.2f}% of assets below "
+                        f"the {BS_LEVERAGE_MIN * 100:.2f}% floor "
+                        f"(10-K filed {r.get('lev_debt_filed')})")
                 if _why:
                     _sfails[str(r["ticker"])] = ", ".join(_why)
             if _sfails:
                 log(f"stock eligibility gate (implied upside >= 0, "
-                    f"dep < {STOCK_GATE_MAX_DEP:.2f}): {len(_sfails)} "
+                    f"dep < {STOCK_GATE_MAX_DEP:.2f}, EY outside "
+                    f"[{EY_BAND_LO * 100:.2f}%, {EY_BAND_HI * 100:.2f}%], "
+                    f"cash < {BS_CASH_SHARE_MAX * 100:.2f}% of assets, "
+                    f"debt >= {BS_LEVERAGE_MIN * 100:.2f}% of assets): "
+                    f"{len(_sfails)} "
                     f"stocks barred from picks: "
                     f"{[t + ' (' + w + ')' for t, w in _sfails.items()]}")
                 for t, w in _sfails.items():
