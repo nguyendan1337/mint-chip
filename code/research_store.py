@@ -195,8 +195,10 @@ def get_assessment(store, ticker):
 def put_assessment(store, ticker, assessment, by):
     """Store an assessment. Conflict rule: newer assessed_date wins; on a
     tie the existing entry is kept (first writer wins) and the collision is
-    reported. Returns one of: 'added', 'replaced', 'kept-newer',
-    'kept-tie', 'noop-identical'.
+    reported. One tie exception: a re-save that differs only in the
+    "news_sweep" stamp merges the stamp in ('kept-tie-stamped'; see the
+    tie branch below). Returns one of: 'added', 'replaced', 'kept-newer',
+    'kept-tie', 'kept-tie-stamped', 'noop-identical'.
     """
     t = str(ticker).upper()
     tickers = store.setdefault("tickers", {})
@@ -224,6 +226,33 @@ def put_assessment(store, ticker, assessment, by):
         entry["assessment"] = new
         return "replaced"
     if new_date == old_date:
+        # SWEEP-STAMP TIE MERGE (2026-11-21, defect fix): the daily
+        # flow's pre-pick news sweep re-saves a pick's current
+        # assessment with ONLY "news_sweep" added and the original
+        # assessed_date kept (the recording re-save must never make an
+        # old assessment look freshly researched). That put always
+        # landed here and the stamp was silently discarded: in the
+        # 2026-11-21 run 19 of 20 stamps were lost this way, and the
+        # one apparent survivor (XLV "changed") was a 2026-11-19
+        # re-score that carried a newer date and took the "replaced"
+        # path above. When the incoming record carries a stamp and is
+        # otherwise identical to the stored one on every compare field
+        # except the stamp itself (and "coder", which
+        # _clean_assessment restamps from --by on every put, so a
+        # faithful re-save of the other flow's assessment differs
+        # there without any score changing), merge just the stamp
+        # into the stored record — first writer's scores and
+        # provenance stand. A same-date put that changes any score
+        # still loses the tie exactly as before.
+        if new.get("news_sweep") and new["news_sweep"] != old.get("news_sweep"):
+            stamp_only = all(
+                old.get(k) == new.get(k)
+                for k in _COMPARE_FIELDS if k not in ("news_sweep", "coder"))
+            if stamp_only:
+                merged = dict(old)
+                merged["news_sweep"] = new["news_sweep"]
+                entry["assessment"] = merged
+                return "kept-tie-stamped"
         return "kept-tie"
     return "kept-newer"
 

@@ -6596,6 +6596,16 @@ def add_research_columns(df, llm_path=True):
     sub["ey_filed"] = [r.get("ey_filed") for r in recs]
     sub["ey_bs_filed"] = [r.get("ey_bs_filed") for r in recs]
     sub["ey_evidence"] = [str(r.get("ey_evidence") or "") for r in recs]
+    sub["cash_share"] = [r.get("cash_share") for r in recs]
+    sub["cash_filed"] = [r.get("cash_filed") for r in recs]
+    sub["cash_bs_filed"] = [r.get("cash_bs_filed") for r in recs]
+    sub["cash_evidence"] = [str(r.get("cash_evidence") or "")
+                            for r in recs]
+    sub["leverage"] = [r.get("leverage") for r in recs]
+    sub["lev_debt_filed"] = [r.get("lev_debt_filed") for r in recs]
+    sub["lev_bs_filed"] = [r.get("lev_bs_filed") for r in recs]
+    sub["lev_evidence"] = [str(r.get("lev_evidence") or "")
+                           for r in recs]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
     sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
