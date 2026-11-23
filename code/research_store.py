@@ -180,8 +180,18 @@ def _clean_assessment(assessment, by):
 
 
 def _assessments_equal(a, b):
+    # "coder" is excluded from the identity comparison: _clean_assessment
+    # restamps it from the writer (--by) on every put, and the field
+    # contract at _ASSESSMENT_FIELDS defines it as provenance, not
+    # payload data — the same reason "assessed_by" is not a compare
+    # field, and the same exclusion the tie branch's stamp-merge check
+    # below already applies. With coder compared, an identical payload
+    # re-put by the other flow missed this noop determination and fell
+    # through to the tie branch, returning 'kept-tie' for a put that
+    # changed nothing (label only; the stored record was identical
+    # either way, since neither path writes on a tie/noop).
     return all((a or {}).get(k) == (b or {}).get(k)
-               for k in _COMPARE_FIELDS)
+               for k in _COMPARE_FIELDS if k != "coder")
 
 
 def get_assessment(store, ticker):

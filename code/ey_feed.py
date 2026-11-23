@@ -72,6 +72,34 @@ also supplies, from the same companyfacts extraction,
   cell blowups 40.4%; arm DOMINANT vs the EY-band baseline,
   +74.77% / 24.19%). A name with no debt version on file has NO
   leverage (not zero) and is never barred by the leg.
+- leverage construction WIDENED (shipped 2026-11-22, Dan's
+  directive after the measurement-upgrades retest in
+  nightshade/measurement_upgrades_2026-11-22): the debt
+  composite above misses debt that sits in commercial paper
+  and lease liabilities, so the narrow construction could
+  measure leverage for only 59.1% of clean-bed picks (48.7%
+  in 2022-23). The wide construction — the shipped borrowings
+  composite, plus commercial paper (components route only),
+  plus per-type lease liabilities (operating and finance;
+  the filer's own total lease tag wins when present and at
+  least the current+noncurrent split sum, otherwise the
+  split sum; capital-lease tags substitute slot-by-slot for
+  the finance type), with LongTermDebtAndCapitalLease-
+  Obligations added as the last-priority noncurrent fallback
+  and finance leases skipped when that combined concept is
+  the noncurrent pick (its name already covers them) — was
+  built into the research store (fundamentals_balance_sheet_
+  debt_wide_pit.csv, hand-verified against AAPL/MSFT/XOM
+  10-Ks) and re-tested: coverage on clean-bed picks rose to
+  75.8% (67.1% in 2022-23) and the pair step REMAINED
+  DOMINANT at wide measurement (+50.62% vs +49.38%, blowups
+  22.98% vs 26.32%), though its 2022-23 return edge shrank
+  (+6.33pp narrow -> +0.40pp wide; the blowup gain was
+  identical). The cutoff is unchanged. The narrow
+  construction remains selectable (debt_construction=
+  "narrow") for A/B comparison; "wide" is the default.
+  The EY path's own debt (enterprise value) is NOT widened:
+  it keeps the shipped narrow composite the EY test used.
 
 The pair together (never run as an arm before the ship) verified
 DOMINANT vs the EY-band baseline on the same bed: pooled return
@@ -286,6 +314,29 @@ _DEBT_CURRENT = ["DebtCurrent", "LongTermDebtCurrent",
 _DEBT_NONCURRENT = ["LongTermDebtNoncurrent",
                     "LongtermBorrowingsNoncurrent"]
 _DEBT_FALLBACK = ["LongTermDebt", "Debt"]
+# Wide leverage construction (2026-11-22 ship): the research
+# build's concept sets (build1_wide_debt.py, SPEC Build 1 as
+# amended). Commercial paper enters only through the components
+# route; LongTermDebtAndCapitalLeaseObligations is the
+# last-priority noncurrent borrowings candidate; leases are
+# taken per type (total tag vs splits), with capital-lease tags
+# as slot-by-slot stragglers for the finance type.
+_CP_CONCEPTS = ["CommercialPaper"]
+_COMBINED_NONCURRENT = "LongTermDebtAndCapitalLeaseObligations"
+_DEBT_NONCURRENT_WIDE = _DEBT_NONCURRENT + [_COMBINED_NONCURRENT]
+_LEASE_OP = ("OperatingLeaseLiability",
+             "OperatingLeaseLiabilityCurrent",
+             "OperatingLeaseLiabilityNoncurrent")
+_LEASE_FIN = ("FinanceLeaseLiability",
+              "FinanceLeaseLiabilityCurrent",
+              "FinanceLeaseLiabilityNoncurrent")
+_LEASE_CAP = ("CapitalLeaseObligations",
+               "CapitalLeaseObligationsCurrent",
+               "CapitalLeaseObligationsNoncurrent")
+_DEBT_WIDE_ALL = (_DEBT_CURRENT + _DEBT_NONCURRENT_WIDE
+                  + _DEBT_FALLBACK + _CP_CONCEPTS
+                  + list(_LEASE_OP) + list(_LEASE_FIN)
+                  + list(_LEASE_CAP))
 
 
 def _facts(cf, concept, unit):
@@ -436,6 +487,111 @@ def _collect_debt(cf):
     return out
 
 
+def _collect_debt_wide(cf):
+    """{(period_end, filed): (value, source)} — the wide
+    leverage construction of the 2026-11-22 measurement build
+    (fundamentals_balance_sheet_debt_wide_pit.csv), applied to
+    the same single-filing-version grouping as _collect_debt:
+    the shipped borrowings composite, plus commercial paper
+    (components route only), plus per-type lease liabilities.
+
+    Per lease type, the filer's own total tag wins whenever
+    present and at least the current+noncurrent split sum;
+    otherwise the split sum governs. Capital-lease tags
+    substitute slot-by-slot for the finance type. When the
+    combined LongTermDebtAndCapitalLeaseObligations concept is
+    the winning noncurrent borrowings pick, finance leases are
+    skipped (the combined line's name already covers them).
+    A version carrying only leases still yields a (leases-only)
+    value; a version with no wide component yields nothing."""
+    versions = {}  # (end, filed, accn, form) -> {concept: val}
+    for concept in _DEBT_WIDE_ALL:
+        for fact in _facts(cf, concept, "USD"):
+            form = fact.get("form", "")
+            if form not in _FORMS_K:
+                continue
+            if fact.get("fp") not in ("FY", None, ""):
+                continue
+            end = _parse_date(fact.get("end"))
+            filed = _parse_date(fact.get("filed"))
+            if end is None or filed is None or filed < end:
+                continue
+            if fact.get("val") is None:
+                continue
+            versions.setdefault(
+                (end, filed, str(fact.get("accn", "")), form),
+                {})[concept] = float(fact.get("val"))
+
+    def first(vals, clist):
+        for c in clist:
+            if c in vals:
+                return vals[c], c
+        return None, None
+
+    def slot(vals, concept, straggler=None):
+        if concept in vals:
+            return vals[concept], concept
+        if straggler and straggler in vals:
+            return vals[straggler], straggler
+        return None, None
+
+    def lease_type(vals, tags, stragglers=(None, None, None)):
+        tot_c, cur_c, non_c = tags
+        s_tot, s_cur, s_non = stragglers
+        tot, tot_n = slot(vals, tot_c, s_tot)
+        cur, cur_n = slot(vals, cur_c, s_cur)
+        non, non_n = slot(vals, non_c, s_non)
+        split = None
+        if cur is not None or non is not None:
+            split = (cur or 0) + (non or 0)
+        if tot is not None and (split is None or tot >= split):
+            return tot, [tot_n]
+        if split is not None:
+            return split, [n for n in (cur_n, non_n) if n]
+        return None, []
+
+    per_key = {}
+    for (end, filed, accn, form), vals in versions.items():
+        borrow_cur, bc_name = first(vals, _DEBT_CURRENT)
+        borrow_non, bn_name = first(vals, _DEBT_NONCURRENT_WIDE)
+        borrow_fb, bf_name = first(vals, _DEBT_FALLBACK)
+        cp, _cp_name = first(vals, _CP_CONCEPTS)
+        combined_fired = bn_name == _COMBINED_NONCURRENT
+        lease_op, op_names = lease_type(vals, _LEASE_OP)
+        if combined_fired:
+            lease_fin, fin_names = None, []
+        else:
+            lease_fin, fin_names = lease_type(
+                vals, _LEASE_FIN,
+                (_LEASE_CAP[0], _LEASE_CAP[1], _LEASE_CAP[2]))
+        lease_part, lease_names = None, []
+        if lease_op is not None or lease_fin is not None:
+            lease_part = (lease_op or 0) + (lease_fin or 0)
+            lease_names = op_names + fin_names
+        wide, wnames = None, []
+        if borrow_cur is not None or borrow_non is not None:
+            wide = (borrow_cur or 0) + (borrow_non or 0) \
+                + (cp or 0) + (lease_part or 0)
+            wnames = [n for n in (bc_name, bn_name) if n] \
+                + (["CommercialPaper"] if cp is not None else []) \
+                + lease_names
+        elif borrow_fb is not None:
+            wide = borrow_fb + (lease_part or 0)
+            wnames = ([bf_name] if bf_name else []) + lease_names
+        elif lease_part is not None:
+            wide = lease_part
+            wnames = lease_names + ["leases-only"]
+        if wide is None:
+            continue
+        per_key.setdefault((end, filed), []).append(
+            (wide, "+".join(wnames), _form_rank(form), accn))
+    out = {}
+    for key, cands in per_key.items():
+        total, source, _, _ = max(cands, key=lambda c: (c[2], c[3]))
+        out[key] = (total, source)
+    return out
+
+
 def _extract(cf):
     """All as-filed version lists for one companyfacts payload."""
     oi = _collect_versions(cf, "OperatingIncomeLoss", "USD", "oi")
@@ -445,6 +601,7 @@ def _extract(cf):
         cf, "WeightedAverageNumberOfDilutedSharesOutstanding",
         "shares", "duration_fy")
     debt = _collect_debt(cf)
+    debt_wide = _collect_debt_wide(cf)
     cash = _collect_versions_priority(cf, _CASH_CONCEPTS, "USD",
                                       "instant")
     assets = _collect_versions(cf, "Assets", "USD", "instant")
@@ -460,6 +617,10 @@ def _extract(cf):
         "debt": [{"period_end": e.isoformat(), "filed": f.isoformat(),
                   "val": v, "source": s}
                  for (e, f), (v, s) in sorted(debt.items())],
+        "debt_wide": [{"period_end": e.isoformat(),
+                       "filed": f.isoformat(), "val": v, "source": s}
+                      for (e, f), (v, s) in
+                      sorted(debt_wide.items())],
         "cash": [{"period_end": e.isoformat(), "filed": f.isoformat(),
                   "val": v, "source": s}
                  for (e, f), (v, s) in sorted(cash.items())],
@@ -493,7 +654,7 @@ def _fetch_extraction(ticker):
     if not cik:
         raise ValueError(f"no CIK for {ticker}")
     merged = {"oi": [], "shares": [], "diluted": [], "debt": [],
-              "cash": [], "assets": []}
+              "debt_wide": [], "cash": [], "assets": []}
     got = False
     for use_cik in _lineage_ciks(cik):
         try:
@@ -520,9 +681,12 @@ def _extraction(ticker):
     entry = cache.get(key) if isinstance(cache, dict) else None
     if isinstance(entry, dict) and isinstance(entry.get("data"), dict):
         # Entries written before the balance-sheet ratios shipped
-        # (2026-11-21) lack the cash/assets version lists; treat
+        # (2026-11-21) lack the cash/assets version lists, and
+        # entries written before the wide leverage construction
+        # shipped (2026-11-22) lack the debt_wide list; treat
         # them as stale so the new fields are never silently empty.
-        if not all(k in entry["data"] for k in ("cash", "assets")):
+        if not all(k in entry["data"]
+                   for k in ("cash", "assets", "debt_wide")):
             entry = None
         else:
             fetched = _parse_date(entry.get("fetched_date"))
@@ -621,9 +785,12 @@ def _asof_min_period(versions, as_of, min_period_end):
     return _asof(kept, as_of)
 
 
-def _compute_bs_ratios(ticker, as_of):
+def _compute_bs_ratios(ticker, as_of, debt_construction="wide"):
+    if debt_construction not in ("wide", "narrow"):
+        debt_construction = "wide"
     data = _extraction(ticker)
     out = {"cash_share": None, "leverage": None,
+           "debt_construction": debt_construction,
            "as_of": as_of.isoformat(), "cik": data.get("cik")}
     # cash_share — the accruals build's constructions: cash and
     # total assets each selected per-field as-of from that file's
@@ -643,11 +810,18 @@ def _compute_bs_ratios(ticker, as_of):
             out["cash_assets"] = assets
             out["cash_assets_filed"] = a_acc_v["filed"]
             out["cash_assets_period_end"] = a_acc_v["period_end"]
-    # leverage — the balance-sheet build's constructions: the
-    # composite debt over total assets, each per-field as-of, no
-    # period window. No debt version on file means NO leverage
-    # (the test's NaN), never zero.
-    debt_v = _asof(data.get("debt"), as_of)
+    # leverage — total debt over total assets, each per-field
+    # as-of, no period window. The debt composite is the wide
+    # construction by default (2026-11-22 ship: borrowings +
+    # commercial paper + leases, per the measurement build);
+    # debt_construction="narrow" selects the shipped borrowings
+    # composite for A/B comparison. No debt version on file
+    # under the selected construction means NO leverage (the
+    # test's NaN), never zero.
+    debt_versions = (data.get("debt_wide")
+                     if debt_construction == "wide"
+                     else data.get("debt"))
+    debt_v = _asof(debt_versions, as_of)
     a_bs_v = _asof(data.get("assets"), as_of)
     if debt_v is not None and a_bs_v is not None:
         assets = float(a_bs_v["val"])
@@ -663,24 +837,27 @@ def _compute_bs_ratios(ticker, as_of):
     return out
 
 
-def balance_sheet_ratio(ticker, as_of=None):
+def balance_sheet_ratio(ticker, as_of=None, debt_construction="wide"):
     """Point-in-time cash_share and leverage for ``ticker``.
 
     Returns a dict with ``cash_share`` and ``leverage`` (floats)
     plus the audit detail (component values and filing vintages);
     each ratio is None whenever it could not be determined, and a
-    None ratio never bars (fail-soft, matching the tests). Never
-    raises."""
+    None ratio never bars (fail-soft, matching the tests). The
+    leverage debt composite is the wide construction unless
+    debt_construction="narrow" (the pre-2026-11-22 shipped
+    composite, kept for A/B comparison). Never raises."""
     try:
         as_of_date = _parse_date(as_of) if as_of is not None else _today()
         if as_of_date is None or not str(ticker or "").strip():
             return {"cash_share": None, "leverage": None}
-        return _compute_bs_ratios(str(ticker).strip(), as_of_date)
+        return _compute_bs_ratios(str(ticker).strip(), as_of_date,
+                                  debt_construction=debt_construction)
     except Exception:
         return {"cash_share": None, "leverage": None}
 
 
-def balance_sheet_ratios(tickers, as_of=None):
+def balance_sheet_ratios(tickers, as_of=None, debt_construction="wide"):
     """Batch form: {ticker: balance_sheet_ratio(...)}. Shares the
     extraction cache with the earnings-yield calls, so a name
     already fetched for its EY costs no extra SEC request. Never
@@ -691,7 +868,8 @@ def balance_sheet_ratios(tickers, as_of=None):
     as_of_date = _parse_date(as_of) if as_of is not None else _today()
 
     def one(t):
-        return t, balance_sheet_ratio(t, as_of=as_of_date)
+        return t, balance_sheet_ratio(
+            t, as_of=as_of_date, debt_construction=debt_construction)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         return dict(pool.map(one, tickers))
