@@ -72,6 +72,31 @@ also supplies, from the same companyfacts extraction,
   cell blowups 40.4%; arm DOMINANT vs the EY-band baseline,
   +74.77% / 24.19%). A name with no debt version on file has NO
   leverage (not zero) and is never barred by the leg.
+- Net income / enterprise value (added 2026-11-22, Dan's
+  directive to ship worst-slate Candidate 1 after the frozen
+  arm test in nightshade/worst_slate_scan_2026-11-22):
+  :func:`net_income_ev` supplies ni_ev = net income / EV, the
+  gate's fourth filing-fact leg. Net income replicates the
+  balance-sheet build (fundamentals_balance_sheet_pit.csv)
+  field for field: the first present of NetIncomeLoss then
+  ProfitLoss (USD, 10-K/10-K-A instances only, fp FY, fiscal-
+  year durations of 300-400 days), selected per-field
+  latest-non-null as-filed. EV is the EY computation's own
+  enterprise value (same shares restatement, same narrow
+  debt composite, missing debt treated as 0), so the two
+  yields' denominators are identical by construction. The
+  frozen test applied NO |ni_ev| > 1 sanity guard (unlike
+  the EY path), and neither does this one: the shipped band
+  sits near zero, far inside any share-units artifact's
+  reach. The gate bars picks with ni_ev in
+  [-0.039048959167093514, +0.003104453524704764] (the scan's
+  recorded middle-quintile edges of the pick set, frozen
+  verbatim): in-band picks blew up at 40.0% vs a 21.9%
+  covered base on the clean bed, and excluding the band was
+  DOMINANT there (return +54.90% vs +50.62%, blowups 21.40%
+  vs 22.98%, negative slates unchanged, 70 of 570 picks
+  displaced); the same cell passed the outcome bar on the
+  93-date bed (blowup gap +16.1pp).
 - leverage construction WIDENED (shipped 2026-11-22, Dan's
   directive after the measurement-upgrades retest in
   nightshade/measurement_upgrades_2026-11-22): the debt
@@ -107,7 +132,8 @@ DOMINANT vs the EY-band baseline on the same bed: pooled return
 eras), negative slates 5.38% vs 8.60%.
 
 Public entry points: :func:`earnings_yield` (one ticker) and
-:func:`earnings_yields` (batch). They never raise: any SEC,
+:func:`earnings_yields` (batch), :func:`balance_sheet_ratios`,
+and :func:`net_income_ev` / :func:`net_income_evs`. They never raise: any SEC,
 network, parsing, or cache failure returns ey=None so the caller
 treats the name as uncovered — and uncovered names are NEVER
 barred by the gate (fail-soft, matching the test).
@@ -304,6 +330,8 @@ def _cik_map():
 _FORMS_K = ("10-K", "10-K/A")
 # Cash concepts in the accruals build's priority order.
 _CASH_CONCEPTS = ["CashAndCashEquivalentsAtCarryingValue", "Cash"]
+# Net income concepts in the balance-sheet build's priority order.
+_NI_CONCEPTS = ["NetIncomeLoss", "ProfitLoss"]
 # The accruals build's coverage window: it stores no period ending
 # before 2015-01-01, so the cash_share as-of selection must not
 # reach back past it either (the balance-sheet build has no such
@@ -605,6 +633,8 @@ def _extract(cf):
     cash = _collect_versions_priority(cf, _CASH_CONCEPTS, "USD",
                                       "instant")
     assets = _collect_versions(cf, "Assets", "USD", "instant")
+    ni = _collect_versions_priority(cf, _NI_CONCEPTS, "USD",
+                                    "duration_fy")
 
     def ser(versions):
         return [{"period_end": e.isoformat(), "filed": f.isoformat(),
@@ -625,6 +655,9 @@ def _extract(cf):
                   "val": v, "source": s}
                  for (e, f), (v, s) in sorted(cash.items())],
         "assets": ser(assets),
+        "ni": [{"period_end": e.isoformat(), "filed": f.isoformat(),
+                "val": v, "source": s}
+               for (e, f), (v, s) in sorted(ni.items())],
     }
 
 
@@ -654,7 +687,7 @@ def _fetch_extraction(ticker):
     if not cik:
         raise ValueError(f"no CIK for {ticker}")
     merged = {"oi": [], "shares": [], "diluted": [], "debt": [],
-              "debt_wide": [], "cash": [], "assets": []}
+              "debt_wide": [], "cash": [], "assets": [], "ni": []}
     got = False
     for use_cik in _lineage_ciks(cik):
         try:
@@ -681,12 +714,14 @@ def _extraction(ticker):
     entry = cache.get(key) if isinstance(cache, dict) else None
     if isinstance(entry, dict) and isinstance(entry.get("data"), dict):
         # Entries written before the balance-sheet ratios shipped
-        # (2026-11-21) lack the cash/assets version lists, and
+        # (2026-11-21) lack the cash/assets version lists,
         # entries written before the wide leverage construction
-        # shipped (2026-11-22) lack the debt_wide list; treat
-        # them as stale so the new fields are never silently empty.
+        # shipped (2026-11-22) lack the debt_wide list, and
+        # entries written before the net-income yield shipped
+        # (2026-11-22) lack the ni list; treat them as stale so
+        # the new fields are never silently empty.
         if not all(k in entry["data"]
-                   for k in ("cash", "assets", "debt_wide")):
+                   for k in ("cash", "assets", "debt_wide", "ni")):
             entry = None
         else:
             fetched = _parse_date(entry.get("fetched_date"))
@@ -756,6 +791,70 @@ def _compute(ticker, price, as_of):
         "oi": float(oi_v["val"]),
         "oi_filed": oi_v["filed"],
         "oi_period_end": oi_v["period_end"],
+        "shares": shares,
+        "shares_today": shares_today,
+        "split_factor": factor,
+        "shares_source": sh_source,
+        "shares_filed": sh_v["filed"],
+        "shares_period_end": sh_v["period_end"],
+        "debt": debt,
+        "debt_missing": bool(debt_missing),
+        "debt_filed": (debt_v["filed"] if debt_v else None),
+        "debt_source": (debt_v.get("source") if debt_v else None),
+        "market_cap": mcap,
+        "ev": ev,
+        "price": float(price),
+        "as_of": as_of.isoformat(),
+        "cik": data.get("cik"),
+    }
+
+
+def _compute_ni(ticker, price, as_of):
+    """ni_ev = net income / enterprise value, the worst-slate
+    test's construction: net income per-field latest-non-null
+    as-filed (balance-sheet build rules), EV exactly the EY
+    computation's (shares restated to today's units x price +
+    the narrow debt composite, missing debt treated as 0).
+    Deliberately NO |ni_ev| > 1 guard — the frozen test applied
+    none. Not computable (ni_ev=None) when the CIK is unknown,
+    net income or shares are unavailable, shares <= 0, or
+    EV <= 0."""
+    if price is None or not (float(price) > 0):
+        return {"ni_ev": None}
+    data = _extraction(ticker)
+    ni_v = _asof(data.get("ni"), as_of)
+    if ni_v is None:
+        return {"ni_ev": None}
+    sh_v = _asof(data.get("shares"), as_of)
+    sh_source = "shares_outstanding"
+    if sh_v is None:
+        sh_v = _asof(data.get("diluted"), as_of)
+        sh_source = "shares_diluted_wavg"
+    if sh_v is None:
+        return {"ni_ev": None}
+    shares = float(sh_v["val"])
+    if not (shares > 0):
+        return {"ni_ev": None}
+    sh_end = _parse_date(sh_v["period_end"])
+    factor = 1.0
+    for s in data.get("splits") or []:
+        d = _parse_date(s.get("date"))
+        if d is not None and sh_end is not None and d > sh_end:
+            factor *= float(s["ratio"])
+    shares_today = shares * factor
+    debt_v = _asof(data.get("debt"), as_of)
+    debt_missing = debt_v is None
+    debt = 0.0 if debt_missing else float(debt_v["val"])
+    mcap = shares_today * float(price)
+    ev = mcap + debt
+    if not (ev > 0):
+        return {"ni_ev": None}
+    return {
+        "ni_ev": float(ni_v["val"]) / ev,
+        "ni": float(ni_v["val"]),
+        "ni_filed": ni_v["filed"],
+        "ni_period_end": ni_v["period_end"],
+        "ni_source": ni_v.get("source"),
         "shares": shares,
         "shares_today": shares_today,
         "split_factor": factor,
@@ -903,6 +1002,42 @@ def earnings_yields(tickers, prices, as_of=None):
     def one(t):
         return t, earnings_yield(t, (prices or {}).get(t),
                                  as_of=as_of_date)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return dict(pool.map(one, tickers))
+
+
+def net_income_ev(ticker, price, as_of=None):
+    """Point-in-time net income / enterprise value for ``ticker``
+    at ``price`` (the gate's ni_ev band leg, shipped 2026-11-22).
+
+    Returns a dict with ``ni_ev`` (float) plus the full audit
+    detail (net income and its filing vintage, shares, debt,
+    market cap, EV), or ``{"ni_ev": None}`` whenever the value
+    could not be determined — and an undetermined value never
+    bars (fail-soft, matching the test). Never raises."""
+    try:
+        as_of_date = _parse_date(as_of) if as_of is not None else _today()
+        if as_of_date is None or not str(ticker or "").strip():
+            return {"ni_ev": None}
+        return _compute_ni(str(ticker).strip(), price, as_of_date)
+    except Exception:
+        return {"ni_ev": None}
+
+
+def net_income_evs(tickers, prices, as_of=None):
+    """Batch form: {ticker: net_income_ev(...)} for a price map.
+    Shares the extraction cache with the earnings-yield calls,
+    so a name already fetched for its EY costs no extra SEC
+    request. Never raises; failed names map to {"ni_ev": None}."""
+    tickers = [str(t) for t in tickers]
+    if not tickers:
+        return {}
+    as_of_date = _parse_date(as_of) if as_of is not None else _today()
+
+    def one(t):
+        return t, net_income_ev(t, (prices or {}).get(t),
+                                as_of=as_of_date)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         return dict(pool.map(one, tickers))

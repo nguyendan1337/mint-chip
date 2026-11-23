@@ -799,7 +799,10 @@ def log_levers(args):
         f"(undetermined yield never bars); balance-sheet pocket legs "
         f"(2026-11-21): cash >= {BS_CASH_SHARE_MAX * 100:.2f}% of "
         f"assets bars, debt < {BS_LEVERAGE_MIN * 100:.2f}% of assets "
-        f"bars (undetermined ratio never bars); barred names stay "
+        f"bars (undetermined ratio never bars); net-income band leg "
+        f"(2026-11-22): mechanical net income / enterprise value "
+        f"inside [{NI_EV_BAND_LO * 100:.2f}%, {NI_EV_BAND_HI * 100:.2f}%] "
+        f"bars (undetermined value never bars); barred names stay "
         f"honorable-mention eligible")
     log(f"event veto --veto-dep={args.veto_dep}: dep above this is excluded outright")
     log(f"sector cap --max-per-sector={args.max_per_sector} (stocks); "
@@ -1474,6 +1477,35 @@ EY_BAND_HI = -0.0008823712366114762
 # leg. The Nov 30 audit judges the legs on the live record.
 BS_CASH_SHARE_MAX = 0.3519357079857501
 BS_LEVERAGE_MIN = 0.0407764726456614
+# NET-INCOME NEAR-ZERO BAND GATE (2026-11-22, Dan's directive
+# "if candidate 1 is good to ship then do it" after the
+# worst-slate decomposition in nightshade/worst_slate_scan_
+# 2026-11-22): a fourth filing-fact leg of the stock
+# eligibility gate below. A stock cannot be picked when its
+# mechanical point-in-time net income / enterprise value
+# (stamped by ey_feed.py from SEC filings; net income per the
+# balance-sheet build, EV identical to the EY leg's) falls in
+# the frozen near-zero band. Provenance: the worst-slate scan
+# found exactly one risk cell that was both bad on outcomes
+# and concentrated in the worst slates — picks with ni_ev in
+# the middle quintile of the pick set blew up at 40.0% vs a
+# 21.9% covered base (median forward return -0.5%), and the
+# same cell passed the outcome bar on the 93-date bed (blowup
+# gap +16.1pp). The frozen arm on the clean bed (57 monthly
+# dates, 2021+, A2wide baseline) was DOMINANT: return +54.90%
+# vs +50.62%, blowups 21.40% vs 22.98% (worst era +1.8pp,
+# inside the 2pp allowance), negative slates unchanged, 70 of
+# 570 picks displaced. The bounds are the scan's recorded
+# quintile edges, frozen verbatim — never re-derive or
+# re-tune them here. The band sits beside the EY band (the
+# same near-zero earnings zone read on the net-income
+# numerator, extending slightly above zero). Fail-soft,
+# matching the test: a name whose ni_ev cannot be computed
+# is never barred. Barred names keep their EVs and stay
+# honorable-mention eligible, like every other gate leg. The
+# Nov 30 audit judges the leg on the live record.
+NI_EV_BAND_LO = -0.039048959167093514
+NI_EV_BAND_HI = 0.003104453524704764
 STOCK_UP_T1 = 0.15
 STOCK_UP_FACTOR = 1.0 / 3.0
 STOCK_UP_CAP = 0.30
@@ -1953,13 +1985,21 @@ def _stamp_ey_facts(recs):
     vintages and evidence. They share the EY extraction cache, so
     they cost no extra SEC requests; each ratio is None when it
     cannot be determined, and a None ratio never bars.
+
+    And the same family stamps ni_ev (net income / enterprise
+    value) behind the gate's net-income near-zero band leg
+    (2026-11-22), with its filing vintage and evidence; it
+    shares the EY computation's enterprise value and extraction
+    cache, and a None value never bars.
     """
     try:
         from ey_feed import earnings_yields as _ey_feed_yields
         from ey_feed import balance_sheet_ratios as _bs_feed_ratios
+        from ey_feed import net_income_evs as _ni_feed_evs
     except Exception:
         _ey_feed_yields = None
         _bs_feed_ratios = None
+        _ni_feed_evs = None
     tickers = []
     for r in recs:
         if str(r.get("kind") or "").lower() != "stock":
@@ -1975,6 +2015,9 @@ def _stamp_ey_facts(recs):
             r["lev_debt_filed"] = None
             r["lev_bs_filed"] = None
             r["lev_evidence"] = ""
+            r["ni_ev"] = None
+            r["ni_filed"] = None
+            r["ni_evidence"] = ""
             continue
         t = str(r.get("ticker") or "")
         if t and t not in tickers:
@@ -2088,6 +2131,44 @@ def _stamp_ey_facts(recs):
         log(f"bs feed: cash share determined for {n_cash}/"
             f"{len(tickers)} stock candidates, leverage for "
             f"{n_lev}/{len(tickers)} (undetermined never barred)")
+    # Net income / enterprise value for the gate's net-income
+    # band leg; same tickers, same prices, shared extraction
+    # cache with the EY call above.
+    ni_results = {}
+    if _ni_feed_evs is not None and tickers:
+        try:
+            ni_results = _ni_feed_evs(tickers, prices) or {}
+        except Exception:
+            ni_results = {}
+    n_ni = 0
+    for r in recs:
+        if str(r.get("kind") or "").lower() != "stock":
+            continue
+        res = ni_results.get(str(r.get("ticker") or "")) or {}
+        nv = res.get("ni_ev")
+        if isinstance(nv, (int, float)) and nv == nv:
+            r["ni_ev"] = float(nv)
+            r["ni_filed"] = res.get("ni_filed")
+            r["ni_evidence"] = (
+                f"NI ${res.get('ni', 0):,.0f} "
+                f"({res.get('ni_source')}, 10-K filed "
+                f"{res.get('ni_filed')}, FY ended "
+                f"{res.get('ni_period_end')}); EV "
+                f"${res.get('ev', 0):,.0f} = mcap "
+                f"${res.get('market_cap', 0):,.0f} + debt "
+                f"${res.get('debt', 0):,.0f}"
+                f"{' (debt missing, treated as 0)' if res.get('debt_missing') else ''}"
+                f" (BS filed {res.get('shares_filed')}); price "
+                f"${res.get('price', 0):,.2f}")
+            n_ni += 1
+        else:
+            r["ni_ev"] = None
+            r["ni_filed"] = None
+            r["ni_evidence"] = ""
+    if tickers:
+        log(f"ni feed: net income yield determined for {n_ni}/"
+            f"{len(tickers)} stock candidates "
+            f"({len(tickers) - n_ni} uncovered, never barred)")
     return recs
 
 
@@ -4747,6 +4828,11 @@ def _reader_reason(raw, kind=""):
                     bits.append("it carries almost no debt, a "
                                 "pattern that has historically "
                                 "flagged fragile picks")
+                elif part.startswith("net income yield"):
+                    bits.append("its bottom-line profit is near "
+                                "zero for its size, a pattern that "
+                                "has historically flagged fragile "
+                                "picks")
                 else:
                     bits.append(part)
             return "Not eligible for a pick: " + "; ".join(bits) + "."
@@ -5192,6 +5278,22 @@ def _frame_row(r, outcome, reason):
         "lev_evidence": (str(r.get("lev_evidence") or "")
                          if str(r.get("kind", "")) == "stock"
                          else None),
+        # NET-INCOME BAND RECORDING (2026-11-22): the mechanical
+        # net income / enterprise value behind the gate's
+        # net-income near-zero band leg (ey_feed, SEC filings),
+        # its filing vintage, and its compact evidence ride every
+        # stock frame row, so any bar can be re-derived from the
+        # frame alone. None when the feed could not determine
+        # the value (never barred), None for ETFs.
+        "ni_ev": (_safe(r.get("ni_ev"))
+                  if str(r.get("kind", "")) == "stock" else None),
+        "ni_filed": (str(r.get("ni_filed"))
+                     if isinstance(r.get("ni_filed"), str)
+                     and r.get("ni_filed")
+                     and str(r.get("kind", "")) == "stock" else None),
+        "ni_evidence": (str(r.get("ni_evidence") or "")
+                        if str(r.get("kind", "")) == "stock"
+                        else None),
         "ev_mode": _EV_MODE,
         "facts": _facts_of(r),
         # JUDGMENT RECORD (logging package, 2026-11-13): the evidence
@@ -5525,6 +5627,15 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                                                  "no leverage on file "
                                                  "never bars; fail-soft "
                                                  "(2026-11-21)"),
+                        "gate_ni_ev_band_lo": NI_EV_BAND_LO,
+                        "gate_ni_ev_band_hi": NI_EV_BAND_HI,
+                        "gate_ni_ev_band": ("exclude from picks when "
+                                            "the mechanical net "
+                                            "income / enterprise "
+                                            "value (ey_feed) is "
+                                            "determined and in the "
+                                            "near-zero band; "
+                                            "fail-soft (2026-11-22)"),
                         "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
                         "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
                         "shadow_offense_picks": list(_SHADOW_OFFENSE_PICKS),
@@ -5961,6 +6072,9 @@ def run_self_check(final, args, out_csv):
                 # pocket legs added 2026-11-21: no stock pick may
                 # carry a determined cash share at/above the bound or
                 # a determined leverage strictly below the bound.
+                # Net-income band leg added 2026-11-22: no stock
+                # pick may carry a determined ni_ev inside the
+                # frozen near-zero band.
                 for _, _r in final[final["kind"] == "stock"].iterrows():
                     _iu = _safe(_r.get("implied_upside"))
                     if _iu is not None and _iu < 0:
@@ -5977,12 +6091,16 @@ def run_self_check(final, args, out_csv):
                     _lv = _safe(_r.get("leverage"))
                     if _lv is not None and _lv < BS_LEVERAGE_MIN:
                         _gate_ok = False
+                    _nv = _safe(_r.get("ni_ev"))
+                    if _nv is not None and NI_EV_BAND_LO <= _nv <= NI_EV_BAND_HI:
+                        _gate_ok = False
             check("risk_flag_gate", _gate_ok,
                   "all picks <2 risk strikes (gate added 2026-10-30); "
                   "ETF picks strike-eligible (tier 1 or 2); "
                   "stock picks pass the iu/dep eligibility gate "
-                  "(2026-11-06), the EY band leg (2026-11-21) and "
-                  "the balance-sheet pocket legs (2026-11-21)")
+                  "(2026-11-06), the EY band leg (2026-11-21), "
+                  "the balance-sheet pocket legs (2026-11-21) and "
+                  "the net-income band leg (2026-11-22)")
         check("has_stability_grade", "stability" in final.columns)
         check("has_confidence", "llm_confidence" in final.columns)
     if _FRAME_SNAPSHOT is not None:
@@ -6606,6 +6724,10 @@ def add_research_columns(df, llm_path=True):
     sub["lev_bs_filed"] = [r.get("lev_bs_filed") for r in recs]
     sub["lev_evidence"] = [str(r.get("lev_evidence") or "")
                            for r in recs]
+    sub["ni_ev"] = [r.get("ni_ev") for r in recs]
+    sub["ni_filed"] = [r.get("ni_filed") for r in recs]
+    sub["ni_evidence"] = [str(r.get("ni_evidence") or "")
+                          for r in recs]
     sub["base_rate"] = [(EV_BASE_ETF if str(r.get("kind") or "").lower() == "etf"
                          else EV_BASE_STOCK) for r in recs]
     sub["cont_tilt"] = [((EV_GAMMA_ETF if str(r.get("kind") or "").lower() == "etf"
@@ -6835,7 +6957,11 @@ def pick_final(adj, args, llm_path):
         # more legs joined later the same day (the balance-sheet
         # pockets; see BS_CASH_SHARE_MAX / BS_LEVERAGE_MIN): a
         # cash-heavy or almost debt-free balance sheet bars the
-        # name the same way; an undetermined ratio never bars.
+        # name the same way; an undetermined ratio never bars. A
+        # sixth leg joined 2026-11-22 (the net-income near-zero
+        # band; see NI_EV_BAND_LO): a mechanical net income /
+        # enterprise value inside the frozen band bars the name
+        # the same way; an undetermined value never bars.
         if label == "stocks":
             _sfails = {}
             for _, r in ranked.iterrows():
@@ -6879,6 +7005,20 @@ def pick_final(adj, args, llm_path):
                         f"debt {_lv * 100:.2f}% of assets below "
                         f"the {BS_LEVERAGE_MIN * 100:.2f}% floor "
                         f"(10-K filed {r.get('lev_debt_filed')})")
+                # NET-INCOME BAND LEG (2026-11-22, Dan's ship
+                # directive; see NI_EV_BAND_LO): the mechanical
+                # net income / enterprise value stamped by
+                # ey_feed in the enrichment path; a determined
+                # value inside the frozen near-zero band bars.
+                # Fail-soft: an undetermined value never bars.
+                _nv = _safe(r.get("ni_ev"))
+                if _nv is not None and NI_EV_BAND_LO <= _nv <= NI_EV_BAND_HI:
+                    _why.append(
+                        f"net income yield {_nv * 100:.2f}% in "
+                        f"the near-zero band "
+                        f"{NI_EV_BAND_LO * 100:.2f}% to "
+                        f"{NI_EV_BAND_HI * 100:.2f}% (10-K filed "
+                        f"{r.get('ni_filed')})")
                 if _why:
                     _sfails[str(r["ticker"])] = ", ".join(_why)
             if _sfails:
@@ -6886,7 +7026,9 @@ def pick_final(adj, args, llm_path):
                     f"dep < {STOCK_GATE_MAX_DEP:.2f}, EY outside "
                     f"[{EY_BAND_LO * 100:.2f}%, {EY_BAND_HI * 100:.2f}%], "
                     f"cash < {BS_CASH_SHARE_MAX * 100:.2f}% of assets, "
-                    f"debt >= {BS_LEVERAGE_MIN * 100:.2f}% of assets): "
+                    f"debt >= {BS_LEVERAGE_MIN * 100:.2f}% of assets, "
+                    f"NI/EV outside [{NI_EV_BAND_LO * 100:.2f}%, "
+                    f"{NI_EV_BAND_HI * 100:.2f}%]): "
                     f"{len(_sfails)} "
                     f"stocks barred from picks: "
                     f"{[t + ' (' + w + ')' for t, w in _sfails.items()]}")
