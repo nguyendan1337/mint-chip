@@ -1418,6 +1418,19 @@ ETF_STRIKE_MAX_DEP = ETF_TIER2_MAX_DEP
 ETF_STRIKE_MIN_MAXDD = ETF_TIER2_MIN_MAXDD
 ETF_STRIKE_MAX_DDFREQ = ETF_TIER2_MAX_DDFREQ
 ETF_STRIKE_BAR = 2
+# FUND RETENTION — R1 SCORE-BAND HOLDOVER (2026-11-22, Dan's ship
+# directive after the frozen test in
+# nightshade/fund_retention_2026-11-22): a fund pick keeps its seat
+# while its current ETF Score stays within RETENTION_BAND points of
+# the fresh walk's cutoff (the marginal pick's score). The frozen
+# test raced this exact rule against re-picking from scratch on two
+# beds and it was DOMINANT on both under the frozen clauses
+# (per-entry accounting: monthly entries 286 -> 232, return
+# +8.72% -> +8.91%, blowups 24 -> 19; quarterly return
+# +8.59% -> +8.77%, blowups 16 -> 13). The band is in ETF Score
+# points (the live-mode 0-100 scale); it is not a fitted threshold
+# search — 5 is the single frozen parameter the test ran.
+RETENTION_BAND = 5.0
 # STOCK SELECTION (2026-11-06, Dan shipped on the stock test battery —
 # stock_winner_detection_2026-11-06): eligibility gate (implied_upside
 # >= 0 and dep_used < STOCK_GATE_MAX_DEP) and the steep upside dampener
@@ -5579,6 +5592,15 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
         _frame_doc["chart"] = chart
     with open(frame_path, "w") as f:
         _json.dump(_frame_doc, f, indent=1, default=str)
+    # FUND RETENTION (2026-11-22): the run's retention summary rides
+    # the daily manifest's etf_selection block; the watchlist
+    # manifest is left byte-for-byte as before (retention has no
+    # slate there and never runs).
+    _etf_selection_extra = {}
+    if flow == "daily":
+        _etf_selection_extra["retention"] = (
+            _ETF_RETENTION_RUN
+            or {"engaged": False, "reason": "retention did not run"})
     with open(manifest_path, "w") as f:
         _json.dump({"date": run_date(), "flow": flow,
                     "bundle": bundle_name,
@@ -5599,7 +5621,8 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                         "tier2_min_maxdd": ETF_TIER2_MIN_MAXDD,
                         "tier2_max_ddfreq": ETF_TIER2_MAX_DDFREQ,
                         "tier2_max_picks": ETF_TIER2_MAX_PICKS,
-                        "ev_upside_const": ETF_EV_UPSIDE_CONST},
+                        "ev_upside_const": ETF_EV_UPSIDE_CONST,
+                        **_etf_selection_extra},
                     "stock_selection": {
                         "gate_max_dep": STOCK_GATE_MAX_DEP,
                         "gate_implied_upside_min": 0.0,
@@ -5820,7 +5843,21 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
             else:
                 outcome = "rejected"
                 reason = "lower expected value than picks"
-        rows.append(_frame_row(r, outcome, reason))
+        _row = _frame_row(r, outcome, reason)
+        if _row.get("kind") == "etf":
+            # FUND RETENTION RECORDING (2026-11-22): whether this
+            # fund holds its seat via the R1 score-band holdover,
+            # the date its current consecutive run of daily slates
+            # began, and how many consecutive slates it has held
+            # counting this run. Recording only — the audit reads
+            # retention from frames alone; False/None when the rule
+            # did not seat the fund. Daily writer only: watchlist
+            # rows are built in their own writer and stay untouched.
+            _ret = _ETF_RETENTION.get(t)
+            _row["retained"] = bool(_ret)
+            _row["entered_date"] = (_ret or {}).get("entered_date")
+            _row["slates_held"] = (_ret or {}).get("slates_held")
+        rows.append(_row)
     counts = {
         "candidates": len(rows),
         "picks": len(picked),
@@ -6787,6 +6824,212 @@ def add_research_columns(df, llm_path=True):
     return sub
 
 
+def _prior_daily_slates():
+    """All prior DAILY frames, oldest first: [(date, frame_name,
+    [etf pick tickers in slate order])]. Reads the frames/ dir beside
+    this file — the same place _write_frame_manifest writes. Fail-soft:
+    unreadable frames are skipped; any wider problem returns []."""
+    import glob as _glob
+    import json as _json
+    out = []
+    try:
+        _fdir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "frames")
+        for _p in sorted(_glob.glob(os.path.join(_fdir,
+                                                 "frame_*_daily.json"))):
+            try:
+                with open(_p) as _f:
+                    _doc = _json.load(_f)
+                _picks = [str(_r.get("ticker"))
+                          for _r in _doc.get("rows", [])
+                          if str(_r.get("kind", "")) == "etf"
+                          and _r.get("outcome") == "picked"
+                          and _r.get("ticker")]
+                out.append((str(_doc.get("date") or ""),
+                            os.path.basename(_p), _picks))
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return out
+
+
+def _apply_etf_retention(first, est_ok, n, cap, min_score, veto,
+                         prior_slates=None):
+    """R1 score-band holdover on today's fresh fund walk (shipped
+    2026-11-22; frozen test: nightshade/fund_retention_2026-11-22).
+
+    first: the fresh walk's slate DataFrame, exactly as today's
+    selection produced it. est_ok: today's eligible, floor-passing
+    candidate frame in walk order (the set pick_top_with_sector_cap
+    walks). The previous slate is the fund picks of the most recent
+    prior daily frame. Hard exits first: a prior pick that is no
+    longer a candidate today (no row, left the pool, gate-barred,
+    below the score floor, or failing the walk's own score-floor /
+    dep-veto skips) is out regardless of the band. Survivors keep
+    their seats while their CURRENT score is >= cutoff -
+    RETENTION_BAND, where cutoff is the fresh walk's marginal pick
+    score (the 10th pick in score order; the lowest score among the
+    picks when the walk seats fewer than n). Remaining seats fill
+    from the same candidate order under the theme cap counted across
+    retained + filled. Returns the slate to use: `first` unchanged
+    when the rule seats nobody, so a run with nothing to hold is
+    byte-for-byte today's behavior. Records _ETF_RETENTION (per
+    retained ticker: the date its current consecutive run began and
+    how many consecutive daily slates it has held, counting this
+    run) and _ETF_RETENTION_RUN (the run summary the manifest
+    carries). Never raises — the caller also wraps it; every early
+    return leaves the fresh walk standing.
+    """
+    global _ETF_RETENTION, _ETF_RETENTION_RUN
+    _ETF_RETENTION = {}
+    if prior_slates is None:
+        prior_slates = _prior_daily_slates()
+    if not prior_slates:
+        _ETF_RETENTION_RUN = {"engaged": False,
+                              "reason": "no prior daily frame"}
+        log("etf retention: no prior daily frame — fresh walk stands")
+        return first
+    _prior_date, _prior_name, _prior_picks = prior_slates[-1]
+    _prior_set = set(_prior_picks)
+    if not len(first):
+        _ETF_RETENTION_RUN = {"engaged": False,
+                              "reason": "fresh walk empty",
+                              "prior_frame": _prior_name,
+                              "prior_date": _prior_date}
+        log("etf retention: fresh walk empty — no retention")
+        return first
+    _cutoff = float(first["est_next_1y"].min())
+    _band_floor = _cutoff - RETENTION_BAND
+
+    def _walk_ok(r):
+        # the same skip rules pick_top_with_sector_cap applies:
+        # the final_score floor and the event-dependence veto
+        try:
+            if float(r["final_score"]) < min_score:
+                return False
+        except Exception:
+            return False
+        if veto is not None:
+            try:
+                if float(_dep_used_of(r)) > veto:
+                    return False
+            except Exception:
+                pass
+        return True
+
+    _cand = [r for _, r in est_ok.iterrows() if _walk_ok(r)]
+    _cand_by_ticker = {str(r["ticker"]): r for r in _cand}
+    _est_ok_tickers = set(str(t) for t in est_ok["ticker"])
+
+    def _exit_reason(t):
+        if t not in _est_ok_tickers:
+            return ("not a candidate today (left the pool, "
+                    "gate-barred, or below the score floor)")
+        if t not in _cand_by_ticker:
+            return "walk filter (score floor / dep veto)"
+        if float(_cand_by_ticker[t]["est_next_1y"]) < _band_floor:
+            return (f"score "
+                    f"{float(_cand_by_ticker[t]['est_next_1y']):.1f} "
+                    f"below the retention band (cutoff {_cutoff:.1f} "
+                    f"- {RETENTION_BAND:.0f})")
+        return "theme cap or seats filled in the retention pass"
+
+    # retention pass: prior picks in today's candidate order
+    _retained, _ret_counts = [], Counter()
+    for r in _cand:
+        if len(_retained) >= n:
+            break
+        if str(r["ticker"]) not in _prior_set:
+            continue
+        if float(r["est_next_1y"]) < _band_floor:
+            continue
+        _sec = _cap_key_of(r)
+        if _ret_counts[_sec] >= cap:
+            continue
+        _retained.append(r)
+        _ret_counts[_sec] += 1
+    if not _retained:
+        _exits = {t: _exit_reason(t) for t in _prior_picks}
+        _ETF_RETENTION_RUN = {
+            "engaged": True, "rule": "R1 score-band holdover",
+            "band": RETENTION_BAND, "prior_frame": _prior_name,
+            "prior_date": _prior_date, "cutoff": _cutoff,
+            "retained": [], "prior_exits": _exits,
+            "displaced_fresh": []}
+        log(f"etf retention: prior slate {_prior_name} "
+            f"({_prior_date}); cutoff {_cutoff:.1f}, band floor "
+            f"{_band_floor:.1f}; no prior pick retained — fresh "
+            f"walk stands; exits: {_exits}")
+        return first
+    # fill pass: same candidate order, theme cap across
+    # retained + filled
+    _seated = {str(r["ticker"]) for r in _retained}
+    _counts = Counter(_ret_counts)
+    _filled = []
+    for r in _cand:
+        if len(_retained) + len(_filled) >= n:
+            break
+        t = str(r["ticker"])
+        if t in _seated:
+            continue
+        _sec = _cap_key_of(r)
+        if _counts[_sec] >= cap:
+            continue
+        _filled.append(r)
+        _counts[_sec] += 1
+        _seated.add(t)
+    _retained_set = {str(r["ticker"]) for r in _retained}
+    _slate_rows = _retained + _filled
+    _slate = pd.DataFrame(_slate_rows)
+    # pick_pass bookkeeping mirrors pick_group's passes: retained
+    # funds hold first-pass seats; fresh-walk members keep theirs;
+    # new fills are second-pass
+    _fresh_pass = {str(r["ticker"]): r.get("pick_pass")
+                   for _, r in first.iterrows()}
+    _slate["pick_pass"] = [
+        1 if str(r["ticker"]) in _retained_set
+        else (_fresh_pass.get(str(r["ticker"])) or 2)
+        for r in _slate_rows]
+    # tenure: consecutive daily slates, one per distinct frame date
+    # (that date's newest frame — same-day republications and sweep
+    # re-runs are one selection day, not several), ending at the
+    # prior frame's date; this run extends the run by one
+    _by_date = {}
+    for _d, _fn, _pk in prior_slates:
+        _by_date[_d] = set(_pk)
+    _dates_desc = sorted(_by_date, reverse=True)
+    for r in _retained:
+        t = str(r["ticker"])
+        _run = 0
+        for _d in _dates_desc:
+            if t in _by_date[_d]:
+                _run += 1
+            else:
+                break
+        _ETF_RETENTION[t] = {
+            "entered_date": (_dates_desc[_run - 1] if _run
+                             else _prior_date),
+            "slates_held": _run + 1}
+    _retained_tickers = [str(r["ticker"]) for r in _retained]
+    _exits = {t: _exit_reason(t) for t in _prior_picks
+              if t not in _retained_set}
+    _displaced = [str(t) for t in first["ticker"]
+                  if str(t) not in _seated]
+    _ETF_RETENTION_RUN = {
+        "engaged": True, "rule": "R1 score-band holdover",
+        "band": RETENTION_BAND, "prior_frame": _prior_name,
+        "prior_date": _prior_date, "cutoff": _cutoff,
+        "retained": _retained_tickers, "prior_exits": _exits,
+        "displaced_fresh": _displaced}
+    log(f"etf retention: prior slate {_prior_name} ({_prior_date}); "
+        f"cutoff {_cutoff:.1f}, band floor {_band_floor:.1f}; "
+        f"retained {len(_retained_tickers)}: {_retained_tickers}; "
+        f"prior exits: {_exits}; "
+        f"fresh picks displaced: {_displaced}")
+    return _slate
+
+
 def pick_final(adj, args, llm_path):
     """Final picks: n_stocks most-confident stocks + n_etfs most-confident ETFs.
 
@@ -6810,6 +7053,11 @@ def pick_final(adj, args, llm_path):
     _ETF_TIER2 = {}
     global _ETF_TIER2_CAPPED
     _ETF_TIER2_CAPPED = {}
+    # reset per-run fund-retention records (R1 holdover, 2026-11-22)
+    global _ETF_RETENTION
+    _ETF_RETENTION = {}
+    global _ETF_RETENTION_RUN
+    _ETF_RETENTION_RUN = None
     # reset per-run stock eligibility-gate record (ticker -> reason)
     global _STOCK_GATED
     _STOCK_GATED = {}
@@ -7298,6 +7546,27 @@ def pick_final(adj, args, llm_path):
             first = enforce_etf_tier2_cap(first, est_ok, cap=cap,
                                           min_score=args.min_score,
                                           veto_dep=veto)
+        if label == "ETFs" and llm_path and _EV_MODE == "live" \
+                and len(first):
+            # FUND RETENTION (R1 score-band holdover, shipped
+            # 2026-11-22 — see RETENTION_BAND and
+            # _apply_etf_retention): the fresh walk above stands
+            # exactly as computed; the holdover then re-seats prior
+            # picks inside the band before the remaining seats fill
+            # from the same candidate order. Daily Phase B only
+            # (llm_path, live score scale): the watchlist rates a
+            # fixed list and never reaches pick_final, and the band
+            # is denominated in live-mode score points. Fail-soft
+            # like the other recording/selection overlays — a
+            # retention failure leaves the fresh walk standing and
+            # is logged, never silent.
+            try:
+                first = _apply_etf_retention(
+                    first, est_ok, n=n, cap=cap,
+                    min_score=args.min_score, veto=veto)
+            except Exception as _ret_e:
+                log(f"etf retention: FAILED ({_ret_e}) — fresh "
+                    f"walk stands")
         # divergence self-check (informational, not a gate): how much does
         # final_score-ordered selection disagree with pure EV ordering?
         # Flags high-EV unpicked names (e.g. HPE) for the monthly audit.
@@ -7994,6 +8263,8 @@ _OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Varian
 _OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget offense ranking of eligible stocks (Variant A 2026-11-07; retained as audit monitoring since the 2026-11-16 switch to EV ordering)
 _EV_RANKED = {}  # ticker -> (rank, n_eligible); post-budget expected-return ranking of eligible stocks (selection ordering since 2026-11-16, Dan's directive)
 _SHADOW_OFFENSE_PICKS = []  # tickers the offense (price-run) ordering would have picked this run; recorded in the manifest for the audit (2026-11-16)
+_ETF_RETENTION = {}  # ticker -> {entered_date, slates_held}; fund picks seated by the R1 retention rule this run (2026-11-22)
+_ETF_RETENTION_RUN = None  # run-level retention summary for the manifest (daily flow only, 2026-11-22)
 _FRAME_SNAPSHOT = None  # {frame_path, manifest_path, candidates} set by write_frame_snapshot_* (auditability, 2026-10-30)
 
 
