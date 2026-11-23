@@ -2888,8 +2888,7 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     applies the same plain tests a Mint pick must pass:
 
     - SELL: any hard fail — the thesis is broken on the record (latest
-      ledger check), the thesis hangs on outside events (dep >= 0.70,
-      the standing veto line), the researcher thinks the run is over
+      ledger check), the researcher thinks the run is over
       (continuation < 0.40), or the name is a proven crumbler
       (stability grade D).
     - BUY: passes the pick test — dep < 0.50, confidence >= 0.60,
@@ -2927,6 +2926,17 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     cap, never a price term or a SELL leg, and the Nov 30 audit
     judges it on the live record. Inert when flows were never coded.
 
+    DEP DEMOTION (2026-11-23, Dan approved): dep >= 0.70 is no longer
+    a SELL fail. In both blinded judgment diagnostics (2026-11-21 and
+    2026-11-23; the second run coded 480 packets with a 210-name
+    not-recognized read) the 0.70 dependence line failed to separate
+    future blowups among the names coders did not recognize, while
+    continuation below 0.40 validated cleanly in the second run.
+    Dependence at 0.70 or above now caps the rating at HOLD, with the
+    dependence named as the blocker; the 0.50 line still bars BUY.
+    The pick-side 0.70 dep veto is a separate mechanism and is
+    unchanged.
+
     Returns (rating, reason), the reason in plain words naming the
     deciding factor.
     """
@@ -2949,9 +2959,6 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if check_status == "broken":
         return ("SELL", "thesis broken on the record, the story that "
                 "justified holding it no longer holds")
-    if dep >= 0.7:
-        return ("SELL", "event-driven, the thesis depends on things "
-                "outside its control")
     if cont is not None and cont < 0.40:
         return ("SELL", "the run looks over, the researcher no longer "
                 "expects it to keep doing well")
@@ -2978,6 +2985,9 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if check_status == "watch":
         return ("HOLD", "story intact, but on watch, a warning flag "
                 "is open")
+    if dep >= 0.70:
+        return ("HOLD", "story intact, but it leans heavily on "
+                "outside events")
     if etf_barred:
         return ("HOLD", "story intact, but the fund is beyond its "
                 "proven-strength limits right now")

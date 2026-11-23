@@ -1,0 +1,57 @@
+{
+ "date": "2026-11-23",
+ "flow": "watchlist",
+ "bundle": "watchlist_bundle_20261123_141946.json",
+ "screener_sha256": "4c95cb4b3daf55fa9dd3650d19dfe81ecaed422c3a25e2b7ec1892c6dd2c3df2",
+ "self_check": "4/4",
+ "counts": {
+  "candidates": 25,
+  "picks": 7,
+  "gate_bars": 0,
+  "stability_bars": 0,
+  "dep_binds": 0,
+  "vetoes": 1
+ },
+ "etf_selection": {
+  "gate_design": "strikes",
+  "strike_max_run": 0.35,
+  "strike_max_dep": 0.3,
+  "strike_min_maxdd": -0.12,
+  "strike_max_ddfreq": 0.05,
+  "strike_bar": 2,
+  "gate_max_run": 0.15,
+  "gate_max_dep": 0.2,
+  "tier2_max_run": 0.35,
+  "tier2_max_dep": 0.3,
+  "tier2_min_maxdd": -0.12,
+  "tier2_max_ddfreq": 0.05,
+  "tier2_max_picks": null,
+  "ev_upside_const": 0.08
+ },
+ "stock_selection": {
+  "gate_max_dep": 0.3,
+  "gate_implied_upside_min": 0.0,
+  "gate_ey_band_lo": -0.026496711528710953,
+  "gate_ey_band_hi": -0.0008823712366114762,
+  "gate_ey_band": "exclude from picks when the mechanical EY (ey_feed) is determined and in band; fail-soft (2026-11-21)",
+  "gate_cash_share_max": 0.3519357079857501,
+  "gate_cash_pocket": "exclude from picks when cash & equivalents are >= the bound as a share of total assets (ey_feed, accruals construction); fail-soft (2026-11-21)",
+  "gate_leverage_min": 0.0407764726456614,
+  "gate_low_debt_pocket": "exclude from picks when total debt is strictly below the bound as a share of total assets (ey_feed, balance-sheet construction); no leverage on file never bars; fail-soft (2026-11-21)",
+  "gate_ni_ev_band_lo": -0.039048959167093514,
+  "gate_ni_ev_band_hi": 0.003104453524704764,
+  "gate_ni_ev_band": "exclude from picks when the mechanical net income / enterprise value (ey_feed) is determined and in the near-zero band; fail-soft (2026-11-22)",
+  "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
+  "offense_z_weights": {
+   "z_6m": 0.08,
+   "z_3m": 0.06
+  },
+  "shadow_offense_picks": [],
+  "vol_budget_eligible_pct": 0.95,
+  "up_t1": 0.15,
+  "up_factor": 0.3333333333333333,
+  "up_cap": 0.3
+ },
+ "pool_tail": null,
+ "git_commit_of_pages_at_publish": null
+}
