@@ -749,7 +749,7 @@ def log_levers(args):
         "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
     log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
         f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
-    log(f"research pool: top {args.n_stock_research} stocks + top {args.n_etf_research} ETFs by base_score (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind), a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), and a {POOL_SECTOR_CAP}/sector cap on stock core seats — lanes buy evaluations only (2026-11-06)")
+    log(f"research pool: STOCKS — consolidated design (2026-11-23): the step-2 fence screen (stability price test, implied upside >= 0, the four filing legs, price risk strikes) runs over the whole scored funnel in Phase A, and the first {STOCK_RESEARCH_BUDGET} screen-passers in base_score order are admitted to research; the lane guarantees (core/persistence/overflow/offense/surge) no longer admit stocks. ETFs — top {args.n_etf_research} by the momentum composite (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind) and a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), unchanged")
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
@@ -1902,6 +1902,21 @@ def _fact_components(facts, dep_used, f4_buy=None, exec_only=None):
     return tilt, score, bool(no_signal), bool(override)
 
 
+# F1 (runtime audit 2026-11-23, Dan approved): per-process stamp
+# memoization. add_research_columns() runs the three stamp
+# functions below at several call sites per run on the identical
+# candidate set, and each stamp used to re-query its feed for every
+# ticker every time (~11 min of pure recompute per daily run).
+# The memos hold each ticker's SUCCESSFUL stamp result for the
+# life of the process; the first call computes exactly as before,
+# later calls reuse. Failures are never memoized (a feed failure
+# leaves the same None the unmemoized code leaves, and a later
+# call site retries the ticker, exactly as the old code did).
+_F4_STAMP_MEMO = {}
+_EXEC_STAMP_MEMO = {}
+_EY_STAMP_MEMO = {}
+
+
 def _stamp_form4_facts(recs):
     """Stamp the mechanical Form 4 fact onto stock row dicts in place.
 
@@ -1923,19 +1938,23 @@ def _stamp_form4_facts(recs):
             continue
         ticker = str(r.get("ticker") or "")
         if ticker not in seen:
-            result = None
-            if _form4_insider_buying is not None:
-                try:
-                    result = _form4_insider_buying(ticker)
-                except Exception:
-                    result = None
-            if isinstance(result, dict) and result.get("buy") in (0, 1):
-                evidence = result.get("evidence") or []
-                seen[ticker] = (
-                    int(result["buy"]),
-                    "; ".join(str(x) for x in evidence))
+            if ticker in _F4_STAMP_MEMO:
+                seen[ticker] = _F4_STAMP_MEMO[ticker]
             else:
-                seen[ticker] = (None, "")
+                result = None
+                if _form4_insider_buying is not None:
+                    try:
+                        result = _form4_insider_buying(ticker)
+                    except Exception:
+                        result = None
+                if isinstance(result, dict) and result.get("buy") in (0, 1):
+                    evidence = result.get("evidence") or []
+                    seen[ticker] = (
+                        int(result["buy"]),
+                        "; ".join(str(x) for x in evidence))
+                    _F4_STAMP_MEMO[ticker] = seen[ticker]
+                else:
+                    seen[ticker] = (None, "")
         r["f4_buy"], r["f4_evidence"] = seen[ticker]
     return recs
 
@@ -1961,19 +1980,23 @@ def _stamp_exec_facts(recs):
             continue
         ticker = str(r.get("ticker") or "")
         if ticker not in seen:
-            result = None
-            if _exec_feed_fact is not None:
-                try:
-                    result = _exec_feed_fact(ticker)
-                except Exception:
-                    result = None
-            if isinstance(result, dict) and result.get("exec_only") in (0, 1):
-                evidence = result.get("evidence") or []
-                seen[ticker] = (
-                    int(result["exec_only"]),
-                    "; ".join(str(x) for x in evidence))
+            if ticker in _EXEC_STAMP_MEMO:
+                seen[ticker] = _EXEC_STAMP_MEMO[ticker]
             else:
-                seen[ticker] = (None, "")
+                result = None
+                if _exec_feed_fact is not None:
+                    try:
+                        result = _exec_feed_fact(ticker)
+                    except Exception:
+                        result = None
+                if isinstance(result, dict) and result.get("exec_only") in (0, 1):
+                    evidence = result.get("evidence") or []
+                    seen[ticker] = (
+                        int(result["exec_only"]),
+                        "; ".join(str(x) for x in evidence))
+                    _EXEC_STAMP_MEMO[ticker] = seen[ticker]
+                else:
+                    seen[ticker] = (None, "")
         r["exec_only"], r["exec_evidence"] = seen[ticker]
     return recs
 
@@ -2013,6 +2036,13 @@ def _stamp_ey_facts(recs):
         _ey_feed_yields = None
         _bs_feed_ratios = None
         _ni_feed_evs = None
+    try:
+        # F3 entry point (ey_feed.filing_facts): one traversal
+        # computing all three families; imported separately so an
+        # ey_feed without it falls back to the three legacy calls.
+        from ey_feed import filing_facts as _filing_facts
+    except Exception:
+        _filing_facts = None
     tickers = []
     for r in recs:
         if str(r.get("kind") or "").lower() != "stock":
@@ -2035,14 +2065,17 @@ def _stamp_ey_facts(recs):
         t = str(r.get("ticker") or "")
         if t and t not in tickers:
             tickers.append(t)
+    # F1: tickers already stamped in this process are served from
+    # _EY_STAMP_MEMO; only the rest ("todo") need prices and feeds.
+    todo = [t for t in tickers if t not in _EY_STAMP_MEMO]
     prices = {}
-    if tickers:
+    if todo:
         try:
             import yfinance as _yf
-            _px = _yf.download(tickers, period="5d", auto_adjust=True,
+            _px = _yf.download(todo, period="5d", auto_adjust=True,
                                progress=False, threads=True)["Close"]
             if hasattr(_px, "columns"):
-                for t in tickers:
+                for t in todo:
                     if t in _px.columns:
                         _s = _px[t].dropna()
                         if len(_s):
@@ -2050,15 +2083,59 @@ def _stamp_ey_facts(recs):
             else:  # single-ticker frame comes back as a Series
                 _s = _px.dropna()
                 if len(_s):
-                    prices[tickers[0]] = float(_s.iloc[-1])
+                    prices[todo[0]] = float(_s.iloc[-1])
         except Exception:
             prices = {}
     results = {}
-    if _ey_feed_yields is not None and tickers:
-        try:
-            results = _ey_feed_yields(tickers, prices) or {}
-        except Exception:
-            results = {}
+    bs_results = {}
+    ni_results = {}
+    for _t in tickers:
+        if _t in _EY_STAMP_MEMO:
+            _e, _b, _n = _EY_STAMP_MEMO[_t]
+            results[_t] = _e
+            bs_results[_t] = _b
+            ni_results[_t] = _n
+    if todo:
+        _facts_ok = False
+        if _filing_facts is not None:
+            try:
+                _fam = _filing_facts(todo, prices) or {}
+                results.update(_fam.get("ey") or {})
+                bs_results.update(_fam.get("bs") or {})
+                ni_results.update(_fam.get("ni") or {})
+                _facts_ok = True
+            except Exception:
+                _facts_ok = False
+        if not _facts_ok:
+            # Legacy per-family calls for the unmemoized tickers,
+            # each in its own try, exactly as before.
+            if _ey_feed_yields is not None:
+                try:
+                    results.update(_ey_feed_yields(todo, prices) or {})
+                except Exception:
+                    pass
+            if _bs_feed_ratios is not None:
+                try:
+                    bs_results.update(_bs_feed_ratios(todo) or {})
+                except Exception:
+                    pass
+            if _ni_feed_evs is not None:
+                try:
+                    ni_results.update(_ni_feed_evs(todo, prices) or {})
+                except Exception:
+                    pass
+        # Memoize only proven-complete stamps: the price was
+        # present and the balance-sheet result carries its "cik"
+        # marker (the extraction succeeded), and both other
+        # families returned an entry for the ticker. Anything
+        # less stays unmemoized and is retried at the next call
+        # site, exactly as the unmemoized code behaved.
+        for _t in todo:
+            _b = bs_results.get(_t) or {}
+            if (_t in prices and "cik" in _b
+                    and _t in results and _t in ni_results):
+                _EY_STAMP_MEMO[_t] = (
+                    results[_t], _b, ni_results[_t])
     n_cov = 0
     for r in recs:
         if str(r.get("kind") or "").lower() != "stock":
@@ -2090,13 +2167,8 @@ def _stamp_ey_facts(recs):
             f"{len(tickers)} stock candidates "
             f"({len(tickers) - n_cov} uncovered, never barred)")
     # Balance-sheet ratios (cash_share, leverage) for the gate's
-    # two pocket legs; same tickers, same feed, shared cache.
-    bs_results = {}
-    if _bs_feed_ratios is not None and tickers:
-        try:
-            bs_results = _bs_feed_ratios(tickers) or {}
-        except Exception:
-            bs_results = {}
+    # two pocket legs; computed with the EY block above (memo /
+    # filing_facts / legacy fallback) into bs_results.
     n_cash = n_lev = 0
     for r in recs:
         if str(r.get("kind") or "").lower() != "stock":
@@ -2145,14 +2217,7 @@ def _stamp_ey_facts(recs):
             f"{len(tickers)} stock candidates, leverage for "
             f"{n_lev}/{len(tickers)} (undetermined never barred)")
     # Net income / enterprise value for the gate's net-income
-    # band leg; same tickers, same prices, shared extraction
-    # cache with the EY call above.
-    ni_results = {}
-    if _ni_feed_evs is not None and tickers:
-        try:
-            ni_results = _ni_feed_evs(tickers, prices) or {}
-        except Exception:
-            ni_results = {}
+    # band leg; computed with the EY block above into ni_results.
     n_ni = 0
     for r in recs:
         if str(r.get("kind") or "").lower() != "stock":
@@ -2300,6 +2365,21 @@ POOL_OVERFLOW_N = 15        # seats per kind for top ret_1y non-core names
 POOL_OFFENSE_N = 50         # offense-lane seats (stocks): top admitted names by 0.08*z_6m + 0.06*z_3m outside the other lanes (shipped 2026-11-16, Dan approved; reserve_lane_test_2026-11-16)
 POOL_PERSIST_MAX = 20       # persistence seats per kind
 POOL_PERSIST_WINDOW_DAYS = 7  # calendar days ≈ 5 trading days
+
+# CONSOLIDATED DESIGN (2026-11-23, Dan's ship directive — the
+# restoration of Mint's original architecture: "use the downloaded
+# data to make scores, then enhance the scores with research, then
+# come up with final selections"). For STOCKS, the lane guarantees
+# above no longer admit anyone: Phase A computes the mechanical
+# pick fences for the whole scored funnel (the step-2 screen, see
+# _fence_screen_stocks) and admits to research by funnel score
+# order among screen-passers, up to STOCK_RESEARCH_BUDGET seats.
+# The budget freezes the stock research volume at the level the
+# lanes produced on the ship date (175 stock candidates in the
+# 2026-11-23 bundle), so the design change spends the same
+# research budget — it just spends it on names the data stage has
+# already cleared. Funds keep the lane pool above, unchanged.
+STOCK_RESEARCH_BUDGET = 175
 
 # --- ETF upgrade package (SHIPPED 2026-11-12, Dan approved) ---
 # Change S: F8 completeness-corrected ETF Score (T1 winner; see
@@ -2454,6 +2534,260 @@ def _build_pool(frame, n, kind, persist):
                                     else None),
                          "z": _z_of(r)})
     return pool, tail
+
+
+# Fence value fields the step-2 screen stamps onto stock rows and
+# Phase B later reads back (see _apply_fence_screen). One list so
+# the Phase A writer, the bundle candidate builder and the Phase B
+# reader can never drift apart.
+_FENCE_SCREEN_VALUE_FIELDS = [
+    "ey", "ey_filed", "ey_bs_filed", "ey_evidence",
+    "cash_share", "cash_filed", "cash_bs_filed", "cash_evidence",
+    "leverage", "lev_debt_filed", "lev_bs_filed", "lev_evidence",
+    "ni_ev", "ni_filed", "ni_evidence",
+    "implied_upside", "earnings_in_days",
+]
+
+
+def _fence_screen_stocks(df, cache=None):
+    """Step 2 of the consolidated design (2026-11-23, Dan's ship
+    directive): compute the mechanical pick fences for EVERY stock
+    in the scored funnel, before any research is spent.
+
+    The fences are exactly the ones the pick walk used to check
+    after research, computed on the same production code paths the
+    pool-tail screen validated against the frame (2026-11-23):
+    the stability price test (stability_grade thresholds on the
+    Phase A vol60/maxdd), implied upside (attach_implied_upside /
+    pick_checks), the four filing legs (_stamp_ey_facts), and the
+    price-based risk strikes (compute_risk_strikes with dep forced
+    to None — the dep strike is research-only and is judged in the
+    research stage, never here). Fail-soft throughout, mirroring
+    the walk: a leg that cannot be determined never bars and never
+    blocks admission; only a determined FAIL does.
+
+    Stamps scr_* columns onto df (the step-2 record the bundle
+    carries into Phase B) and refreshes earnings_in_days/earn_soon
+    funnel-wide (Phase A used to enrich only the top 100). Returns
+    (results, df): results[ticker] = {pass, fails, undetermined,
+    strike_count} for the run record."""
+    from cache import StepCache
+    if df is None or df.empty:
+        return {}, df
+    df = df.copy()
+    tickers = [str(t) for t in df["ticker"].tolist()]
+    if cache is None:
+        cache = StepCache("cache", log=log, date_str=pipeline_today())
+    # earnings proximity for the whole funnel (production enrichment)
+    enr_key = "fence_enrich_" + StepCache.tickers_key(tickers)
+    enr = cache.get(enr_key) or {}
+    missing = [t for t in tickers if t not in enr]
+    if missing:
+        log(f"fence screen: enriching {len(missing)} funnel stocks "
+            f"(earnings dates)")
+        enr.update(enrich_candidates(missing))
+        cache.put(enr_key, enr)
+    earn_days = {t: (enr.get(t) or {}).get("earnings_in_days")
+                 for t in tickers}
+    # implied upside for the whole funnel (production path, cached)
+    _iu_frame = attach_implied_upside(
+        pd.DataFrame({"ticker": tickers}), cache)
+    iu = {str(r["ticker"]): _safe(r.get("implied_upside"))
+          for _, r in _iu_frame.iterrows()}
+    # the four filing legs (production stamp, batched)
+    recs = _stamp_ey_facts([{"ticker": t, "kind": "stock"}
+                            for t in tickers])
+    stamps = {str(r["ticker"]): r for r in recs}
+    # price-based risk strikes, dep unknown at this stage
+    by_ticker = {str(r["ticker"]): r for _, r in df.iterrows()}
+    mini = pd.DataFrame([{
+        "ticker": t,
+        "earnings_in_days": earn_days.get(t),
+        "ret_6m_skip1m": _safe(by_ticker[t].get("ret_6m_skip1m")),
+        "ret_6m": _safe(by_ticker[t].get("ret_6m")),
+        "implied_upside": iu.get(t),
+        "dep_used": None,
+    } for t in tickers])
+    mini = compute_risk_strikes(mini)
+    strike_counts = {str(r["ticker"]): int(r["risk_strike_count"])
+                     for _, r in mini.iterrows()}
+
+    def _filing_verdicts(r):
+        out = {}
+        for leg, val, barred in [
+                ("ey", r.get("ey"),
+                 lambda v: EY_BAND_LO <= v <= EY_BAND_HI),
+                ("cash", r.get("cash_share"),
+                 lambda v: v >= BS_CASH_SHARE_MAX),
+                ("lev", r.get("leverage"),
+                 lambda v: v < BS_LEVERAGE_MIN),
+                ("ni", r.get("ni_ev"),
+                 lambda v: NI_EV_BAND_LO <= v <= NI_EV_BAND_HI)]:
+            if val is None:
+                out[leg] = "UNDETERMINED"
+            elif barred(val):
+                out[leg] = "FAIL"
+            else:
+                out[leg] = "PASS"
+        return out
+
+    results = {}
+    for t in tickers:
+        r = by_ticker[t]
+        vol60 = _safe(r.get("vol60"))
+        maxdd = _safe(r.get("maxdd"))
+        if vol60 is None or maxdd is None:
+            stab_v = "UNDETERMINED"
+        elif vol60 > 0.80 or maxdd < -0.45:
+            stab_v = "FAIL"
+        elif vol60 > 0.55 or maxdd < -0.30:
+            stab_v = "FAIL"
+        else:
+            stab_v = "PASS"
+        fv = _filing_verdicts(stamps.get(t) or {})
+        iu_v = iu.get(t)
+        iu_verdict = ("UNDETERMINED" if iu_v is None
+                      else ("FAIL" if iu_v < 0 else "PASS"))
+        sk_count = strike_counts.get(t, 0)
+        fails = []
+        if stab_v == "FAIL":
+            fails.append("stability")
+        if iu_verdict == "FAIL":
+            fails.append("implied_upside")
+        for leg in ("ey", "cash", "lev", "ni"):
+            if fv[leg] == "FAIL":
+                fails.append("filing:" + leg)
+        if sk_count >= RISK_GATE_MIN_STRIKES:
+            fails.append("risk_strikes")
+        undetermined = []
+        if stab_v == "UNDETERMINED":
+            undetermined.append("stability")
+        if iu_verdict == "UNDETERMINED":
+            undetermined.append("implied_upside")
+        for leg in ("ey", "cash", "lev", "ni"):
+            if fv[leg] == "UNDETERMINED":
+                undetermined.append("filing:" + leg)
+        results[t] = {"pass": not fails, "fails": fails,
+                      "undetermined": undetermined,
+                      "strike_count": sk_count}
+    # stamp the step-2 record onto the rows
+    df["scr_screened"] = True
+    df["scr_pass"] = [bool(results[t]["pass"]) for t in tickers]
+    df["scr_fails"] = [list(results[t]["fails"]) for t in tickers]
+    df["scr_strike_count"] = [int(results[t]["strike_count"])
+                              for t in tickers]
+    for field in _FENCE_SCREEN_VALUE_FIELDS:
+        if field == "implied_upside":
+            df["scr_implied_upside"] = [iu.get(t) for t in tickers]
+        elif field == "earnings_in_days":
+            df["scr_earnings_in_days"] = [earn_days.get(t)
+                                         for t in tickers]
+        else:
+            df["scr_" + field] = [(stamps.get(t) or {}).get(field)
+                                  for t in tickers]
+    df["earnings_in_days"] = [earn_days.get(t) for t in tickers]
+    df["earn_soon"] = [1.0 if (earn_days.get(t) is not None
+                               and 0 <= earn_days[t] <= 14) else 0.0
+                       for t in tickers]
+    n_pass = sum(1 for v in results.values() if v["pass"])
+    log(f"fence screen (step 2, consolidated design): {n_pass}/"
+        f"{len(tickers)} funnel stocks pass every mechanical fence")
+    return results, df
+
+
+def _build_pool_screened(frame, budget):
+    """Consolidated-design stock admission (2026-11-23): the
+    research pool is the first `budget` screen-passers in funnel
+    score order (the frame arrives sorted by base_score). No lane
+    guarantees: a name enters on score plus screen, nothing else,
+    and slots stay empty when fewer than `budget` names pass —
+    the same empty-beats-filler rule as the pick floors.
+
+    Returns (pool_df, tail_records). The tail records every
+    screen-passer the budget did not reach (the leakage set the
+    audit measures under this design) plus, for continuity with
+    the retired lane record, the screen-failures inside the old
+    ranks-101..200 window; each entry carries its screen verdict.
+    """
+    if frame is None or frame.empty:
+        return frame, []
+    f = frame.copy()
+    f["_pool_rank"] = range(1, len(f) + 1)
+    f["_pool_lane"] = None
+    taken = []
+    for i, r in f.iterrows():
+        if len(taken) >= budget:
+            break
+        if bool(r.get("scr_pass")):
+            taken.append(i)
+    if taken:
+        f.loc[taken, "_pool_lane"] = "screen"
+    pool = f.loc[taken].copy() if taken else f.iloc[0:0].copy()
+    taken_set = set(taken)
+    tail = []
+    for i, r in f.iterrows():
+        if i in taken_set:
+            continue
+        rank = int(r["_pool_rank"])
+        passed = bool(r.get("scr_pass"))
+        if passed or 100 < rank <= 200:
+            tail.append({"ticker": str(r["ticker"]), "kind": "stock",
+                         "rank": rank,
+                         "base_score": _safe(r.get("base_score")),
+                         "ret_1y": _safe(r.get("ret_1y")),
+                         "sector": (str(r.get("sector"))
+                                    if r.get("sector") is not None
+                                    else None),
+                         "z": _z_of(r),
+                         "screen_pass": passed,
+                         "screen_fails": list(r.get("scr_fails") or [])})
+    log(f"screen admission: {len(pool)} stocks admitted to research "
+        f"(budget {budget}); {len(tail)} unseated names recorded "
+        f"in the tail")
+    return pool, tail
+
+
+def _apply_fence_screen(adj):
+    """Consolidated design, Phase B reader (2026-11-23, Dan's ship
+    directive): the mechanical pick fences were decided by the
+    step-2 screen in Phase A, before research, and are carried on
+    the candidate rows as scr_* stamps. Overwrite the mechanical
+    fence inputs on screened stock rows with the step-2 values, so
+    the eligibility gate, the strike computation and the frame
+    record all read the screen — the walk does not re-check the
+    mechanical legs against this run's stamps. Research-dependent
+    inputs (dep_used, the stability grade, the EV) are untouched:
+    they are outputs of the research stage. Rows without screen
+    stamps (funds, watchlist rows, pre-ship bundles) are untouched,
+    exactly as before."""
+    if adj is None or adj.empty or "scr_screened" not in adj.columns:
+        return adj
+    pairs = [(field, "scr_" + field)
+             for field in _FENCE_SCREEN_VALUE_FIELDS]
+    if not any(src in adj.columns for _, src in pairs):
+        return adj
+    adj = adj.copy()
+    n = 0
+    for i, r in adj.iterrows():
+        if str(r.get("kind") or "") != "stock":
+            continue
+        sv = r.get("scr_screened")
+        ok = (sv is True or (isinstance(sv, str)
+                             and sv.strip().lower() in ("true", "1"))
+              or (isinstance(sv, (int, float))
+                  and not (isinstance(sv, float) and sv != sv)
+                  and float(sv) == 1.0))
+        if not ok:
+            continue
+        for dst, src in pairs:
+            if src in adj.columns and dst in adj.columns:
+                adj.at[i, dst] = r.get(src)
+        n += 1
+    if n:
+        log(f"fence screen (step 2, consolidated design): mechanical "
+            f"gate/strike inputs for {n} stock rows read the "
+            f"pre-research screen stamps")
+    return adj
 
 
 def _etf_strikes_of(r):
@@ -5755,6 +6089,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
     # selection-true enrichment for post-gate rows (mirrors pick_final's
     # own add_research_columns + compute_risk_strikes on the same inputs)
     enriched = add_research_columns(ranked, llm_path=True)
+    enriched = _apply_fence_screen(enriched)
     enriched = compute_risk_strikes(enriched, llm_path=True)
     by_ticker = {str(r["ticker"]): r for _, r in enriched.iterrows()}
     # pre-selection-gate drops were never enriched/attached; enrich them
@@ -5762,6 +6097,7 @@ def write_frame_snapshot_daily(ranked, pre_gate, final, hm, bundle_path,
     pre_only = pre_gate[~pre_gate["ticker"].isin(set(by_ticker))]
     if len(pre_only):
         pre_enriched = add_research_columns(pre_only, llm_path=True)
+        pre_enriched = _apply_fence_screen(pre_enriched)
         for _, r in pre_enriched.iterrows():
             by_ticker[str(r["ticker"])] = r
     sec_counts = {}
@@ -7049,6 +7385,12 @@ def pick_final(adj, args, llm_path):
     """
     veto = args.veto_dep if llm_path else None
     adj = add_research_columns(adj, llm_path=llm_path)
+    # CONSOLIDATED DESIGN (2026-11-23): no step-4 re-check — the
+    # mechanical fence inputs now read the step-2 screen stamps
+    # carried on the rows; the research fences (dep gate, dep
+    # strike, final stability grade) and the portfolio rules below
+    # are all that remain at the walk.
+    adj = _apply_fence_screen(adj)
 
     # reset per-run stability-gate record (ticker -> C/D grade)
     global _STABILITY_GATED
@@ -9716,13 +10058,39 @@ def main():
     # 6d) ETF leg: separate universe + scorer (different fundamentals)
     edf = run_etf_pipeline(args, cache, etf_bench_ret, _eb)
 
-    # research pool: core top-N by base_score + persistence seats +
-    # ret_1y overflow lane (2026-11-06 pool package — see _build_pool);
-    # the scored tail (ranks N+1..N+100 unseated) is recorded into the
-    # bundle meta and onward into the run manifest for the audit.
+    # research pool. STOCKS (consolidated design, 2026-11-23, Dan's
+    # ship directive): the step-2 fence screen runs over the whole
+    # scored funnel first, then admission is funnel score order
+    # among screen-passers up to STOCK_RESEARCH_BUDGET — the lane
+    # guarantees of the 2026-11-06 pool package are retired as
+    # admission devices for stocks. FUNDS keep the lane pool
+    # unchanged. The unseated tail is recorded into the bundle meta
+    # and onward into the run manifest for the audit.
     _persist = _persistence_tickers()
-    _pool_stocks, _tail_s = _build_pool(df, args.n_stock_research,
-                                        "stock", _persist)
+    _screen_results, df = _fence_screen_stocks(df, cache)
+    _pool_stocks, _tail_s = _build_pool_screened(
+        df, STOCK_RESEARCH_BUDGET)
+    _screen_meta = {
+        "design": "consolidated-2026-11-23",
+        "budget": STOCK_RESEARCH_BUDGET,
+        "n_screened": len(_screen_results),
+        "n_pass": sum(1 for v in _screen_results.values() if v["pass"]),
+        "n_admitted": len(_pool_stocks),
+    }
+    try:
+        import json as _sjson
+        _snap_path = os.path.join(
+            "snapshots",
+            f"fence_screen_{run_date()}.json")
+        with open(_snap_path, "w") as _sf:
+            _sjson.dump({t: {"pass": v["pass"], "fails": v["fails"],
+                            "undetermined": v["undetermined"],
+                            "strike_count": v["strike_count"]}
+                        for t, v in _screen_results.items()},
+                       _sf, indent=1)
+        log(f"fence screen record: {_snap_path}")
+    except Exception as _se:
+        log(f"fence screen record: skipped ({_se})")
     if not edf.empty:
         _pool_etfs, _tail_e = _build_pool(edf, args.n_etf_research,
                                           "etf", _persist)
@@ -9748,7 +10116,11 @@ def main():
     if args.n_surge > 0:
         _pool_tickers = set(pool["ticker"])
         _surge_frames = []
-        for _sdf in (df, edf):
+        # CONSOLIDATED DESIGN (2026-11-23): surge seats are retired
+        # for stocks — a stock enters the pool on score plus screen,
+        # nothing else. Funds are unchanged, so the surge still
+        # draws from the ETF frame only.
+        for _sdf in (edf,):
             if _sdf is not None and not _sdf.empty and "ret_2w" in _sdf.columns:
                 _surge_frames.append(_sdf)
         if _surge_frames:
@@ -9834,6 +10206,18 @@ def main():
                 cand["expense_ratio"] = _safe(r.get("expense_ratio"))
                 cand["aum"] = _safe(r.get("aum"))
                 cand["spike"] = _safe(r.get("spike"))
+            if r.get("kind") == "stock":
+                # CONSOLIDATED DESIGN (2026-11-23): the step-2
+                # screen stamps ride the bundle so Phase B's walk
+                # reads the pre-research fence values from the row
+                # (see _apply_fence_screen) instead of re-checking
+                # them. Every admitted stock was screened in
+                # Phase A; the flag says so on the record.
+                cand["scr_screened"] = bool(r.get("scr_screened"))
+                for _ff in _FENCE_SCREEN_VALUE_FIELDS:
+                    cand["scr_" + _ff] = _safe(r.get("scr_" + _ff))
+                cand["scr_strike_count"] = _safe(
+                    r.get("scr_strike_count"))
             cands.append(cand)
 
         # REGIME STAMP (logging package, 2026-11-13): the benchmark's
@@ -9864,6 +10248,7 @@ def main():
                 {"benchmark": args.benchmark,
                  "etf_benchmark": _eb,
                  "regime": _regime,
+                 "fence_screen": _screen_meta,
                  "pool_tail": _pool_tail,
                  "pool_lane_counts": {str(k): int(v) for k, v in
                                       Counter(c.get("pool_lane")
