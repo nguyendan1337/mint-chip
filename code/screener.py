@@ -5241,14 +5241,23 @@ def _reader_reason(raw, kind=""):
         return str(raw or "")
 
 
-def honorable_mentions(ranked, final, args, top_k=15):
+def honorable_mentions(ranked, final, args, top_k=10):
     """Near-miss table: researched names that cleared the EV floor but didn't
     make the chart — alternatives worth a look, each with the reason it
     missed (overlap, cap, or final-score order). Selected PER KIND
     (2026-11-11 split): the top top_k stocks by expected return and
     the top top_k funds by ETF score, stocks first, each sorted by
     EV descending — one combined list under the redesigned scales
-    was all stocks, so no fund could ever appear."""
+    was all stocks, so no fund could ever appear.
+    HM SECTOR CAP (2026-11-23, Dan's directive): top_k drops 15 -> 10
+    per kind, and each kind's mention list is walked down the EV
+    ranking under the same per-group cap the picks use (2 per sector
+    for stocks, 2 per theme for funds, grouped by _cap_key_of): a
+    name takes a mention seat only while its group holds fewer than
+    2 seats in the mention list itself. The uncapped lists were
+    dominated by a few sectors/themes. If the cap leaves fewer than
+    top_k names, seats stay empty — the cap is never broken to
+    fill."""
     if ranked is None or ranked.empty or final is None:
         return []
     if "est_next_1y" not in ranked.columns:
@@ -5287,10 +5296,27 @@ def honorable_mentions(ranked, final, args, top_k=15):
         sec_counts[k] = sec_counts.get(k, 0) + 1
     _by_ev = sorted(contenders, key=lambda r: float(r["est_next_1y"]),
                     reverse=True)
-    _selected = ([r for r in _by_ev
-                  if str(r.get("kind", "stock")) != "etf"][:top_k]
-                 + [r for r in _by_ev
-                    if str(r.get("kind", "stock")) == "etf"][:top_k])
+    # HM SECTOR CAP (2026-11-23): per kind, walk the EV ranking and
+    # admit a name only while its _cap_key_of group holds fewer than
+    # caps[kind] seats in the mention list itself. Counts are of
+    # mention seats only; the pick counts in sec_counts below still
+    # drive the "cap full" why-not-picked reasons, unchanged.
+    _selected = []
+    for _want_etf in (False, True):
+        _kind = "etf" if _want_etf else "stock"
+        _hm_counts = {}
+        _n = 0
+        for r in _by_ev:
+            if _n >= top_k:
+                break
+            if (str(r.get("kind", "stock")) == "etf") != _want_etf:
+                continue
+            _ck = _cap_key_of(r)
+            if _hm_counts.get(_ck, 0) >= caps.get(_kind, 2):
+                continue
+            _hm_counts[_ck] = _hm_counts.get(_ck, 0) + 1
+            _selected.append(r)
+            _n += 1
     out = []
     for r in _selected:
         t = str(r["ticker"])
@@ -5837,8 +5863,9 @@ def _write_eligible_snapshot(rows):
     """LOGGING PACKAGE (2026-11-13): persist the day's eligible-stock
     set (every name that cleared the gates and floors, with its
     offense score, vol60, and whether the Variant A volatility budget
-    barred it) to snapshots/eligible_<date>.json. Recording only;
-    never raises."""
+    barred it; the budget was removed 2026-11-24, so the flag is
+    always False now) to snapshots/eligible_<date>.json. Recording
+    only; never raises."""
     try:
         import json as _json
         _base = os.path.dirname(os.path.abspath(__file__))
@@ -6006,7 +6033,7 @@ def _write_frame_manifest(rows, flow, bundle_path, counts,
                         "ranking": "est_next_1y (EV ordering; Dan directive 2026-11-16, supersedes Variant A offense ordering of 2026-11-07)",
                         "offense_z_weights": {"z_6m": 0.08, "z_3m": 0.06},
                         "shadow_offense_picks": list(_SHADOW_OFFENSE_PICKS),
-                        "vol_budget_eligible_pct": 0.95,
+                        "vol_budget_eligible_pct": None,  # budget removed 2026-11-24
                         "up_t1": STOCK_UP_T1,
                         "up_factor": STOCK_UP_FACTOR,
                         "up_cap": STOCK_UP_CAP},
@@ -7738,36 +7765,24 @@ def pick_final(adj, args, llm_path):
                                        for _, r in est_ok.iterrows()]
             _nosc = int(est_ok["offense_score"].isna().sum())
             # ELIGIBLE SNAPSHOT (logging package, 2026-11-13): capture
-            # the eligible set BEFORE the pain budget removes its tail
-            # — every eligible name with its offense score and vol60;
-            # the budget branch below flags the barred names, and the
-            # snapshot is written before the offense sort. Recording
-            # only; the writer never raises.
+            # the eligible set — every eligible name with its offense
+            # score and vol60; the snapshot is written before the
+            # offense sort. Recording only; the writer never raises.
             _elig_snap = [{"ticker": str(_er["ticker"]),
                            "offense_score": _safe(_er.get("offense_score")),
                            "vol60": _safe(_er.get("vol60")),
                            "vol_budget_barred": False}
                           for _, _er in est_ok.iterrows()]
-            if "vol60" in est_ok.columns \
-                    and est_ok["vol60"].notna().sum() >= 10:
-                _vthr = float(est_ok["vol60"].quantile(0.95))
-                _over = est_ok[est_ok["vol60"] > _vthr]
-                if len(_over):
-                    log(f"variant A vol budget: 95th pct of eligible "
-                        f"vol60 = {_vthr:.3f}; excluded {len(_over)}: "
-                        f"{_over['ticker'].tolist()}")
-                    for _, _r in _over.iterrows():
-                        _OFFENSE_BUDGET[str(_r["ticker"])] = (
-                            f"volatility budget (vol60 "
-                            f"{float(_r['vol60']):.3f} > {_vthr:.3f}, the "
-                            f"95th percentile of the eligible set) — "
-                            f"Variant A pain budget")
-                    _barred = set(_over["ticker"].astype(str))
-                    for _es in _elig_snap:
-                        if _es["ticker"] in _barred:
-                            _es["vol_budget_barred"] = True
-                    est_ok = est_ok[(est_ok["vol60"] <= _vthr)
-                                    | est_ok["vol60"].isna()].copy()
+            # VOLATILITY BUDGET REMOVED (2026-11-24, Dan's
+            # directive): the Variant A pain budget that trimmed the
+            # eligible set's extreme-vol tail (vol60 above its own
+            # 95th percentile) was removed after the construction
+            # sweep found removal DOMINANT on the clean 57-date bed
+            # (return +17.6pp, blowups -1.6pp, losing slates flat;
+            # studies_2026-11-24/construction_sweep). The eligible
+            # set now goes to the EV ranking untrimmed;
+            # _OFFENSE_BUDGET stays empty and every snapshot row
+            # records vol_budget_barred=False.
             _write_eligible_snapshot(_elig_snap)
             # EV ORDERING (Dan's directive, 2026-11-16 evening): the
             # confirmation panel closed NOT CONFIRMED under its frozen
@@ -7775,9 +7790,10 @@ def pick_final(adj, args, llm_path):
             # blowups 8.8% EV vs 17.5% offense), and Dan directed the
             # switch as a judgment call anyway. Eligible stocks are now
             # ranked by expected return (est_next_1y). Everything else
-            # is unchanged: the vol pain budget above still trims the
-            # eligible set's extreme-vol tail before ranking, and all
-            # gates and floors stand. The offense ranking is still
+            # is unchanged: all gates and floors stand. (The vol pain
+            # budget that once trimmed the eligible set's extreme-vol
+            # tail before ranking was removed 2026-11-24.) The offense
+            # ranking is still
             # computed and recorded (_OFFENSE_RANKED, the eligible
             # snapshot, frame-row offense_score) and the offense-ordered
             # shadow slate is recorded in the manifest, so the Nov 30
@@ -8611,9 +8627,9 @@ _STOCK_GATED = {}  # ticker -> reason; stocks barred by the iu/dep eligibility g
 _ETF_TIER2 = {}  # ticker -> True; ETFs eligible only via the tier-2 proven-strength lane (2026-11-06)
 _ETF_TIER2_CAPPED = {}  # ticker -> reason; tier-2 ETFs that lost the tier-2 slot cap (2026-11-06)
 _FRAME_DEDUPE_DROPS = {}  # ticker -> reason; share-class/ETF-wrapper dedupe losers in pick_final (auditability, 2026-10-30)
-_OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Variant A vol pain budget (2026-11-07)
-_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); post-budget offense ranking of eligible stocks (Variant A 2026-11-07; retained as audit monitoring since the 2026-11-16 switch to EV ordering)
-_EV_RANKED = {}  # ticker -> (rank, n_eligible); post-budget expected-return ranking of eligible stocks (selection ordering since 2026-11-16, Dan's directive)
+_OFFENSE_BUDGET = {}  # ticker -> reason; eligible stocks excluded by the Variant A vol pain budget (2026-11-07; budget removed 2026-11-24, so this stays empty)
+_OFFENSE_RANKED = {}  # ticker -> (rank, n_eligible); offense ranking of eligible stocks (Variant A 2026-11-07; retained as audit monitoring since the 2026-11-16 switch to EV ordering)
+_EV_RANKED = {}  # ticker -> (rank, n_eligible); expected-return ranking of eligible stocks (selection ordering since 2026-11-16, Dan's directive)
 _SHADOW_OFFENSE_PICKS = []  # tickers the offense (price-run) ordering would have picked this run; recorded in the manifest for the audit (2026-11-16)
 _ETF_RETENTION = {}  # ticker -> {entered_date, slates_held}; fund picks seated by the R1 retention rule this run (2026-11-22)
 _ETF_RETENTION_RUN = None  # run-level retention summary for the manifest (daily flow only, 2026-11-22)
