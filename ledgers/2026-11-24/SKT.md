@@ -1,0 +1,9 @@
+EVIDENCE LEDGER — SKT (as of 2026-11-24; mechanically pre-filled from point-in-time filings data; every entry is dated on or before the as-of date):
+- Insider purchases: Form 4 history was searched for the trailing 6 months: no open-market purchases (code P) found. [Classification: Confirmed negative; Source: SEC Form 4 filings (store: form4_transactions); Evidence date: 2026-11-24]
+- Buybacks: No repurchase data available for this company in the available filings data. [Classification: Unknown-not disclosed; Source: SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)]
+- Dividend increases: Dividend history could not be determined from the available filings data. [Classification: Unknown-not disclosed; Source: SEC filings (XBRL dividends declared, mechanical_facts_pit)]
+- Acquisitions: No Item 2.01 completion filings, no Item 1.01 agreement filings, and no large cash acquisition spend found in the trailing 12 months. [Classification: Confirmed negative; Source: SEC 8-K filings; SEC filings (XBRL); Evidence date: 2026-11-24]
+- Customer concentration: Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field. [Classification: Unknown-not disclosed; Source: Not available]
+- Regulatory risks: No 8-K filings with items 1.05, 4.02, 3.01 or 5.02 in the trailing 12 months. [Classification: Confirmed negative; Source: SEC 8-K filings (store: form8k_events); Evidence date: 2026-11-24]
+- Earnings catalysts: Most recent earnings announcement was 20 days before the as-of date (2026-11-04, accession 0001628280-26-070124). [Classification: Confirmed positive; Source: SEC 8-K item 2.02 filings (store: earnings_announcement_events); Evidence date: 2026-11-04]
+- Debt changes: No debt data available for this company in the available filings data. [Classification: Unknown-not disclosed; Source: SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)]

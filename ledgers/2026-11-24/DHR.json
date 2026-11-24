@@ -1,0 +1,91 @@
+{
+ "ticker": "DHR",
+ "cik": 313616,
+ "kind": "stock",
+ "as_of": "2026-11-24",
+ "fields": [
+  {
+   "field": "Insider purchases",
+   "finding": "Form 4 history was searched for the trailing 6 months: no open-market purchases (code P) found.",
+   "classification": "Confirmed negative",
+   "source": "SEC Form 4 filings (store: form4_transactions)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "transactions": 0
+   }
+  },
+  {
+   "field": "Buybacks",
+   "finding": "Executed share repurchases are reported in 1 filing(s) whose periods end inside the trailing 12 months; the largest single reported figure is $3,088M (latest such filing 2026-02-24, period ended 2025-12-31, $3,088M). Full-window scan: every filing in the window was checked, not only the latest. Authorization amounts are not in the available data.",
+   "classification": "Confirmed positive",
+   "source": "SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)",
+   "evidence_date": "2026-02-24",
+   "details": {
+    "filings_with_repurchases": 1,
+    "max_reported_usd": 3088000000.0
+   }
+  },
+  {
+   "field": "Dividend increases",
+   "finding": "Dividend history could not be determined from the available filings data.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC filings (XBRL dividends declared, mechanical_facts_pit)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Acquisitions",
+   "finding": "Large acquisition activity confirmed: cash acquisition spend over the trailing 12 months reached at least 5% of total assets (mechanical facts).",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings; SEC filings (XBRL)",
+   "evidence_date": "2026-10-21",
+   "details": {
+    "item_201_filings": 0,
+    "item_101_filings": 0,
+    "mech_cash_spend_flag": true
+   }
+  },
+  {
+   "field": "Customer concentration",
+   "finding": "Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field.",
+   "classification": "Unknown-not disclosed",
+   "source": "Not available",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Regulatory risks",
+   "finding": "No 8-K filings with items 1.05, 4.02, 3.01 or 5.02 in the trailing 12 months.",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings (store: form8k_events)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "filings": 0
+   }
+  },
+  {
+   "field": "Earnings catalysts",
+   "finding": "Most recent earnings announcement was 35 days before the as-of date (2026-10-20, accession 0000313616-26-000201).",
+   "classification": "Confirmed positive",
+   "source": "SEC 8-K item 2.02 filings (store: earnings_announcement_events)",
+   "evidence_date": "2026-10-20",
+   "details": {
+    "days_before_asof": 35,
+    "accession": "0000313616-26-000201"
+   }
+  },
+  {
+   "field": "Debt changes",
+   "finding": "Total debt changed +53% over roughly the last year, from $18,156M (period ended 2025-09-26, as filed 2025-10-21) to $27,782M (period ended 2026-09-25, filed 2026-10-21; wide construction: borrowings + leases). Maturity schedules are not in the available data.",
+   "classification": "Confirmed negative",
+   "source": "SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)",
+   "evidence_date": "2026-10-21",
+   "details": {
+    "change_pct": 0.5301828596607183,
+    "debt_now_usd": 27782000000.0,
+    "debt_prior_usd": 18156000000.0,
+    "construction": "wide"
+   }
+  }
+ ]
+}

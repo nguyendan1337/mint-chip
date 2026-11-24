@@ -1,0 +1,72 @@
+{
+ "ticker": "QLV",
+ "cik": null,
+ "kind": "etf",
+ "as_of": "2026-11-24",
+ "fields": [
+  {
+   "field": "Insider purchases",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Buybacks",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Dividend increases",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Acquisitions",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Customer concentration",
+   "finding": "Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field.",
+   "classification": "Unknown-not disclosed",
+   "source": "Not available",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Regulatory risks",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Earnings catalysts",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Debt changes",
+   "finding": "Fund: issuer-level filing facts (insider transactions, repurchases, dividends, deals, borrowings of an operating company) do not apply to an ETF; fund facts are coded from flow and event coverage in the research stage.",
+   "classification": "Not applicable",
+   "source": "Not applicable",
+   "evidence_date": null,
+   "details": {}
+  }
+ ]
+}

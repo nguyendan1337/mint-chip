@@ -1,0 +1,97 @@
+{
+ "ticker": "RPRX",
+ "cik": 1802768,
+ "kind": "stock",
+ "as_of": "2026-11-24",
+ "fields": [
+  {
+   "field": "Insider purchases",
+   "finding": "Form 4 history was searched for the trailing 6 months: no open-market purchases (code P) found.",
+   "classification": "Confirmed negative",
+   "source": "SEC Form 4 filings (store: form4_transactions)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "transactions": 0
+   }
+  },
+  {
+   "field": "Buybacks",
+   "finding": "Executed share repurchases are reported in 2 filing(s) whose periods end inside the trailing 12 months; the largest single reported figure is $1,227M (latest such filing 2026-05-06, period ended 2026-03-31, $50M). Full-window scan: every filing in the window was checked, not only the latest. Authorization amounts are not in the available data.",
+   "classification": "Confirmed positive",
+   "source": "SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)",
+   "evidence_date": "2026-05-06",
+   "details": {
+    "filings_with_repurchases": 2,
+    "max_reported_usd": 1227383000.0
+   }
+  },
+  {
+   "field": "Dividend increases",
+   "finding": "Dividends declared per share rose over the trailing 12 months: $0.870 to $0.925 per share.",
+   "classification": "Confirmed positive",
+   "source": "SEC filings (XBRL dividends declared, mechanical_facts_pit)",
+   "evidence_date": "2026-11-04",
+   "details": {
+    "div_ttm": 0.925,
+    "div_ttm_prior": 0.87,
+    "div_source": "paid_q"
+   }
+  },
+  {
+   "field": "Acquisitions",
+   "finding": "No Item 2.01 completion filings, no Item 1.01 agreement filings, and no large cash acquisition spend found in the trailing 12 months.",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings; SEC filings (XBRL)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "item_201_filings": 0,
+    "item_101_filings": 0,
+    "mech_cash_spend_flag": false
+   }
+  },
+  {
+   "field": "Customer concentration",
+   "finding": "Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field.",
+   "classification": "Unknown-not disclosed",
+   "source": "Not available",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Regulatory risks",
+   "finding": "1 filing(s) in the trailing 12 months carried material event items: officer or director departure / appointment (5.02).",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings (store: form8k_events)",
+   "evidence_date": "2025-12-22",
+   "details": {
+    "filings": 1,
+    "items": [
+     "5.02"
+    ]
+   }
+  },
+  {
+   "field": "Earnings catalysts",
+   "finding": "Most recent earnings announcement was 20 days before the as-of date (2026-11-04, accession 0001802768-26-000026).",
+   "classification": "Confirmed positive",
+   "source": "SEC 8-K item 2.02 filings (store: earnings_announcement_events)",
+   "evidence_date": "2026-11-04",
+   "details": {
+    "days_before_asof": 20,
+    "accession": "0001802768-26-000026"
+   }
+  },
+  {
+   "field": "Debt changes",
+   "finding": "Total debt was broadly stable over the last year ($8,587M at period end 2026-09-30, -4% vs a year earlier; wide construction: borrowings + leases). Maturity schedules are not in the available data.",
+   "classification": "Confirmed negative",
+   "source": "SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)",
+   "evidence_date": "2026-11-04",
+   "details": {
+    "change_pct": -0.040601650087918384,
+    "debt_now_usd": 8587495000.0,
+    "construction": "wide"
+   }
+  }
+ ]
+}

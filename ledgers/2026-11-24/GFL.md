@@ -1,0 +1,9 @@
+EVIDENCE LEDGER — GFL (as of 2026-11-24; mechanically pre-filled from point-in-time filings data; every entry is dated on or before the as-of date):
+- Insider purchases: No Form 4 records for this company in the available data; insider purchases cannot be confirmed or excluded. [Classification: Unknown-not disclosed; Source: SEC Form 4 filings (store: form4_transactions)]
+- Buybacks: No repurchase data available for this company in the available filings data. [Classification: Unknown-not disclosed; Source: SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)]
+- Dividend increases: Dividend history could not be determined from the available filings data. [Classification: Unknown-not disclosed; Source: SEC filings (XBRL dividends declared, mechanical_facts_pit)]
+- Acquisitions: No 8-K or mechanical-facts coverage for this company in the available data; acquisition activity cannot be confirmed or excluded. [Classification: Unknown-not disclosed; Source: SEC 8-K filings; SEC filings (XBRL)]
+- Customer concentration: Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field. [Classification: Unknown-not disclosed; Source: Not available]
+- Regulatory risks: No 8-K records for this company in the available data; the regulatory-items check cannot be run. [Classification: Unknown-not disclosed; Source: SEC 8-K filings (store: form8k_events)]
+- Earnings catalysts: No earnings announcement found on or before the as-of date in the available data (the store's earnings-event table starts 2021). [Classification: Unknown-not disclosed; Source: SEC 8-K item 2.02 filings (store: earnings_announcement_events)]
+- Debt changes: No debt data available for this company in the available filings data. [Classification: Unknown-not disclosed; Source: SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)]

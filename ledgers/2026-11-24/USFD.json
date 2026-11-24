@@ -1,0 +1,94 @@
+{
+ "ticker": "USFD",
+ "cik": 1665918,
+ "kind": "stock",
+ "as_of": "2026-11-24",
+ "fields": [
+  {
+   "field": "Insider purchases",
+   "finding": "Form 4 history was searched for the trailing 6 months: no open-market purchases (code P) found.",
+   "classification": "Confirmed negative",
+   "source": "SEC Form 4 filings (store: form4_transactions)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "transactions": 0
+   }
+  },
+  {
+   "field": "Buybacks",
+   "finding": "Executed share repurchases are reported in 2 filing(s) whose periods end inside the trailing 12 months; the largest single reported figure is $926M (latest such filing 2026-05-07, period ended 2026-03-28, $75M). Full-window scan: every filing in the window was checked, not only the latest. Authorization amounts are not in the available data.",
+   "classification": "Confirmed positive",
+   "source": "SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)",
+   "evidence_date": "2026-05-07",
+   "details": {
+    "filings_with_repurchases": 2,
+    "max_reported_usd": 926000000.0
+   }
+  },
+  {
+   "field": "Dividend increases",
+   "finding": "No dividend increase over the trailing 12 months (declared per share $0.000 vs $0.000 a year earlier).",
+   "classification": "Confirmed negative",
+   "source": "SEC filings (XBRL dividends declared, mechanical_facts_pit)",
+   "evidence_date": "2026-11-05",
+   "details": {
+    "div_ttm": 0.0,
+    "div_ttm_prior": 0.0,
+    "div_source": "none"
+   }
+  },
+  {
+   "field": "Acquisitions",
+   "finding": "No Item 2.01 completion filings, no Item 1.01 agreement filings, and no large cash acquisition spend found in the trailing 12 months.",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings; SEC filings (XBRL)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "item_201_filings": 0,
+    "item_101_filings": 0,
+    "mech_cash_spend_flag": false
+   }
+  },
+  {
+   "field": "Customer concentration",
+   "finding": "Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field.",
+   "classification": "Unknown-not disclosed",
+   "source": "Not available",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Regulatory risks",
+   "finding": "No 8-K filings with items 1.05, 4.02, 3.01 or 5.02 in the trailing 12 months.",
+   "classification": "Confirmed negative",
+   "source": "SEC 8-K filings (store: form8k_events)",
+   "evidence_date": "2026-11-24",
+   "details": {
+    "filings": 0
+   }
+  },
+  {
+   "field": "Earnings catalysts",
+   "finding": "Most recent earnings announcement was 19 days before the as-of date (2026-11-05, accession 0001665918-26-000053).",
+   "classification": "Confirmed positive",
+   "source": "SEC 8-K item 2.02 filings (store: earnings_announcement_events)",
+   "evidence_date": "2026-11-05",
+   "details": {
+    "days_before_asof": 19,
+    "accession": "0001665918-26-000053"
+   }
+  },
+  {
+   "field": "Debt changes",
+   "finding": "Total debt was broadly stable over the last year ($4,952M at period end 2026-09-26, -2% vs a year earlier; wide construction: borrowings + leases). Maturity schedules are not in the available data.",
+   "classification": "Confirmed negative",
+   "source": "SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)",
+   "evidence_date": "2026-11-05",
+   "details": {
+    "change_pct": -0.021923760616235466,
+    "debt_now_usd": 4952000000.0,
+    "construction": "wide"
+   }
+  }
+ ]
+}

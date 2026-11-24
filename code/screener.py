@@ -749,7 +749,7 @@ def log_levers(args):
         "1y maxDD>=-70%; 10d avg dollar volume>=$2M; US-domiciled only; no religious themes")
     log(f"risk gates (hard, pre-research): ann. 60d vol<={args.max_vol:.0%}; "
         f"maxDD>={args.min_dd:.0%}  (--max-vol, --min-dd)")
-    log(f"research pool: STOCKS — consolidated design (2026-11-23): the step-2 fence screen (stability price test, implied upside >= 0, the four filing legs, price risk strikes) runs over the whole scored funnel in Phase A, and the first {STOCK_RESEARCH_BUDGET} screen-passers in base_score order are admitted to research; the lane guarantees (core/persistence/overflow/offense/surge) no longer admit stocks. ETFs — top {args.n_etf_research} by the momentum composite (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind) and a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), unchanged")
+    log(f"research pool: STOCKS — consolidated design (2026-11-23): the step-2 fence screen (implied upside >= 0, the four filing legs, price risk strikes; the price stability screen was removed 2026-11-24) runs over the whole scored funnel in Phase A, and the first {STOCK_RESEARCH_BUDGET} screen-passers in base_score order are admitted to research; the lane guarantees (core/persistence/overflow/offense/surge) no longer admit stocks. ETFs — top {args.n_etf_research} by the momentum composite (core), plus persistence seats (picked within {POOL_PERSIST_WINDOW_DAYS}d, max {POOL_PERSIST_MAX}/kind) and a ret_1y overflow lane ({POOL_OVERFLOW_N}/kind), unchanged")
     log(f"final_score = base_w - {args.w_down}*dep + {args.w_up}*cont "
         f"- {args.w_outlier}*excess*dep  (--w-down, --w-up, --w-outlier; "
         "base_w = base_score winsorized at p95, excess = amount above cap)")
@@ -2557,14 +2557,22 @@ def _fence_screen_stocks(df, cache=None):
     The fences are exactly the ones the pick walk used to check
     after research, computed on the same production code paths the
     pool-tail screen validated against the frame (2026-11-23):
-    the stability price test (stability_grade thresholds on the
-    Phase A vol60/maxdd), implied upside (attach_implied_upside /
+    implied upside (attach_implied_upside /
     pick_checks), the four filing legs (_stamp_ey_facts), and the
     price-based risk strikes (compute_risk_strikes with dep forced
     to None — the dep strike is research-only and is judged in the
     research stage, never here). Fail-soft throughout, mirroring
     the walk: a leg that cannot be determined never bars and never
     blocks admission; only a determined FAIL does.
+
+    The price stability screen that used to sit here (FAIL at
+    vol60 > 0.80 or maxdd < -0.45; FAIL at vol60 > 0.55 or
+    maxdd < -0.30) was REMOVED 2026-11-24 on Dan's directive,
+    after the round-1/round-2 screen studies and the combined
+    before/after measurement showed it cost far more return than
+    the blowup protection it bought. No name is barred at this
+    step for its price path. The research-stage stability GRADE
+    is a different mechanism and is untouched.
 
     Stamps scr_* columns onto df (the step-2 record the bundle
     carries into Phase B) and refreshes earnings_in_days/earn_soon
@@ -2634,24 +2642,12 @@ def _fence_screen_stocks(df, cache=None):
     results = {}
     for t in tickers:
         r = by_ticker[t]
-        vol60 = _safe(r.get("vol60"))
-        maxdd = _safe(r.get("maxdd"))
-        if vol60 is None or maxdd is None:
-            stab_v = "UNDETERMINED"
-        elif vol60 > 0.80 or maxdd < -0.45:
-            stab_v = "FAIL"
-        elif vol60 > 0.55 or maxdd < -0.30:
-            stab_v = "FAIL"
-        else:
-            stab_v = "PASS"
         fv = _filing_verdicts(stamps.get(t) or {})
         iu_v = iu.get(t)
         iu_verdict = ("UNDETERMINED" if iu_v is None
                       else ("FAIL" if iu_v < 0 else "PASS"))
         sk_count = strike_counts.get(t, 0)
         fails = []
-        if stab_v == "FAIL":
-            fails.append("stability")
         if iu_verdict == "FAIL":
             fails.append("implied_upside")
         for leg in ("ey", "cash", "lev", "ni"):
@@ -2660,8 +2656,6 @@ def _fence_screen_stocks(df, cache=None):
         if sk_count >= RISK_GATE_MIN_STRIKES:
             fails.append("risk_strikes")
         undetermined = []
-        if stab_v == "UNDETERMINED":
-            undetermined.append("stability")
         if iu_verdict == "UNDETERMINED":
             undetermined.append("implied_upside")
         for leg in ("ey", "cash", "lev", "ni"):
@@ -10088,6 +10082,10 @@ def main():
         df, STOCK_RESEARCH_BUDGET)
     _screen_meta = {
         "design": "consolidated-2026-11-23",
+        # the step-2 price stability screen was removed 2026-11-24
+        # (Dan's directive); recorded as None so the run record
+        # never claims a price screen that no longer exists.
+        "price_stability_screen": None,
         "budget": STOCK_RESEARCH_BUDGET,
         "n_screened": len(_screen_results),
         "n_pass": sum(1 for v in _screen_results.values() if v["pass"]),

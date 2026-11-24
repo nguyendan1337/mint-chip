@@ -1,0 +1,1047 @@
+{
+ "as_of": "2026-11-24",
+ "built_at": "2026-11-24T18:53:53.886148",
+ "data_vintages": {
+  "form4_max_filing_date": "2026-11-20",
+  "mech_max_filed_date": "2026-11-19",
+  "balance_sheet_annual_max_filed_date": "2026-11-19",
+  "balance_sheet_quarterly_max_filed_date": "2026-11-19",
+  "debt_wide_max_filed_date": "2026-11-19",
+  "form8k_max_filing_datetime": "2026-11-20T22:10:25.000Z",
+  "earnings_events_max_date": "2026-11-12"
+ },
+ "ledgers": {
+  "ABBV": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "AOS": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "ARDT": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "ARKG": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "BBH": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "BF-A": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "BKDV": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "BNO": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "BOAT": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "BRO": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "BTSG": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "CALY": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "CCL": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "CLOU": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "COR": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "CPAY": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "CSD": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "CXW": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "DBMF": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "DBO": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "DFUV": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "DG": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "DHR": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "DHS": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "DJD": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "EGP": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "FLQM": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "FNDB": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "FSTA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "FTA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "FTCS": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "FTDR": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "FTXH": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "GEHC": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "GEN": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "GFF": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "GNOM": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "GRDN": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "GRPM": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "GSG": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "GXO": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "HAYW": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "HCA": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "HRL": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed negative",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "IDNA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "IEO": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "IHE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "IHF": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "IJH": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "ILCV": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "IUS": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "JAVA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "KDP": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "KIE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "LOW": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "LVHD": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "LW": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "MA": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "MGNI": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "MKTN": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "MSCI": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "NDAQ": {
+   "Insider purchases": "Confirmed positive",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "OCTV": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "OHI": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "ORLY": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "OTIS": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "PACS": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "PAPI": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "PFGC": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "PFM": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "PG": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "PJP": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "PSCH": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "PSX": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "QLV": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "RMD": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed positive"
+  },
+  "RSPS": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "SMG": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "SYLD": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "TRAX": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "TTEK": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "TVAL": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "UAE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "UGA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "ULTA": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "UNFI": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "URBN": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Confirmed negative"
+  },
+  "USMV": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "USO": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "VCEL": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "VFVA": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "VLTO": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "VLUE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "VNT": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "VOE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "VRSK": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed positive",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "WWW": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Confirmed positive",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  },
+  "XBI": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "XHS": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "XLE": {
+   "Insider purchases": "Not applicable",
+   "Buybacks": "Not applicable",
+   "Dividend increases": "Not applicable",
+   "Acquisitions": "Not applicable",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Not applicable",
+   "Earnings catalysts": "Not applicable",
+   "Debt changes": "Not applicable"
+  },
+  "XPH": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "XSW": {
+   "Insider purchases": "Unknown-not disclosed",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Unknown-not disclosed",
+   "Acquisitions": "Unknown-not disclosed",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Unknown-not disclosed",
+   "Earnings catalysts": "Unknown-not disclosed",
+   "Debt changes": "Unknown-not disclosed"
+  },
+  "YOU": {
+   "Insider purchases": "Confirmed negative",
+   "Buybacks": "Unknown-not disclosed",
+   "Dividend increases": "Confirmed negative",
+   "Acquisitions": "Confirmed negative",
+   "Customer concentration": "Unknown-not disclosed",
+   "Regulatory risks": "Confirmed negative",
+   "Earnings catalysts": "Confirmed positive",
+   "Debt changes": "Confirmed negative"
+  }
+ },
+ "elapsed_seconds": 6.32,
+ "n_tickers": 103
+}

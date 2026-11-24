@@ -147,6 +147,7 @@ recomputed from the cached versions on every call, so any as-of
 date is answered exactly from a fresh-enough cache).
 """
 
+import hashlib
 import json
 import os
 import threading
@@ -229,7 +230,13 @@ def _read_json(path):
 
 def _write_json(path, data):
     try:
-        tmp = f"{path}.tmp"
+        # Unique tmp per writer (2026-11-23 runtime fix): the batch
+        # wrappers run 8 threads and several processes share these
+        # cache files; a single shared tmp path let concurrent
+        # writers interleave and clobber each other's os.replace,
+        # which is why ey_cache.json never accumulated entries and
+        # every pass re-fetched from the SEC.
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
         with open(tmp, "w") as handle:
             json.dump(data, handle, indent=1, sort_keys=True)
         os.replace(tmp, path)
@@ -707,9 +714,24 @@ def _fetch_extraction(ticker):
     return merged
 
 
+# F3 (runtime audit 2026-11-23): in-process memo of extractions.
+# The ey / balance-sheet / net-income families all read the same
+# per-ticker extraction; within one process the parsed version
+# lists are loaded once and shared by every _compute* call instead
+# of being re-read from disk per family per pass. The memo holds
+# exactly the dict the disk cache holds (or the fetch returned);
+# callers only read it, so sharing the object cannot change any
+# computed value.
+_EXTRACTION_MEMO = {}
+_EXTRACTION_LOCK = threading.Lock()
+
+
 def _extraction(ticker):
     """Cached extraction for a ticker (7-day TTL on the fetch)."""
     key = _ticker_key(ticker)
+    memo = _EXTRACTION_MEMO.get(key)
+    if memo is not None:
+        return memo
     cache = _read_json(_CACHE_PATH)
     entry = cache.get(key) if isinstance(cache, dict) else None
     if isinstance(entry, dict) and isinstance(entry.get("data"), dict):
@@ -726,12 +748,21 @@ def _extraction(ticker):
         else:
             fetched = _parse_date(entry.get("fetched_date"))
             if fetched is not None and (_today() - fetched).days < _FACTS_TTL_DAYS:
+                _EXTRACTION_MEMO[key] = entry["data"]
                 return entry["data"]
     data = _fetch_extraction(ticker)
-    if not isinstance(cache, dict):
-        cache = {}
-    cache[key] = {"fetched_date": _today().isoformat(), "data": data}
-    _write_json(_CACHE_PATH, cache)
+    # Write back under a lock with a fresh re-read and merge
+    # (2026-11-23 runtime fix): the old read-modify-write raced
+    # across the 8-thread batch pools and across processes, each
+    # writer persisting only its own snapshot, so the disk cache
+    # lost most entries and later passes re-fetched them.
+    with _EXTRACTION_LOCK:
+        cache = _read_json(_CACHE_PATH)
+        if not isinstance(cache, dict):
+            cache = {}
+        cache[key] = {"fetched_date": _today().isoformat(), "data": data}
+        _write_json(_CACHE_PATH, cache)
+    _EXTRACTION_MEMO[key] = data
     return data
 
 
@@ -1041,6 +1072,123 @@ def net_income_evs(tickers, prices, as_of=None):
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         return dict(pool.map(one, tickers))
+
+
+# ------------------------------------------------------------------
+# F2 + F3 (runtime audit 2026-11-23, Dan approved): computed-value
+# disk cache and the shared single-traversal batch entry point.
+#
+# filing_facts() computes all three families for a batch in ONE
+# traversal: each ticker's extraction is loaded once (F3 memo /
+# disk cache above) and its ey, balance-sheet and net-income
+# results are produced together by the same public single-ticker
+# functions the legacy batch wrappers call, so every value is the
+# value those wrappers return for the same inputs.
+#
+# F2: a computed triple is also persisted, one file per ticker,
+# keyed by (as_of date, price, sha256 of the extraction data the
+# values were computed from). A later process (sweep re-run,
+# restarted worker, the watchlist) whose key matches exactly is
+# served the stored triple without re-running the selection; any
+# change to the underlying cached SEC data changes the extraction
+# hash and the entry is ignored and rewritten. Entries are only
+# written when the extraction succeeded (the balance-sheet result
+# carries its "cik" marker), so a transient fetch failure can
+# never be frozen into the cache. The legacy batch wrappers keep
+# their exact behaviour; they simply benefit from the extraction
+# memo and the race-free cache writes underneath.
+_VALUE_CACHE_DIR = os.environ.get(
+    "EY_VALUE_CACHE_DIR", os.path.join(_HERE, "ey_value_cache"))
+
+
+def _extraction_hash(data):
+    return hashlib.sha256(
+        json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _value_cache_read(key):
+    try:
+        with open(os.path.join(_VALUE_CACHE_DIR, key + ".json")) as handle:
+            entry = json.load(handle)
+        return entry if isinstance(entry, dict) else None
+    except Exception:
+        return None
+
+
+def _value_cache_write(key, entry):
+    try:
+        os.makedirs(_VALUE_CACHE_DIR, exist_ok=True)
+        path = os.path.join(_VALUE_CACHE_DIR, key + ".json")
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w") as handle:
+            json.dump(entry, handle, sort_keys=True)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _filing_values(ticker, price, as_of_date):
+    """(ey_res, bs_res, ni_res) for one ticker, via the F2 value
+    cache when its key matches, else the public single-ticker
+    functions (which never raise)."""
+    key = _ticker_key(ticker)
+    price_key = None if price is None else float(price)
+    data = None
+    xhash = None
+    try:
+        data = _extraction(ticker)
+    except Exception:
+        data = None
+    if data is not None:
+        xhash = _extraction_hash(data)
+        entry = _value_cache_read(key)
+        if (entry is not None
+                and entry.get("as_of") == as_of_date.isoformat()
+                and entry.get("price") == price_key
+                and entry.get("extraction_hash") == xhash
+                and isinstance(entry.get("values"), dict)):
+            vals = entry["values"]
+            return (vals.get("ey") or {"ey": None},
+                    vals.get("bs") or {"cash_share": None,
+                                        "leverage": None},
+                    vals.get("ni") or {"ni_ev": None})
+    ey_res = earnings_yield(ticker, price, as_of=as_of_date)
+    bs_res = balance_sheet_ratio(ticker, as_of=as_of_date)
+    ni_res = net_income_ev(ticker, price, as_of=as_of_date)
+    if data is not None and "cik" in bs_res:
+        _value_cache_write(key, {
+            "ticker": key,
+            "as_of": as_of_date.isoformat(),
+            "price": price_key,
+            "extraction_hash": xhash,
+            "values": {"ey": ey_res, "bs": bs_res, "ni": ni_res},
+        })
+    return ey_res, bs_res, ni_res
+
+
+def filing_facts(tickers, prices, as_of=None):
+    """Batch: {"ey": {...}, "bs": {...}, "ni": {...}} in one
+    traversal (see the F2/F3 note above). Mirrors the legacy batch
+    wrappers' contract: every requested ticker gets an entry in
+    each family, failed names map to the families' None results,
+    and the function never raises."""
+    tickers = [str(t) for t in tickers]
+    if not tickers:
+        return {"ey": {}, "bs": {}, "ni": {}}
+    as_of_date = _parse_date(as_of) if as_of is not None else _today()
+    prices = prices or {}
+
+    def one(t):
+        ey_res, bs_res, ni_res = _filing_values(
+            t, prices.get(t), as_of_date)
+        return t, ey_res, bs_res, ni_res
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(one, tickers))
+    return {"ey": {t: e for t, e, b, n in rows},
+            "bs": {t: b for t, e, b, n in rows},
+            "ni": {t: n for t, e, b, n in rows}}
 
 
 if __name__ == "__main__":

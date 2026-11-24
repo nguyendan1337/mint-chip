@@ -1,0 +1,72 @@
+{
+ "ticker": "GFL",
+ "cik": 1780232,
+ "kind": "stock",
+ "as_of": "2026-11-24",
+ "fields": [
+  {
+   "field": "Insider purchases",
+   "finding": "No Form 4 records for this company in the available data; insider purchases cannot be confirmed or excluded.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC Form 4 filings (store: form4_transactions)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Buybacks",
+   "finding": "No repurchase data available for this company in the available filings data.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC 10-K/10-Q filings (XBRL, balance-sheet PIT)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Dividend increases",
+   "finding": "Dividend history could not be determined from the available filings data.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC filings (XBRL dividends declared, mechanical_facts_pit)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Acquisitions",
+   "finding": "No 8-K or mechanical-facts coverage for this company in the available data; acquisition activity cannot be confirmed or excluded.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC 8-K filings; SEC filings (XBRL)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Customer concentration",
+   "finding": "Customer concentration is not mechanically extractable from the available data; no disclosure was extracted for this field.",
+   "classification": "Unknown-not disclosed",
+   "source": "Not available",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Regulatory risks",
+   "finding": "No 8-K records for this company in the available data; the regulatory-items check cannot be run.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC 8-K filings (store: form8k_events)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Earnings catalysts",
+   "finding": "No earnings announcement found on or before the as-of date in the available data (the store's earnings-event table starts 2021).",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC 8-K item 2.02 filings (store: earnings_announcement_events)",
+   "evidence_date": null,
+   "details": {}
+  },
+  {
+   "field": "Debt changes",
+   "finding": "No debt data available for this company in the available filings data.",
+   "classification": "Unknown-not disclosed",
+   "source": "SEC 10-Q/10-K filings (XBRL, balance-sheet PIT, wide debt construction)",
+   "evidence_date": null,
+   "details": {}
+  }
+ ]
+}
