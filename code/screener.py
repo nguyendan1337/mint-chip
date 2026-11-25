@@ -3146,6 +3146,52 @@ def watchlist_quality_summary(ratings, evs, tickers=None):
     return out + "."
 
 
+def _prior_watchlist_er():
+    """{ticker: est_next_1y} from the most recent prior published
+    watchlist frames, newest first, per ticker.
+
+    Backs the ratings v3 ER floor leg's persistence guard: the leg
+    fires only when a stock's expected return was also below the
+    floor in the prior published watchlist frame. Frames live in the
+    frames/ directory beside this file, so a sandbox replica (which
+    carries a copy of the production frames) behaves identically to
+    production. At rating time the current run's own frame has not
+    been written yet, so every frame found here is from an earlier
+    run. Any failure returns what was gathered (possibly {}), which
+    leaves the leg inert — a missing prior can never manufacture a
+    SELL.
+    """
+    import glob as _glob
+    import json as _json
+    import os as _os
+    out = {}
+    try:
+        fdir = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)), "frames")
+        paths = sorted(_glob.glob(
+            _os.path.join(fdir, "frame_*_watchlist.json")), reverse=True)
+    except Exception:
+        return out
+    for p in paths[:12]:
+        try:
+            with open(p) as f:
+                frame = _json.load(f)
+        except Exception:
+            continue
+        for r in frame.get("rows") or []:
+            t = r.get("ticker")
+            if not t or str(t) in out:
+                continue
+            try:
+                v = float(r.get("est_next_1y"))
+            except Exception:
+                continue
+            out[str(t)] = v
+        if len(out) >= 25:
+            break
+    return out
+
+
 def add_ratings(df):
     """Attach literal Buy/Hold/Sell columns ('what Mint would do').
 
@@ -3154,7 +3200,10 @@ def add_ratings(df):
     keys off: dep_used, continuation, confidence, stability, risk
     strikes, ETF gate eligibility, and the latest thesis-check status
     per ticker from the ledger (same source the spell-exit logic uses).
-    Logs each rating for the audit trail.
+    Since ratings v3 (2026-11-24) it also gathers, for stocks, the
+    current expected return and the prior published frame's (the ER
+    floor leg and its persistence guard). Logs each rating for the
+    audit trail.
     """
     import json as _json
     latest_check = {}
@@ -3169,6 +3218,7 @@ def add_ratings(df):
                     latest_check[e["ticker"]] = e.get("status")
     except FileNotFoundError:
         pass
+    prior_er = _prior_watchlist_er()
     sub = df.copy()
     _rats = []
     for _, r in sub.iterrows():
@@ -3194,7 +3244,10 @@ def add_ratings(df):
             r.get("risk_strike_count"), etf_barred,
             latest_check.get(str(r.get("ticker"))),
             research_score=_score, no_signal=_nosig,
-            is_etf=_is_etf, big_inflows=_inf))
+            is_etf=_is_etf, big_inflows=_inf,
+            er_now=(None if _is_etf else r.get("est_next_1y")),
+            er_prior=(None if _is_etf else
+                      prior_er.get(str(r.get("ticker"))))))
     sub["rating"] = [x[0] for x in _rats]
     sub["rating_reason"] = [x[1] for x in _rats]
     for _, r in sub.iterrows():
@@ -3205,20 +3258,22 @@ def add_ratings(df):
 def compute_rating(dep, cont, conf, stability, strike_count,
                    etf_barred=False, check_status=None,
                    research_score=None, no_signal=None,
-                   is_etf=False, big_inflows=None):
+                   is_etf=False, big_inflows=None,
+                   er_now=None, er_prior=None):
     """Literal Buy/Hold/Sell — 'what Mint would do' (Dan's design,
     shipped 2026-11-06; replaces the EV-threshold design).
 
-    The verdict never reads the expected value: EV units change when
-    the formula is recalibrated, and thresholds denominated in them
-    silently broke (2026-11-06: every watchlist name rated SELL under
-    the legacy +3%/+8% cutoffs in V6/C3 units). Instead the rating
-    applies the same plain tests a Mint pick must pass:
+    The verdict is built from plain tests, not EV thresholds: EV
+    units change when the formula is recalibrated, and thresholds
+    denominated in them silently broke (2026-11-06: every watchlist
+    name rated SELL under the legacy +3%/+8% cutoffs in V6/C3
+    units). Instead the rating applies the same plain tests a Mint
+    pick must pass:
 
-    - SELL: any hard fail — the thesis is broken on the record (latest
-      ledger check), the researcher thinks the run is over
-      (continuation < 0.40), or the name is a proven crumbler
-      (stability grade D).
+    - SELL: any hard fail — the thesis is broken on the record
+      (latest ledger check), the researcher thinks the run is over
+      (continuation < 0.40), or (ratings v3, below) the expected
+      return has sat below the pick floor on back-to-back runs.
     - BUY: passes the pick test — dep < 0.50, confidence >= 0.60,
       stability A/B, at most one risk strike, ETFs gate-eligible, and
       no open watch/broken thesis flag — plus, for stocks whose facts
@@ -3265,6 +3320,31 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     The pick-side 0.70 dep veto is a separate mechanism and is
     unchanged.
 
+    RATINGS V3 (2026-11-24, Dan approved; verification in
+    ratings_v3_tests_2026-11-24/): two changes. (1) STABILITY
+    DEMOTION: stability grade D is no longer a SELL fail — it caps
+    the rating at HOLD, with the fragility named as the blocker,
+    parallel to the dep demotion above. The blinded diagnostics
+    never coded stability, the coded-gates test found the grade
+    adding ~0.4 points once dependence was counted, and its
+    mechanical cousin (the price stability screen) failed in
+    reverse and was removed the same morning. Thesis broken and
+    continuation < 0.40 remain the judgment SELL fails. (2) ER
+    FLOOR LEG (stocks only): a stock whose expected return is
+    below the +5% pick floor in this run AND was below it in the
+    most recent prior published watchlist frame is a SELL — the
+    system does not call a name a hold when its own return model
+    prices it under the line it refuses to buy at. The
+    back-to-back requirement is a persistence guard: the frame
+    replay showed a bare cliff at +5% would roughly double rating
+    flips, because a single ER re-read can cross the line on
+    wobble (WDC crossed it three times in four days), while names
+    far below the floor (VCTR) are steady under the leg. The leg
+    only demotes — a high expected return never lifts a rating —
+    and it is inert when either reading is missing. Funds are
+    untouched (they carry a grade, not a return). The Nov 30 audit
+    judges both changes on the live record.
+
     Returns (rating, reason), the reason in plain words naming the
     deciding factor.
     """
@@ -3290,8 +3370,18 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if cont is not None and cont < 0.40:
         return ("SELL", "the run looks over, the researcher no longer "
                 "expects it to keep doing well")
-    if stab == "D":
-        return ("SELL", "fragile, it has shown it can fall hard and fast")
+    if not is_etf:
+        # RATINGS V3 ER FLOOR LEG (2026-11-24): below the +5% pick
+        # floor on back-to-back runs — the persistence guard is the
+        # prior-frame reading (see the docstring). Inert when either
+        # reading is missing.
+        _er_now = _f(er_now)
+        _er_prior = _f(er_prior)
+        if (_er_now is not None and _er_prior is not None
+                and _er_now < 0.05 and _er_prior < 0.05):
+            return ("SELL", "expected return below the system's "
+                    "floor on back-to-back runs, too little upside "
+                    "left to justify holding it")
 
     # BUY — the full pick test (v2: no continuation bar; the stock
     # fact legs stand in for it when facts are coded). The conf bar
@@ -3313,6 +3403,14 @@ def compute_rating(dep, cont, conf, stability, strike_count,
     if check_status == "watch":
         return ("HOLD", "story intact, but on watch, a warning flag "
                 "is open")
+    if stab == "D":
+        # RATINGS V3 STABILITY DEMOTION (2026-11-24): D caps at HOLD,
+        # the fragility named as the blocker — parallel to the dep
+        # demotion below. Placed here so a demoted row's reason names
+        # the demoted factor; non-D HOLD rows can never reach it, so
+        # no existing HOLD reason changes.
+        return ("HOLD", "story intact, but it has shown it can fall "
+                "hard and fast, hold, don't add")
     if dep >= 0.70:
         return ("HOLD", "story intact, but it leans heavily on "
                 "outside events")
