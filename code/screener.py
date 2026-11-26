@@ -4165,7 +4165,7 @@ def make_chart_html(stocks_df, etfs_df, path, meta, titles=None,
     if meta.get("mode") != "watchlist" or not sm_html:
         about_html = ("<div class=\"note\">\n"
 "<p><b>About Mint.</b> Mint looks for American stocks and funds that have\n"
-"already proven themselves over the past year, six months, and three\n"
+"already proven themselves over the past year and in the most recent\n"
 "months, then asks which are most likely to keep doing well over the next\n"
 "year, even if the market dips along the way. The philosophy: guard\n"
 "against big losses, judge each pick by the year ahead rather than a rough\n"
